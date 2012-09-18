@@ -46,8 +46,8 @@ enum{ISO,ANISO,TRICLINIC};
 #define CHUNK 1024
 #define ATTRIBUTE_PERBODY 11
 
-#define TOLERANCE 1.0e-3
-#define EPSILON 1.0e-4
+#define TOLERANCE 1.0e-6
+#define EPSILON 1.0e-7
 
 #define SINERTIA 0.4            // moment of inertia prefactor for sphere
 #define EINERTIA 0.4            // moment of inertia prefactor for ellipsoid
