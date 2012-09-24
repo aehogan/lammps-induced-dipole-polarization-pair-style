@@ -13,6 +13,7 @@
 
 /* ----------------------------------------------------------------------
    Contributing author: Paul Crozier (SNL)
+                        Adam Hogan (USF)
 ------------------------------------------------------------------------- */
 
 #include "math.h"
@@ -61,59 +62,29 @@ PairLJCutCoulLongPolarization::PairLJCutCoulLongPolarization(LAMMPS *lmp) : Pair
   respa_enable = 0;
   ftable = NULL;
   /* set defaults */
-  iterations_max = 10;
-  damping_type = DAMPING_EXPONENTIAL;
+  iterations_max = 50;
+  damping_type = DAMPING_NONE;
   polar_damp = 2.1304;
   zodid = 0;
-  polar_precision = 0.00001;
+  polar_precision = 0.000001;
   fixed_iteration = 0;
 
   polar_gs = 0;
   polar_gs_ranked = 0;
-  polar_sor = 0;
-  polar_esor = 0;
   polar_gamma = 1.0;
 
-  polar_min_image = 0;
   debug = 0;
   /* end defaults */
 
-  int nlocal = atom->nlocal;
-  int nghost = atom->nghost;
-  int ntotal = nlocal + nghost;
   /* create arrays */
+  int nlocal = atom->nlocal;
   memory->create(ef_induced,nlocal,3,"pair:ef_induced");
   memory->create(mu_induced_new,nlocal,3,"pair:mu_induced_new");
   memory->create(mu_induced_old,nlocal,3,"pair:mu_induced_old");
   memory->create(dipole_rrms,nlocal,"pair:dipole_rrms");
-  memory->create(dipole_field_matrix,3*ntotal,3*ntotal,"pair:dipole_field_matrix");
+  memory->create(dipole_field_matrix,3*nlocal,3*nlocal,"pair:dipole_field_matrix");
   memory->create(ranked_array,nlocal,"pair:ranked_array");
   memory->create(rank_metric,nlocal,"pair:rank_metric");
-  /* polar_min_image arrays below
-     these are used for gather and scatter calls */
-  x_local_0 = NULL;
-  x_local_1 = NULL;
-  x_local_2 = NULL;
-  x_total = NULL;
-  x_total_0 = NULL;
-  x_total_1 = NULL;
-  x_total_2 = NULL;
-  ef_local_0 = NULL;
-  ef_local_1 = NULL;
-  ef_local_2 = NULL;
-  ef_total = NULL;
-  ef_total_0 = NULL;
-  ef_total_1 = NULL;
-  ef_total_2 = NULL;
-  rank_metric_total = NULL;
-  rank_metric_local = NULL;
-  static_polarizability_total = NULL;
-  static_polarizability_local = NULL;
-  mu_induced_total = NULL;
-  num_of_atoms = NULL;
-  max_atoms_old = -1; /* make sure that the arrays for polar_min_image get allocated if polar_min_image is set */
-  total_atoms_old = -1;
-  ntotal_old = ntotal;
   nlocal_old = nlocal;
 }
 
@@ -144,27 +115,6 @@ PairLJCutCoulLongPolarization::~PairLJCutCoulLongPolarization()
   memory->destroy(dipole_field_matrix);
   memory->destroy(ranked_array);
   memory->destroy(rank_metric);
-
-  memory->destroy(x_local_0);
-  memory->destroy(x_local_1);
-  memory->destroy(x_local_2);
-  memory->destroy(x_total_0);
-  memory->destroy(x_total_1);
-  memory->destroy(x_total_2);
-  memory->destroy(x_total);
-  memory->destroy(ef_local_0);
-  memory->destroy(ef_local_1);
-  memory->destroy(ef_local_2);
-  memory->destroy(ef_total_0);
-  memory->destroy(ef_total_1);
-  memory->destroy(ef_total_2);
-  memory->destroy(ef_total);
-  memory->destroy(static_polarizability_total);
-  memory->destroy(static_polarizability_local);
-  memory->destroy(rank_metric_total);
-  memory->destroy(rank_metric_local);
-  memory->destroy(mu_induced_total);
-  memory->destroy(num_of_atoms);
 }
 
 /* ---------------------------------------------------------------------- */
@@ -176,30 +126,21 @@ void PairLJCutCoulLongPolarization::compute(int eflag, int vflag)
   int ntotal = nlocal + nghost;
   int i;
 
-  /* reallocate arrays if number of atoms grew                              *
-   * if using polar_min_image these arrays are grown in the polar_min_image *
-   * part of the code                                                       */
-  if (ntotal > ntotal_old&&!polar_min_image)
-  {
-    memory->destroy(dipole_field_matrix);
-    memory->create(dipole_field_matrix,3*ntotal,3*ntotal,"pair:dipole_field_matrix");
-    ntotal_old = ntotal;
-  }
+  /* reallocate arrays if number of atoms grew */
   if (nlocal > nlocal_old)
   {
-    if (!polar_min_image)
-    {
-      memory->destroy(dipole_rrms);
-      memory->create(dipole_rrms,nlocal,"pair:dipole_rrms");
-      memory->destroy(ef_induced);
-      memory->create(ef_induced,nlocal,3,"pair:ef_induced");
-      memory->destroy(mu_induced_new);
-      memory->create(mu_induced_new,nlocal,3,"pair:mu_induced_new");
-      memory->destroy(mu_induced_old);
-      memory->create(mu_induced_old,nlocal,3,"pair:mu_induced_old");
-      memory->destroy(ranked_array);
-      memory->create(ranked_array,nlocal,"pair:ranked_array");
-    }
+    memory->destroy(dipole_rrms);
+    memory->create(dipole_rrms,nlocal,"pair:dipole_rrms");
+    memory->destroy(ef_induced);
+    memory->create(ef_induced,nlocal,3,"pair:ef_induced");
+    memory->destroy(mu_induced_new);
+    memory->create(mu_induced_new,nlocal,3,"pair:mu_induced_new");
+    memory->destroy(mu_induced_old);
+    memory->create(mu_induced_old,nlocal,3,"pair:mu_induced_old");
+    memory->destroy(ranked_array);
+    memory->create(ranked_array,nlocal,"pair:ranked_array");
+    memory->destroy(dipole_field_matrix);
+    memory->create(dipole_field_matrix,3*nlocal,3*nlocal,"pair:dipole_field_matrix");
     memory->destroy(rank_metric);
     memory->create(rank_metric,nlocal,"pair:rank_metric");
     nlocal_old = nlocal;
@@ -423,203 +364,27 @@ void PairLJCutCoulLongPolarization::compute(int eflag, int vflag)
     mu_induced[i][0] = static_polarizability[i]*ef_static[i][0];
     mu_induced[i][1] = static_polarizability[i]*ef_static[i][1];
     mu_induced[i][2] = static_polarizability[i]*ef_static[i][2];
-    if(!polar_sor) mu_induced[i][0] *= polar_gamma;
-    if(!polar_sor) mu_induced[i][1] *= polar_gamma;
-    if(!polar_sor) mu_induced[i][2] *= polar_gamma;
+    mu_induced[i][0] *= polar_gamma;
+    mu_induced[i][1] *= polar_gamma;
+    mu_induced[i][2] *= polar_gamma;
   }
 
-  /* perform polarization routine using minimum image on a single cpu */
-  /* gather up all the information first */
-  if (polar_min_image)
-  {
-    int local_atoms,myrank,numprocs;
-    MPI_Comm_rank(MPI_COMM_WORLD, &myrank);
-    MPI_Comm_size(MPI_COMM_WORLD, &numprocs);
-    MPI_Reduce(&nlocal,&total_atoms,1,MPI_INT,MPI_SUM,0,MPI_COMM_WORLD);
-    MPI_Allreduce(&nlocal,&max_atoms,1,MPI_INT,MPI_MAX,MPI_COMM_WORLD);
-    if (max_atoms>max_atoms_old)
-    {
-      memory->destroy(x_local_0);
-      memory->destroy(x_local_1);
-      memory->destroy(x_local_2);
-      memory->create(x_local_0,max_atoms,"pair:x_local_0");
-      memory->create(x_local_1,max_atoms,"pair:x_local_1");
-      memory->create(x_local_2,max_atoms,"pair:x_local_2");
-      memory->destroy(ef_local_0);
-      memory->destroy(ef_local_1);
-      memory->destroy(ef_local_2);
-      memory->create(ef_local_0,max_atoms,"pair:ef_local_0");
-      memory->create(ef_local_1,max_atoms,"pair:ef_local_1");
-      memory->create(ef_local_2,max_atoms,"pair:ef_local_2");
-      memory->destroy(static_polarizability_local);
-      memory->create(static_polarizability_local,max_atoms,"pair:static_polarizability_local");
-      memory->destroy(rank_metric_local);
-      memory->create(rank_metric_local,max_atoms,"pair:rank_metric_local");
-      if (myrank!=0)
-      {
-        memory->destroy(ef_induced);
-        memory->create(ef_induced,max_atoms,3,"pair:ef_induced");
-      }
-    }
-    for (i=0;i<max_atoms;i++)
-    {
-      if (i<nlocal)
-      {
-        x_local_0[i] = x[i][0];
-        x_local_1[i] = x[i][1];
-        x_local_2[i] = x[i][2];
-        ef_local_0[i] = ef_static[i][0];
-        ef_local_1[i] = ef_static[i][1];
-        ef_local_2[i] = ef_static[i][2];
-        static_polarizability_local[i] = static_polarizability[i];
-        rank_metric_local[i] = rank_metric[i];
-      }
-      else break;
-    }
-    if (myrank==0)
-    {
-      if (total_atoms>total_atoms_old)
-      {
-        memory->destroy(num_of_atoms);
-        memory->create(num_of_atoms,numprocs,"pair:num_of_atoms");
-        memory->destroy(x_total);
-        memory->create(x_total,total_atoms,3,"pair:x_total");
-        memory->destroy(ef_total);
-        memory->create(ef_total,total_atoms,3,"pair:ef_total");
-        memory->destroy(mu_induced_total);
-        memory->create(mu_induced_total,total_atoms,3,"pair:mu_induced_total");
-        memory->destroy(rank_metric_total);
-        memory->create(rank_metric_total,total_atoms,"pair:rank_metric_total");
-        memory->destroy(static_polarizability_total);
-        memory->create(static_polarizability_total,total_atoms,"pair:static_polarizability_total");
-        memory->destroy(dipole_rrms);
-        memory->create(dipole_rrms,total_atoms,"pair:dipole_rrms");
-        memory->destroy(ef_induced);
-        memory->create(ef_induced,total_atoms,3,"pair:ef_induced");
-        memory->destroy(mu_induced_new);
-        memory->create(mu_induced_new,total_atoms,3,"pair:mu_induced_new");
-        memory->destroy(mu_induced_old);
-        memory->create(mu_induced_old,total_atoms,3,"pair:mu_induced_old");
-        memory->destroy(ranked_array);
-        memory->create(ranked_array,total_atoms,"pair:ranked_array");
-        memory->destroy(dipole_field_matrix);
-        memory->create(dipole_field_matrix,3*total_atoms,3*total_atoms,"pair:dipole_field_matrix");
-        memory->destroy(x_total_0);
-        memory->destroy(x_total_1);
-        memory->destroy(x_total_2);
-        memory->create(x_total_0,total_atoms,"pair:x_total_0");
-        memory->create(x_total_1,total_atoms,"pair:x_total_1");
-        memory->create(x_total_2,total_atoms,"pair:x_total_2");
-        memory->destroy(ef_total_0);
-        memory->destroy(ef_total_1);
-        memory->destroy(ef_total_2);
-        memory->create(ef_total_0,total_atoms,"pair:ef_total_0");
-        memory->create(ef_total_1,total_atoms,"pair:ef_total_1");
-        memory->create(ef_total_2,total_atoms,"pair:ef_total_2");
-      }
-    }
-    max_atoms_old = max_atoms;
-    total_atoms_old = total_atoms;
-    local_atoms = nlocal;
-    MPI_Gather(&local_atoms, 1, MPI_INT, num_of_atoms, 1, MPI_INT, 0, MPI_COMM_WORLD);
-    int displs[numprocs];
-    if (myrank==0)
-    {
-      displs[0] = 0;
-      for (i=1;i<numprocs;i++)
-      {
-        displs[i] = displs[i-1]+num_of_atoms[i-1];
-      }
-    }
-    MPI_Gatherv(x_local_0, nlocal, MPI_DOUBLE, x_total_0, num_of_atoms, displs, MPI_DOUBLE, 0, MPI_COMM_WORLD);
-    MPI_Gatherv(x_local_1, nlocal, MPI_DOUBLE, x_total_1, num_of_atoms, displs, MPI_DOUBLE, 0, MPI_COMM_WORLD);
-    MPI_Gatherv(x_local_2, nlocal, MPI_DOUBLE, x_total_2, num_of_atoms, displs, MPI_DOUBLE, 0, MPI_COMM_WORLD);
-    MPI_Gatherv(ef_local_0, nlocal, MPI_DOUBLE, ef_total_0, num_of_atoms, displs, MPI_DOUBLE, 0, MPI_COMM_WORLD);
-    MPI_Gatherv(ef_local_1, nlocal, MPI_DOUBLE, ef_total_1, num_of_atoms, displs, MPI_DOUBLE, 0, MPI_COMM_WORLD);
-    MPI_Gatherv(ef_local_2, nlocal, MPI_DOUBLE, ef_total_2, num_of_atoms, displs, MPI_DOUBLE, 0, MPI_COMM_WORLD);
-    MPI_Gatherv(static_polarizability_local, nlocal, MPI_DOUBLE, static_polarizability_total, num_of_atoms, displs, MPI_DOUBLE, 0, MPI_COMM_WORLD);
-    MPI_Gatherv(rank_metric_local, nlocal, MPI_DOUBLE, rank_metric_total, num_of_atoms, displs, MPI_DOUBLE, 0, MPI_COMM_WORLD);
-    if (myrank==0)
-    {
-      /* then bring all the arrays together and perform the computation */
-      if (debug)
-      {
-        printf("number of atoms: ");
-        for (i=0;i<numprocs;i++)
-        {
-          if(i) printf(",");
-          printf("%d",num_of_atoms[i]);
-        }
-        printf("\nmax atoms: %d\ntotal atoms: %d\n",max_atoms,total_atoms);
-      }
-      for(i=0;i<total_atoms;i++)
-      {
-          x_total[i][0] = x_total_0[i];
-          x_total[i][1] = x_total_1[i];
-          x_total[i][2] = x_total_2[i];
-          ef_total[i][0] = ef_total_0[i];
-          ef_total[i][1] = ef_total_1[i];
-          ef_total[i][2] = ef_total_2[i];
-          mu_induced_total[i][0] = static_polarizability_total[i]*ef_total[i][0];
-          mu_induced_total[i][1] = static_polarizability_total[i]*ef_total[i][1];
-          mu_induced_total[i][2] = static_polarizability_total[i]*ef_total[i][2];
-          if(!polar_sor) mu_induced_total[i][0] *= polar_gamma;
-          if(!polar_sor) mu_induced_total[i][1] *= polar_gamma;
-          if(!polar_sor) mu_induced_total[i][2] *= polar_gamma;
-      }
-      iterations = DipoleSolverIterative();
-      if (debug&&myrank==0) fprintf(screen,"iterations: %d\n",iterations);
-    }
-    /* rename these so I don't have to worry about even more arrays */
-    double *mu_total_0 = x_total_0;
-    double *mu_total_1 = x_total_1;
-    double *mu_total_2 = x_total_2;
-    double *mu_local_0 = x_local_0;
-    double *mu_local_1 = x_local_1;
-    double *mu_local_2 = x_local_2;
-    if (myrank==0)
-    {
-      for (i=0;i<total_atoms;i++)
-      {
-        mu_total_0[i] = mu_induced_total[i][0];
-        mu_total_1[i] = mu_induced_total[i][1];
-        mu_total_2[i] = mu_induced_total[i][2];
-        ef_total_0[i] = ef_induced[i][0];
-        ef_total_1[i] = ef_induced[i][1];
-        ef_total_2[i] = ef_induced[i][2];
-      }
-    }
-    MPI_Scatterv(mu_total_0, num_of_atoms, displs, MPI_DOUBLE, mu_local_0, nlocal, MPI_DOUBLE, 0, MPI_COMM_WORLD);
-    MPI_Scatterv(mu_total_1, num_of_atoms, displs, MPI_DOUBLE, mu_local_1, nlocal, MPI_DOUBLE, 0, MPI_COMM_WORLD);
-    MPI_Scatterv(mu_total_2, num_of_atoms, displs, MPI_DOUBLE, mu_local_2, nlocal, MPI_DOUBLE, 0, MPI_COMM_WORLD);
-    MPI_Scatterv(ef_total_0, num_of_atoms, displs, MPI_DOUBLE, ef_local_0, nlocal, MPI_DOUBLE, 0, MPI_COMM_WORLD);
-    MPI_Scatterv(ef_total_1, num_of_atoms, displs, MPI_DOUBLE, ef_local_1, nlocal, MPI_DOUBLE, 0, MPI_COMM_WORLD);
-    MPI_Scatterv(ef_total_2, num_of_atoms, displs, MPI_DOUBLE, ef_local_2, nlocal, MPI_DOUBLE, 0, MPI_COMM_WORLD);
-    for (i=0;i<nlocal;i++)
-    {
-      mu_induced[i][0] = mu_local_0[i];
-      mu_induced[i][1] = mu_local_1[i];
-      mu_induced[i][2] = mu_local_2[i];
-      ef_induced[i][0] = ef_local_0[i];
-      ef_induced[i][1] = ef_local_1[i];
-      ef_induced[i][2] = ef_local_2[i];
-    }
-  } else {
-    /* or just solve it normally */
-    iterations = DipoleSolverIterative();
-    if (debug) fprintf(screen,"iterations: %d\n",iterations);
-  }
+  /* solve for the induced dipoles */
+  iterations = DipoleSolverIterative();
+  if (debug) fprintf(screen,"iterations: %d\n",iterations);
 
+  /* debugging energy calculation - not actually used, should be the same as the polarization energy
+     calculated from the pairwise forces */
   double u_polar = 0.0;
-  if (eflag)
+  if (debug)
   {
     for (i=0;i<nlocal;i++)
     {
       u_polar += ef_static[i][0]*mu_induced[i][0] + ef_static[i][1]*mu_induced[i][1] + ef_static[i][2]*mu_induced[i][2];
     }
     u_polar *= -0.5;
+    printf("u_polar: %.18f\n",u_polar);
   }
-  if (debug) printf("u_polar: %.18f\n",u_polar);
 
   /* variables for dipole forces */
   double forcecoulx,forcecouly,forcecoulz,fx,fy,fz;
@@ -649,9 +414,9 @@ void PairLJCutCoulLongPolarization::compute(int eflag, int vflag)
     ytmp = x[i][1];
     ztmp = x[i][2];
 
-    if (eflag&&static_polarizability[i]!=0.0) {
+    /* self interaction energy */
+    if (eflag&&static_polarizability[i]!=0.0)
       u_polar_self += 0.5 * (mu[i][0]*mu[i][0]+mu[i][1]*mu[i][1]+mu[i][2]*mu[i][2])/static_polarizability[i];
-    }
 
     for (j = i+1; j < nlocal; j++) {
       domain->closest_image(x[i],x[j],xjimage);
@@ -672,11 +437,13 @@ void PairLJCutCoulLongPolarization::compute(int eflag, int vflag)
 
       if (rsq < cut_coulsq)
       {
+
         if ( (molecule[i]!=molecule[j])||molecule[i]==0 )
         {
           dvdrr = 1.0/rsq + f_shift;
           ef_temp = dvdrr*1.0/r*elementary_charge_to_sqrt_energy_length;
 
+          /* dipole on i, charge on j interaction */
           if (static_polarizability[i]!=0.0&&q[j]!=0.0)
           {
             common_factor = q[j]*elementary_charge_to_sqrt_energy_length*r3inv;
@@ -699,18 +466,19 @@ void PairLJCutCoulLongPolarization::compute(int eflag, int vflag)
             }
           }
 
+          /* dipole on j, charge on i interaction */
           if (static_polarizability[j]!=0.0&&qtmp!=0.0)
           {
             common_factor = qtmp*elementary_charge_to_sqrt_energy_length*r3inv;
             forcecoulx -= common_factor * (mu[j][0] * ((-2.0*xsq+ysq+zsq)*r2inv + f_shift*(ysq+zsq)) + \
-                                           mu[j][1] * (-3.0*delx*dely*r2inv - f_shift*delx*dely) + \
-                                           mu[j][2] * (-3.0*delx*delz*r2inv - f_shift*delx*delz));
+                                             mu[j][1] * (-3.0*delx*dely*r2inv - f_shift*delx*dely) + \
+                                             mu[j][2] * (-3.0*delx*delz*r2inv - f_shift*delx*delz));
             forcecouly -= common_factor * (mu[j][0] * (-3.0*delx*dely*r2inv - f_shift*delx*dely) + \
-                                           mu[j][1] * ((-2.0*ysq+xsq+zsq)*r2inv + f_shift*(xsq+zsq)) + \
-                                           mu[j][2] * (-3.0*dely*delz*r2inv - f_shift*dely*delz));
+                                             mu[j][1] * ((-2.0*ysq+xsq+zsq)*r2inv + f_shift*(xsq+zsq)) + \
+                                             mu[j][2] * (-3.0*dely*delz*r2inv - f_shift*dely*delz));
             forcecoulz -= common_factor * (mu[j][0] * (-3.0*delx*delz*r2inv - f_shift*delx*delz) + \
-                                           mu[j][1] * (-3.0*dely*delz*r2inv - f_shift*dely*delz) + \
-                                           mu[j][2] * ((-2.0*zsq+xsq+ysq)*r2inv + f_shift*(xsq+ysq)));
+                                             mu[j][1] * (-3.0*dely*delz*r2inv - f_shift*dely*delz) + \
+                                             mu[j][2] * ((-2.0*zsq+xsq+ysq)*r2inv + f_shift*(xsq+ysq)));
             if (eflag)
             {
               ef_0 = ef_temp*qtmp*delx;
@@ -723,8 +491,10 @@ void PairLJCutCoulLongPolarization::compute(int eflag, int vflag)
         }
       }
 
+      /* dipole on i, dipole on j interaction */
       if (static_polarizability[i]!=0.0 && static_polarizability[j]!=0.0)
       {
+        /* exponential dipole-dipole damping */
         if(damping_type == DAMPING_EXPONENTIAL)
         {
           r5inv = r3inv*r2inv;
@@ -753,6 +523,7 @@ void PairLJCutCoulLongPolarization::compute(int eflag, int vflag)
             u_polar_dd += r3inv*pdotp*(1.0-term_1*term_2) - 3.0*r5inv*pidotr*pjdotr*(1.0-term_1*term_3);
           }
 
+          /* debug information */
           if (i==0)
           {
             forcedipolex += pre1*delx + pre2*mu[i][0] + pre3*mu[j][0] + pre4*delx + pre5*delx;
@@ -765,7 +536,9 @@ void PairLJCutCoulLongPolarization::compute(int eflag, int vflag)
             forcedipoley -= pre1*dely + pre2*mu[i][1] + pre3*mu[j][1] + pre4*dely + pre5*dely;
             forcedipolez -= pre1*delz + pre2*mu[i][2] + pre3*mu[j][2] + pre4*delz + pre5*delz;
           }
+          /* ---------------- */
         }
+        /* no dipole-dipole damping */
         else
         {
           r5inv = r3inv*r2inv;
@@ -788,6 +561,7 @@ void PairLJCutCoulLongPolarization::compute(int eflag, int vflag)
             u_polar_dd += r3inv*pdotp - 3.0*r5inv*pidotr*pjdotr;
           }
 
+          /* debug information */
           if (i==0)
           {
             forcedipolex += pre1*delx + pre2*mu[i][0] + pre3*mu[j][0];
@@ -800,37 +574,36 @@ void PairLJCutCoulLongPolarization::compute(int eflag, int vflag)
             forcedipoley -= pre1*dely + pre2*mu[i][1] + pre3*mu[j][1];
             forcedipolez -= pre1*delz + pre2*mu[i][2] + pre3*mu[j][2];
           }
+          /* ---------------- */
         }
       }
 
-      fx = forcecoulx;
-      fy = forcecouly;
-      fz = forcecoulz;
-
-      f[i][0] += fx;
-      f[i][1] += fy;
-      f[i][2] += fz;
+      f[i][0] += forcecoulx;
+      f[i][1] += forcecouly;
+      f[i][2] += forcecoulz;
 
       if (newton_pair || j < nlocal)
       {
-        f[j][0] -= fx;
-        f[j][1] -= fy;
-        f[j][2] -= fz;
+        f[j][0] -= forcecoulx;
+        f[j][1] -= forcecouly;
+        f[j][2] -= forcecoulz;
       }
 
+      /* debug information */
       if (i==0)
       {
-        forcetotalx += fx;
-        forcetotaly += fy;
-        forcetotalz += fz;
+        forcetotalx += forcecoulx;
+        forcetotaly += forcecouly;
+        forcetotalz += forcecoulz;
       }
       if (j==0)
       {
-        forcetotalx -= fx;
-        forcetotaly -= fy;
-        forcetotalz -= fz;
+        forcetotalx -= forcecoulx;
+        forcetotaly -= forcecouly;
+        forcetotalz -= forcecoulz;
       }
-      if (evflag) ev_tally_xyz(i,j,nlocal,newton_pair,0.0,0.0,fx,fy,fz,delx,dely,delz);
+      /* ---------------- */
+      if (evflag) ev_tally_xyz(i,j,nlocal,newton_pair,0.0,0.0,forcecoulx,forcecouly,forcecoulz,delx,dely,delz);
     }
   }
   u_polar = u_polar_self + u_polar_ef + u_polar_dd;
@@ -847,7 +620,7 @@ void PairLJCutCoulLongPolarization::compute(int eflag, int vflag)
 
   if (vflag_fdotr) virial_fdotr_compute();
 
-  /* DEBUGGING */
+  /* debugging information */
   if (debug)
   {
     FILE *file = NULL;
@@ -1032,29 +805,9 @@ void PairLJCutCoulLongPolarization::settings(int narg, char **arg)
       else if (strcmp("no",arg[iarg+1])==0) polar_gs_ranked = 0;
       else error->all(FLERR,"Illegal pair_style command");
     }
-    else if (strcmp("polar_sor",arg[iarg])==0)
-    {
-      if (polar_esor) error->all(FLERR,"polar_sor and polar_esor are mutually exclusive");
-      if (strcmp("yes",arg[iarg+1])==0) polar_sor = 1;
-      else if (strcmp("no",arg[iarg+1])==0) polar_sor = 0;
-      else error->all(FLERR,"Illegal pair_style command");
-    }
-    else if (strcmp("polar_esor",arg[iarg])==0)
-    {
-      if (polar_sor) error->all(FLERR,"sor and esor are mutually exclusive");
-      if (strcmp("yes",arg[iarg+1])==0) polar_esor = 1;
-      else if (strcmp("no",arg[iarg+1])==0) polar_esor = 0;
-      else error->all(FLERR,"Illegal pair_style command");
-    }
     else if (strcmp("polar_gamma",arg[iarg])==0)
     {
       polar_gamma = atof(arg[iarg+1]);
-    }
-    else if (strcmp("polar_min_image",arg[iarg])==0)
-    {
-      if (strcmp("yes",arg[iarg+1])==0) polar_min_image = 1;
-      else if (strcmp("no",arg[iarg+1])==0) polar_min_image = 0;
-      else error->all(FLERR,"Illegal pair_style command");
     }
     else if (strcmp("debug",arg[iarg])==0)
     {
@@ -1130,14 +883,9 @@ void PairLJCutCoulLongPolarization::init_style()
   // ensure use of KSpace long-range solver, set g_ewald
 
   if (force->kspace == NULL)
-  {
-    //error->all(FLERR,"Pair style is incompatible with KSpace style");
-    g_ewald = 42.0;
-  }
+    error->all(FLERR,"Pair style is incompatible with KSpace style");
   else
-  {
     g_ewald = force->kspace->g_ewald;
-  }
 
   // setup force tables
 
@@ -1454,6 +1202,17 @@ void PairLJCutCoulLongPolarization::write_restart_settings(FILE *fp)
   fwrite(&cut_coul,sizeof(double),1,fp);
   fwrite(&offset_flag,sizeof(int),1,fp);
   fwrite(&mix_flag,sizeof(int),1,fp);
+
+  fwrite(&iterations_max,sizeof(int),1,fp);
+  fwrite(&damping_type,sizeof(int),1,fp);
+  fwrite(&polar_damp,sizeof(double),1,fp);
+  fwrite(&zodid,sizeof(int),1,fp);
+  fwrite(&polar_precision,sizeof(double),1,fp);
+  fwrite(&fixed_iteration,sizeof(int),1,fp);
+  fwrite(&polar_gs,sizeof(int),1,fp);
+  fwrite(&polar_gs_ranked,sizeof(int),1,fp);
+  fwrite(&polar_gamma,sizeof(double),1,fp);
+  fwrite(&debug,sizeof(int),1,fp);
 }
 
 /* ----------------------------------------------------------------------
@@ -1467,11 +1226,33 @@ void PairLJCutCoulLongPolarization::read_restart_settings(FILE *fp)
     fread(&cut_coul,sizeof(double),1,fp);
     fread(&offset_flag,sizeof(int),1,fp);
     fread(&mix_flag,sizeof(int),1,fp);
+
+    fread(&iterations_max,sizeof(int),1,fp);
+    fread(&damping_type,sizeof(int),1,fp);
+    fread(&polar_damp,sizeof(double),1,fp);
+    fread(&zodid,sizeof(int),1,fp);
+    fread(&polar_precision,sizeof(double),1,fp);
+    fread(&fixed_iteration,sizeof(int),1,fp);
+    fread(&polar_gs,sizeof(int),1,fp);
+    fread(&polar_gs_ranked,sizeof(int),1,fp);
+    fread(&polar_gamma,sizeof(double),1,fp);
+    fread(&debug,sizeof(int),1,fp);
   }
   MPI_Bcast(&cut_lj_global,1,MPI_DOUBLE,0,world);
   MPI_Bcast(&cut_coul,1,MPI_DOUBLE,0,world);
   MPI_Bcast(&offset_flag,1,MPI_INT,0,world);
   MPI_Bcast(&mix_flag,1,MPI_INT,0,world);
+
+  MPI_Bcast(&iterations_max,1,MPI_INT,0,world);
+  MPI_Bcast(&damping_type,1,MPI_INT,0,world);
+  MPI_Bcast(&polar_damp,1,MPI_DOUBLE,0,world);
+  MPI_Bcast(&zodid,1,MPI_INT,0,world);
+  MPI_Bcast(&polar_precision,1,MPI_DOUBLE,0,world);
+  MPI_Bcast(&fixed_iteration,1,MPI_INT,0,world);
+  MPI_Bcast(&polar_gs,1,MPI_INT,0,world);
+  MPI_Bcast(&polar_gs_ranked,1,MPI_INT,0,world);
+  MPI_Bcast(&polar_gamma,1,MPI_DOUBLE,0,world);
+  MPI_Bcast(&debug,1,MPI_INT,0,world);
 }
 
 /* ----------------------------------------------------------------------
@@ -1579,26 +1360,12 @@ int PairLJCutCoulLongPolarization::DipoleSolverIterative()
   double **mu_induced = atom->mu_induced;
   double *rank_metric_solver = rank_metric;
   int nlocal = atom->nlocal;
-  int nghost = atom->nghost;
-  int ntotal = nlocal + nghost;
   int i,ii,j,jj,p,q,iterations,keep_iterating,keep_iterating_max,index;
-  double error;
+  double change;
 
-  if (polar_min_image)
-  {
-    nlocal = total_atoms;
-    nghost = 0;
-    ntotal = nlocal;
-    x = x_total;
-    static_polarizability = static_polarizability_total;
-    ef_static = ef_total;
-    mu_induced = mu_induced_total;
-    rank_metric_solver = rank_metric_total;
-  }
+  comm->forward_comm_pair(this);
+  MPI_Barrier(world);
 
-  /* send out ghost atom information to other processors and wait till they send it to us */
-  if (!polar_min_image) comm->forward_comm_pair(this);
-  if (!polar_min_image) MPI_Barrier(world);
   /* build dipole interaction tensor */
   build_dipole_field_matrix();
 
@@ -1638,7 +1405,7 @@ int PairLJCutCoulLongPolarization::DipoleSolverIterative()
     for(i = 0; i < nlocal; i++) {
       index = ranked_array[i];
       ii = index*3;
-      for(j = 0; j < ntotal; j++) {
+      for(j = 0; j < nlocal; j++) {
         jj = j*3;
         if(index != j) {
           for(p = 0; p < 3; p++)
@@ -1683,17 +1450,15 @@ int PairLJCutCoulLongPolarization::DipoleSolverIterative()
       {
         for(p = 0; p < 3; p++)
         {
-          error = pow(mu_induced_new[i][p] - mu_induced_old[i][p], 2.0);
-          if (error > pow(polar_precision,2))
+          change = pow(mu_induced_new[i][p] - mu_induced_old[i][p], 2.0);
+          if (change > pow(polar_precision,2))
           {
             keep_iterating = 1;
           }
         }
       }
-      if (!polar_min_image) {
-        MPI_Allreduce(&keep_iterating,&keep_iterating_max,1,MPI_INT,MPI_MAX,world);
-        keep_iterating = keep_iterating_max;
-      }
+      MPI_Allreduce(&keep_iterating,&keep_iterating_max,1,MPI_INT,MPI_MAX,world);
+      keep_iterating = keep_iterating_max;
     }
     else
     {
@@ -1704,18 +1469,12 @@ int PairLJCutCoulLongPolarization::DipoleSolverIterative()
     /* save the dipoles for the next pass */
     for(i = 0; i < nlocal; i++) {
       for(p = 0; p < 3; p++) {
-        /* allow for different successive over-relaxation schemes */
-        if(polar_sor)
-          mu_induced[i][p] = polar_gamma*mu_induced_new[i][p] + (1.0 - polar_gamma)*mu_induced_old[i][p];
-        else if(polar_esor)
-          mu_induced[i][p] = (1.0 - exp(-polar_gamma*iterations))*mu_induced_new[i][p] + exp(-polar_gamma*iterations)*mu_induced_old[i][p];
-        else
           mu_induced[i][p] = mu_induced_new[i][p];
       }
     }
 
-    if (!polar_min_image) comm->forward_comm_pair(this);
-    if (!polar_min_image) MPI_Barrier(world);
+    comm->forward_comm_pair(this);
+    MPI_Barrier(world);
 
     iterations++;
     /* divergence detection */
@@ -1726,7 +1485,7 @@ int PairLJCutCoulLongPolarization::DipoleSolverIterative()
         for(p = 0; p < 3; p++)
           mu_induced[i][p] = static_polarizability[i]*ef_static[i][p];
 
-      printf("Dipoles are diverging, setting dipoles to alpha*E\n");
+      error->warning(FLERR,"Dipoles are diverging, setting dipoles to alpha*E");
       return iterations;
     }
   }
@@ -1738,22 +1497,12 @@ int PairLJCutCoulLongPolarization::DipoleSolverIterative()
 void PairLJCutCoulLongPolarization::build_dipole_field_matrix()
 {
   int nlocal = atom->nlocal;
-  int nghost = atom->nghost;
-  int N = nlocal + nghost;
+  int N = nlocal;
   double **x = atom->x;
   double *static_polarizability = atom->static_polarizability;
   int i,j,ii,jj,p,q;
   double r,r2,r3,r5,s,v,damping_term1=1.0,damping_term2=1.0;
   double xjimage[3] = {0.0,0.0,0.0};
-
-  if (polar_min_image)
-  {
-    nlocal = total_atoms;
-    nghost = 0;
-    N = total_atoms;
-    x = x_total;
-    static_polarizability = static_polarizability_total;
-  }
 
   /* zero out the matrix */
   for (i=0;i<3*N;i++)
@@ -1782,13 +1531,11 @@ void PairLJCutCoulLongPolarization::build_dipole_field_matrix()
       jj = j*3;
 
       /* inverse displacements */
-      if (!polar_min_image) r2 = pow(x[i][0]-x[j][0],2)+pow(x[i][1]-x[j][1],2)+pow(x[i][2]-x[j][2],2);
-      else {
-        double xi[3] = {x[i][0],x[i][1],x[i][2]};
-        double xj[3] = {x[j][0],x[j][1],x[j][2]};
-        domain->closest_image(xi,xj,xjimage);
-        r2 = pow(xi[0]-xjimage[0],2)+pow(xi[1]-xjimage[1],2)+pow(xi[2]-xjimage[2],2);
-      }
+      double xi[3] = {x[i][0],x[i][1],x[i][2]};
+      double xj[3] = {x[j][0],x[j][1],x[j][2]};
+      domain->closest_image(xi,xj,xjimage);
+      r2 = pow(xi[0]-xjimage[0],2)+pow(xi[1]-xjimage[1],2)+pow(xi[2]-xjimage[2],2);
+
       r = sqrt(r2);
       if(r == 0.0)
         r3 = r5 = DBL_MAX;
@@ -1806,8 +1553,7 @@ void PairLJCutCoulLongPolarization::build_dipole_field_matrix()
       /* build the tensor */
       for(p = 0; p < 3; p++) {
         for(q = 0; q < 3; q++) {
-          if (!polar_min_image) dipole_field_matrix[ii+p][jj+q] = -3.0*(x[i][p]-x[j][p])*(x[i][q]-x[j][q])*damping_term2*r5;
-          else dipole_field_matrix[ii+p][jj+q] = -3.0*(x[i][p]-xjimage[p])*(x[i][q]-xjimage[q])*damping_term2*r5;
+          dipole_field_matrix[ii+p][jj+q] = -3.0*(x[i][p]-xjimage[p])*(x[i][q]-xjimage[q])*damping_term2*r5;
           /* additional diagonal term */
           if(p == q)
             dipole_field_matrix[ii+p][jj+q] += damping_term1*r3;

@@ -76,7 +76,7 @@ class PairLJCutCoulLongPolarization : public Pair {
   double *rank_metric;
   double rmin;
   int *ranked_array;
-  int ntotal_old,nlocal_old;
+  int nlocal_old;
   int iterations_max;
   void build_dipole_field_matrix();
   int DipoleSolverIterative();
@@ -87,16 +87,7 @@ class PairLJCutCoulLongPolarization : public Pair {
   double polar_precision;
   int fixed_iteration;
   int polar_gs,polar_gs_ranked;
-  int polar_sor,polar_esor,polar_gamma;
-  // minimum image stuff
-  int polar_min_image;
-  double *static_polarizability_total,*static_polarizability_local;
-  double *rank_metric_total,*rank_metric_local;
-  double *x_local_0,*x_local_1,*x_local_2,*x_total_0,*x_total_1,*x_total_2,**x_total;
-  double *ef_local_0,*ef_local_1,*ef_local_2,*ef_total_0,*ef_total_1,*ef_total_2,**ef_total;
-  double **mu_induced_total;
-  int max_atoms_old,total_atoms_old;
-  int *num_of_atoms,max_atoms,total_atoms;
+  double polar_gamma;
   /* ------------------ */
 };
 
@@ -125,10 +116,5 @@ E: Pair style is incompatible with KSpace style
 
 If a pair style with a long-range Coulombic component is selected,
 then a kspace style must also be used.
-
-E: Pair cutoff < Respa interior cutoff
-
-One or more pairwise cutoffs are too short to use with the specified
-rRESPA cutoffs.
 
 */
