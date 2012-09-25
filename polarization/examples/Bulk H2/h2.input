@@ -1,0 +1,49 @@
+variable  temperature  equal  298.15  # deg K
+variable  freq    equal  1  # freq of output
+variable  nstep      equal  100  # number of steps
+
+timestep  2
+
+units    real
+boundary  p p p
+atom_style  full
+
+# read data
+read_data  h2.data
+
+# set masses
+mass 1 0.00001 #H2G
+mass 2 1.00800 #H2E
+mass 3 0.00001 #H2N
+
+# set static polarizabilities
+set type 1 static_polarizability 0.69380 #H2G
+set type 2 static_polarizability 0.00044 #H2E
+set type 3 static_polarizability 0.00000 #H2N
+
+# ewald and pair style
+kspace_style  ewald 1.0e-6
+pair_style lj/cut/coul/long/polarization 2.5 6 precision 0.000000000000001 max_iterations 100 damp_type exponential damp 2.1304 polar_gs_ranked yes
+
+# Lorentz-Berthelot mixed LJ parameters for each pair
+pair_coeff 1 1 0.025363 3.155280 7.888200
+pair_coeff 1 2 0.000000 1.577640 3.944100
+pair_coeff 1 3 0.010451 2.762795 6.906987
+pair_coeff 2 2 0.000000 0.000000 0.000000
+pair_coeff 2 3 0.000000 1.185155 2.962887
+pair_coeff 3 3 0.004306 2.370310 5.925775
+
+# ensure self molecule interactions excluded
+special_bonds  lj/coul 0.0 0.0 0.0
+neigh_modify exclude molecule all
+
+# output observables
+thermo_style  custom step etotal ke pe evdwl ecoul elong epol temp press
+thermo    ${freq}
+
+# can be viewed with vmd -lammpstrj ./h2.dump
+dump    Dump all custom ${freq} h2.dump x y z type mol
+
+velocity  all create ${temperature} 12345 rot yes mom yes dist gaussian
+fix    rigid_nve all rigid/nve molecule
+run    ${nstep}

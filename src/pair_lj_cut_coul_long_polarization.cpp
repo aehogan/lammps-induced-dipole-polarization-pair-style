@@ -66,12 +66,14 @@ PairLJCutCoulLongPolarization::PairLJCutCoulLongPolarization(LAMMPS *lmp) : Pair
   damping_type = DAMPING_NONE;
   polar_damp = 2.1304;
   zodid = 0;
-  polar_precision = 0.000001;
+  polar_precision = 0.0000001;
   fixed_iteration = 0;
 
   polar_gs = 0;
   polar_gs_ranked = 0;
   polar_gamma = 1.0;
+
+  use_previous = 0;
 
   debug = 0;
   /* end defaults */
@@ -351,6 +353,7 @@ void PairLJCutCoulLongPolarization::compute(int eflag, int vflag)
   }
 
   double **mu_induced = atom->mu_induced;
+  double **previous_mu_induced = atom->previous_mu_induced;
 
   int p,iterations;
 
@@ -361,17 +364,37 @@ void PairLJCutCoulLongPolarization::compute(int eflag, int vflag)
     ef_static[i][0] = ef_static[i][0]*elementary_charge_to_sqrt_energy_length;
     ef_static[i][1] = ef_static[i][1]*elementary_charge_to_sqrt_energy_length;
     ef_static[i][2] = ef_static[i][2]*elementary_charge_to_sqrt_energy_length;
-    mu_induced[i][0] = static_polarizability[i]*ef_static[i][0];
-    mu_induced[i][1] = static_polarizability[i]*ef_static[i][1];
-    mu_induced[i][2] = static_polarizability[i]*ef_static[i][2];
-    mu_induced[i][0] *= polar_gamma;
-    mu_induced[i][1] *= polar_gamma;
-    mu_induced[i][2] *= polar_gamma;
+    /* set the first guess to the last dipole if using use_previous */
+    if (use_previous&&!zodid)
+    {
+      mu_induced[i][0] = previous_mu_induced[i][0];
+      mu_induced[i][1] = previous_mu_induced[i][1];
+      mu_induced[i][2] = previous_mu_induced[i][2];
+    }
+    else
+    {
+      mu_induced[i][0] = static_polarizability[i]*ef_static[i][0];
+      mu_induced[i][1] = static_polarizability[i]*ef_static[i][1];
+      mu_induced[i][2] = static_polarizability[i]*ef_static[i][2];
+      mu_induced[i][0] *= polar_gamma;
+      mu_induced[i][1] *= polar_gamma;
+      mu_induced[i][2] *= polar_gamma;
+    }
   }
 
   /* solve for the induced dipoles */
-  iterations = DipoleSolverIterative();
+  if (!zodid) iterations = DipoleSolverIterative();
+  else iterations = 0;
   if (debug) fprintf(screen,"iterations: %d\n",iterations);
+
+  if (use_previous)
+  {
+    for (i = 0; i < nlocal; i++) {
+      previous_mu_induced[i][0] = mu_induced[i][0];
+      previous_mu_induced[i][1] = mu_induced[i][1];
+      previous_mu_induced[i][2] = mu_induced[i][2];
+    }
+  }
 
   /* debugging energy calculation - not actually used, should be the same as the polarization energy
      calculated from the pairwise forces */
@@ -398,9 +421,6 @@ void PairLJCutCoulLongPolarization::compute(int eflag, int vflag)
   forcetotalx = forcetotaly = forcetotalz = 0.0;
   forcedipolex = forcedipoley = forcedipolez = 0.0;
   forceefx = forceefy = forceefz = 0.0;
-
-  comm->forward_comm_pair(this);
-  MPI_Barrier(world);
 
   /* dipole forces */
   u_polar = 0.0;
@@ -813,6 +833,12 @@ void PairLJCutCoulLongPolarization::settings(int narg, char **arg)
     {
       if (strcmp("yes",arg[iarg+1])==0) debug = 1;
       else if (strcmp("no",arg[iarg+1])==0) debug = 0;
+      else error->all(FLERR,"Illegal pair_style command");
+    }
+    else if (strcmp("use_previous",arg[iarg])==0)
+    {
+      if (strcmp("yes",arg[iarg+1])==0) use_previous = 1;
+      else if (strcmp("no",arg[iarg+1])==0) use_previous = 0;
       else error->all(FLERR,"Illegal pair_style command");
     }
     else error->all(FLERR,"Illegal pair_style command");
@@ -1358,13 +1384,9 @@ int PairLJCutCoulLongPolarization::DipoleSolverIterative()
   double **ef_static = atom->ef_static;
   double *static_polarizability = atom->static_polarizability;
   double **mu_induced = atom->mu_induced;
-  double *rank_metric_solver = rank_metric;
   int nlocal = atom->nlocal;
   int i,ii,j,jj,p,q,iterations,keep_iterating,keep_iterating_max,index;
   double change;
-
-  comm->forward_comm_pair(this);
-  MPI_Barrier(world);
 
   /* build dipole interaction tensor */
   build_dipole_field_matrix();
@@ -1378,7 +1400,7 @@ int PairLJCutCoulLongPolarization::DipoleSolverIterative()
     int tmp,sorted;
     for(i = 0; i < nlocal; i++) {
       for(j = 0, sorted = 1; j < (nlocal-1); j++) {
-        if(rank_metric_solver[ranked_array[j]] < rank_metric_solver[ranked_array[j+1]]) {
+        if(rank_metric[ranked_array[j]] < rank_metric[ranked_array[j+1]]) {
           sorted = 0;
           tmp = ranked_array[j];
           ranked_array[j] = ranked_array[j+1];
@@ -1426,8 +1448,6 @@ int PairLJCutCoulLongPolarization::DipoleSolverIterative()
 
     } /* end i */
 
-    if (zodid) return 0;
-
     /* get the dipole RRMS */
     for(i = 0; i < nlocal; i++) {
 
@@ -1473,9 +1493,6 @@ int PairLJCutCoulLongPolarization::DipoleSolverIterative()
       }
     }
 
-    comm->forward_comm_pair(this);
-    MPI_Barrier(world);
-
     iterations++;
     /* divergence detection */
     /* if we fail to converge, then set dipoles to alpha*E */
@@ -1485,7 +1502,7 @@ int PairLJCutCoulLongPolarization::DipoleSolverIterative()
         for(p = 0; p < 3; p++)
           mu_induced[i][p] = static_polarizability[i]*ef_static[i][p];
 
-      error->warning(FLERR,"Dipoles are diverging, setting dipoles to alpha*E");
+      error->warning(FLERR,"Number of iterations exceeding max_iterations, setting dipoles to alpha*E");
       return iterations;
     }
   }

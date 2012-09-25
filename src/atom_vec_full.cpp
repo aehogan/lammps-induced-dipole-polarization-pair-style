@@ -75,6 +75,7 @@ void AtomVecFull::grow(int n)
   static_polarizability = memory->grow(atom->static_polarizability,nmax,"atom:static_polarizability");
   ef_static = memory->grow(atom->ef_static,nmax,3,"atom:ef_static");
   mu_induced = memory->grow(atom->mu_induced,nmax,3,"atom:mu_induced");
+  previous_mu_induced = memory->grow(atom->previous_mu_induced,nmax,3,"atom:previous_mu_induced");
 
   nspecial = memory->grow(atom->nspecial,nmax,3,"atom:nspecial");
   special = memory->grow(atom->special,nmax,atom->maxspecial,"atom:special");
@@ -158,6 +159,7 @@ void AtomVecFull::grow_reset()
   static_polarizability = atom->static_polarizability;
   ef_static = atom->ef_static;
   mu_induced = atom->mu_induced;
+  previous_mu_induced = atom->previous_mu_induced;
 }
 
 /* ----------------------------------------------------------------------
@@ -189,6 +191,9 @@ void AtomVecFull::copy(int i, int j, int delflag)
   mu_induced[j][0] = mu_induced[i][0];
   mu_induced[j][1] = mu_induced[i][1];
   mu_induced[j][2] = mu_induced[i][2];
+  previous_mu_induced[j][0] = previous_mu_induced[i][0];
+  previous_mu_induced[j][1] = previous_mu_induced[i][1];
+  previous_mu_induced[j][2] = previous_mu_induced[i][2];
 
   num_bond[j] = num_bond[i];
   for (k = 0; k < num_bond[j]; k++) {
@@ -625,6 +630,9 @@ int AtomVecFull::pack_exchange(int i, double *buf)
   buf[m++] = mu_induced[i][0];
   buf[m++] = mu_induced[i][1];
   buf[m++] = mu_induced[i][2];
+  buf[m++] = previous_mu_induced[i][0];
+  buf[m++] = previous_mu_induced[i][1];
+  buf[m++] = previous_mu_induced[i][2];
 
   buf[m++] = num_bond[i];
   for (k = 0; k < num_bond[i]; k++) {
@@ -702,6 +710,9 @@ int AtomVecFull::unpack_exchange(double *buf)
   mu_induced[nlocal][0] = buf[m++];
   mu_induced[nlocal][1] = buf[m++];
   mu_induced[nlocal][2] = buf[m++];
+  previous_mu_induced[nlocal][0] = buf[m++];
+  previous_mu_induced[nlocal][1] = buf[m++];
+  previous_mu_induced[nlocal][2] = buf[m++];
 
   num_bond[nlocal] = static_cast<int> (buf[m++]);
   for (k = 0; k < num_bond[nlocal]; k++) {
@@ -805,6 +816,9 @@ int AtomVecFull::pack_restart(int i, double *buf)
   buf[m++] = mu_induced[i][0];
   buf[m++] = mu_induced[i][1];
   buf[m++] = mu_induced[i][2];
+  buf[m++] = previous_mu_induced[i][0];
+  buf[m++] = previous_mu_induced[i][1];
+  buf[m++] = previous_mu_induced[i][2];
 
   buf[m++] = num_bond[i];
   for (k = 0; k < num_bond[i]; k++) {
@@ -883,6 +897,9 @@ int AtomVecFull::unpack_restart(double *buf)
   mu_induced[nlocal][0] = buf[m++];
   mu_induced[nlocal][1] = buf[m++];
   mu_induced[nlocal][2] = buf[m++];
+  previous_mu_induced[nlocal][0] = buf[m++];
+  previous_mu_induced[nlocal][1] = buf[m++];
+  previous_mu_induced[nlocal][2] = buf[m++];
 
   num_bond[nlocal] = static_cast<int> (buf[m++]);
   for (k = 0; k < num_bond[nlocal]; k++) {
@@ -963,6 +980,9 @@ void AtomVecFull::create_atom(int itype, double *coord)
   mu_induced[nlocal][0] = 0.0;
   mu_induced[nlocal][1] = 0.0;
   mu_induced[nlocal][2] = 0.0;
+  previous_mu_induced[nlocal][0] = 0.0;
+  previous_mu_induced[nlocal][1] = 0.0;
+  previous_mu_induced[nlocal][2] = 0.0;
 
   atom->nlocal++;
 }
@@ -1011,6 +1031,9 @@ void AtomVecFull::data_atom(double *coord, tagint imagetmp, char **values)
   mu_induced[nlocal][0] = 0.0;
   mu_induced[nlocal][1] = 0.0;
   mu_induced[nlocal][2] = 0.0;
+  previous_mu_induced[nlocal][0] = 0.0;
+  previous_mu_induced[nlocal][1] = 0.0;
+  previous_mu_induced[nlocal][2] = 0.0;
 
   atom->nlocal++;
 }
@@ -1037,6 +1060,9 @@ int AtomVecFull::data_atom_hybrid(int nlocal, char **values)
   mu_induced[nlocal][0] = 0.0;
   mu_induced[nlocal][1] = 0.0;
   mu_induced[nlocal][2] = 0.0;
+  previous_mu_induced[nlocal][0] = 0.0;
+  previous_mu_induced[nlocal][1] = 0.0;
+  previous_mu_induced[nlocal][2] = 0.0;
 
   return 2;
 }
@@ -1106,6 +1132,7 @@ bigint AtomVecFull::memory_usage()
   if (atom->memcheck("static_polarizability")) bytes += memory->usage(static_polarizability,nmax);
   if (atom->memcheck("ef_static")) bytes += memory->usage(ef_static,nmax,3);
   if (atom->memcheck("mu_induced")) bytes += memory->usage(mu_induced,nmax,3);
+  if (atom->memcheck("previous_mu_induced")) bytes += memory->usage(previous_mu_induced,nmax,3);
 
   return bytes;
 }
