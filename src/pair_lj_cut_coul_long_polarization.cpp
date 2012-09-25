@@ -83,7 +83,6 @@ PairLJCutCoulLongPolarization::PairLJCutCoulLongPolarization(LAMMPS *lmp) : Pair
   memory->create(ef_induced,nlocal,3,"pair:ef_induced");
   memory->create(mu_induced_new,nlocal,3,"pair:mu_induced_new");
   memory->create(mu_induced_old,nlocal,3,"pair:mu_induced_old");
-  memory->create(dipole_rrms,nlocal,"pair:dipole_rrms");
   memory->create(dipole_field_matrix,3*nlocal,3*nlocal,"pair:dipole_field_matrix");
   memory->create(ranked_array,nlocal,"pair:ranked_array");
   memory->create(rank_metric,nlocal,"pair:rank_metric");
@@ -113,7 +112,6 @@ PairLJCutCoulLongPolarization::~PairLJCutCoulLongPolarization()
   memory->destroy(ef_induced);
   memory->destroy(mu_induced_new);
   memory->destroy(mu_induced_old);
-  memory->destroy(dipole_rrms);
   memory->destroy(dipole_field_matrix);
   memory->destroy(ranked_array);
   memory->destroy(rank_metric);
@@ -131,8 +129,6 @@ void PairLJCutCoulLongPolarization::compute(int eflag, int vflag)
   /* reallocate arrays if number of atoms grew */
   if (nlocal > nlocal_old)
   {
-    memory->destroy(dipole_rrms);
-    memory->create(dipole_rrms,nlocal,"pair:dipole_rrms");
     memory->destroy(ef_induced);
     memory->create(ef_induced,nlocal,3,"pair:ef_induced");
     memory->destroy(mu_induced_new);
@@ -1385,7 +1381,7 @@ int PairLJCutCoulLongPolarization::DipoleSolverIterative()
   double *static_polarizability = atom->static_polarizability;
   double **mu_induced = atom->mu_induced;
   int nlocal = atom->nlocal;
-  int i,ii,j,jj,p,q,iterations,keep_iterating,keep_iterating_max,index;
+  int i,ii,j,jj,p,q,iterations,keep_iterating,index;
   double change;
 
   /* build dipole interaction tensor */
@@ -1448,37 +1444,34 @@ int PairLJCutCoulLongPolarization::DipoleSolverIterative()
 
     } /* end i */
 
-    /* get the dipole RRMS */
-    for(i = 0; i < nlocal; i++) {
-
-      /* mean square difference */
-      dipole_rrms[i] = 0;
-      for(p = 0; p < 3; p++)
-        dipole_rrms[i] += pow((mu_induced_new[i][p] - mu_induced_old[i][p]), 2.0);
-
-      /* normalize */
-      dipole_rrms[i] /=  pow(mu_induced_new[i][0], 2.0) + pow(mu_induced_new[i][1], 2.0) + pow(mu_induced_new[i][2], 2.0);
-      dipole_rrms[i] = sqrt(dipole_rrms[i]);
-
+    double u_polar = 0.0;
+    if (debug)
+    {
+      for (i=0;i<nlocal;i++)
+      {
+        u_polar += ef_static[i][0]*mu_induced[i][0] + ef_static[i][1]*mu_induced[i][1] + ef_static[i][2]*mu_induced[i][2];
+      }
+      u_polar *= -0.5;
+      printf("u_polar %d: %.18f\n",iterations,u_polar);
     }
 
     /* determine if we are done by precision */
     if (fixed_iteration==0)
     {
       keep_iterating = 0;
+      change = 0;
       for(i = 0; i < nlocal; i++)
       {
         for(p = 0; p < 3; p++)
         {
-          change = pow(mu_induced_new[i][p] - mu_induced_old[i][p], 2.0);
-          if (change > pow(polar_precision,2))
-          {
-            keep_iterating = 1;
-          }
+          change += (mu_induced_new[i][p] - mu_induced_old[i][p])*(mu_induced_new[i][p] - mu_induced_old[i][p]);
         }
       }
-      MPI_Allreduce(&keep_iterating,&keep_iterating_max,1,MPI_INT,MPI_MAX,world);
-      keep_iterating = keep_iterating_max;
+      change /= (double)(nlocal)*3.0;
+      if (change > polar_precision*polar_precision)
+      {
+        keep_iterating = 1;
+      }
     }
     else
     {

@@ -2,7 +2,7 @@
 
 variable  temperature  equal  298.15  # deg K
 variable  freq    equal  1  # freq of output
-variable  nstep      equal  2  # number of steps
+variable  nstep      equal  0  # number of steps
 
 timestep  1
 
@@ -67,7 +67,7 @@ set type 24 static_polarizability 0.00000 #H2N
 
 # ewald and pair style
 kspace_style  ewald 1.0e-6
-pair_style lj/cut/coul/long/polarization 2.5 6 precision 0.000000000000001 max_iterations 100 damp_type exponential damp 2.1304 polar_gs_ranked yes debug yes use_previous no
+pair_style lj/cut/coul/long/polarization 2.5 6 precision 0.0000000001 max_iterations 100 damp_type exponential damp 2.1304 polar_gs_ranked yes debug yes use_previous no
 
 # Lorentz-Berthelot mixed LJ parameters for each pair
 pair_coeff 1 1 0.004999 3.114000 7.785000

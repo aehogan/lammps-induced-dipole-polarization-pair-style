@@ -72,7 +72,6 @@ class PairLJCutCoulLongPolarization : public Pair {
   double **ef_induced;
   double **dipole_field_matrix;
   double **mu_induced_new,**mu_induced_old;
-  double *dipole_rrms;
   double *rank_metric;
   double rmin;
   int *ranked_array;

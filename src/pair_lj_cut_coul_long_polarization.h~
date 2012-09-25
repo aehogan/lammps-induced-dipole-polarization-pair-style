@@ -87,6 +87,7 @@ class PairLJCutCoulLongPolarization : public Pair {
   double polar_precision;
   int fixed_iteration;
   int polar_gs,polar_gs_ranked;
+  int use_previous;
   double polar_gamma;
   /* ------------------ */
 };
