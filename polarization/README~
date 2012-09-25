@@ -6,11 +6,4 @@ set type 1 static_polarizability 2.19630
 
 and the pair style is set the normal way.
 
-pair_style lj/cut/coul/long/polarization command
-
-
-syntax
-
-pair_style lj/cut/coul/long/polarization args
-
 

@@ -762,7 +762,7 @@ void PairLJCutCoulLongPolarization::settings(int narg, char **arg)
     if (iarg+2 > narg) error->all(FLERR,"Illegal pair_style command");
     if (strcmp("precision",arg[iarg])==0)
     {
-      polar_precision = atof(arg[iarg+1]);
+      polar_precision = force->numeric(arg[iarg+1]);
     }
     else if (strcmp("zodid",arg[iarg])==0)
     {
@@ -779,11 +779,11 @@ void PairLJCutCoulLongPolarization::settings(int narg, char **arg)
     }
     else if (strcmp("damp",arg[iarg])==0)
     {
-      polar_damp = atof(arg[iarg+1]);
+      polar_damp = force->numeric(arg[iarg+1]);
     }
     else if (strcmp("max_iterations",arg[iarg])==0)
     {
-      iterations_max = atoi(arg[iarg+1]);
+      iterations_max = force->inumeric(arg[iarg+1]);
     }
     else if (strcmp("damp_type",arg[iarg])==0)
     {
@@ -807,7 +807,7 @@ void PairLJCutCoulLongPolarization::settings(int narg, char **arg)
     }
     else if (strcmp("polar_gamma",arg[iarg])==0)
     {
-      polar_gamma = atof(arg[iarg+1]);
+      polar_gamma = force->numeric(arg[iarg+1]);
     }
     else if (strcmp("debug",arg[iarg])==0)
     {
