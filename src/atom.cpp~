@@ -89,6 +89,7 @@ Atom::Atom(LAMMPS *lmp) : Pointers(lmp)
   static_polarizability = NULL;
   ef_static = NULL;
   mu_induced = NULL;
+  previous_mu_induced = NULL;
 
   maxspecial = 1;
   nspecial = NULL;
@@ -201,6 +202,7 @@ Atom::~Atom()
   memory->destroy(static_polarizability);
   memory->destroy(ef_static);
   memory->destroy(mu_induced);
+  memory->destroy(previous_mu_induced);
 
   memory->destroy(molecule);
 

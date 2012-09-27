@@ -62,7 +62,7 @@ class Atom : protected Pointers {
   double *e, *de;
   double **vest;
   double *cv;
-  double *static_polarizability,**ef_static,**mu_induced,**previous_mu_induced;
+  double *static_polarizability,**ef_static,**mu_induced;
   int static_polarizability_flag;
 
   int **nspecial;               // 0,1,2 = cummulative # of 1-2,1-3,1-4 neighs

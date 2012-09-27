@@ -1132,6 +1132,7 @@ bigint AtomVecFull::memory_usage()
   if (atom->memcheck("static_polarizability")) bytes += memory->usage(static_polarizability,nmax);
   if (atom->memcheck("ef_static")) bytes += memory->usage(ef_static,nmax,3);
   if (atom->memcheck("mu_induced")) bytes += memory->usage(mu_induced,nmax,3);
+  if (atom->memcheck("previous_mu_induced")) bytes += memory->usage(previous_mu_induced,nmax,3);
 
   return bytes;
 }

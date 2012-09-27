@@ -349,7 +349,6 @@ void PairLJCutCoulLongPolarization::compute(int eflag, int vflag)
   }
 
   double **mu_induced = atom->mu_induced;
-  double **previous_mu_induced = atom->previous_mu_induced;
 
   int p,iterations;
 
@@ -357,18 +356,14 @@ void PairLJCutCoulLongPolarization::compute(int eflag, int vflag)
 
   /* set the static electric field and first guess to alpha*E */
   for (i = 0; i < nlocal; i++) {
+    /* it is more convenient to work in gaussian-like units for charges and electric fields */
     ef_static[i][0] = ef_static[i][0]*elementary_charge_to_sqrt_energy_length;
     ef_static[i][1] = ef_static[i][1]*elementary_charge_to_sqrt_energy_length;
     ef_static[i][2] = ef_static[i][2]*elementary_charge_to_sqrt_energy_length;
-    /* set the first guess to the last dipole if using use_previous */
-    if (use_previous&&!zodid)
+    /* don't reset the induced dipoles if use_previous is on */
+    if (!use_previous)
     {
-      mu_induced[i][0] = previous_mu_induced[i][0];
-      mu_induced[i][1] = previous_mu_induced[i][1];
-      mu_induced[i][2] = previous_mu_induced[i][2];
-    }
-    else
-    {
+      /* otherwise set it to alpha*E */
       mu_induced[i][0] = static_polarizability[i]*ef_static[i][0];
       mu_induced[i][1] = static_polarizability[i]*ef_static[i][1];
       mu_induced[i][2] = static_polarizability[i]*ef_static[i][2];
@@ -382,15 +377,6 @@ void PairLJCutCoulLongPolarization::compute(int eflag, int vflag)
   if (!zodid) iterations = DipoleSolverIterative();
   else iterations = 0;
   if (debug) fprintf(screen,"iterations: %d\n",iterations);
-
-  if (use_previous)
-  {
-    for (i = 0; i < nlocal; i++) {
-      previous_mu_induced[i][0] = mu_induced[i][0];
-      previous_mu_induced[i][1] = mu_induced[i][1];
-      previous_mu_induced[i][2] = mu_induced[i][2];
-    }
-  }
 
   /* debugging energy calculation - not actually used, should be the same as the polarization energy
      calculated from the pairwise forces */
@@ -435,6 +421,7 @@ void PairLJCutCoulLongPolarization::compute(int eflag, int vflag)
       u_polar_self += 0.5 * (mu[i][0]*mu[i][0]+mu[i][1]*mu[i][1]+mu[i][2]*mu[i][2])/static_polarizability[i];
 
     for (j = i+1; j < nlocal; j++) {
+      /* using minimum image again */
       domain->closest_image(x[i],x[j],xjimage);
       delx = xtmp - xjimage[0];
       dely = ytmp - xjimage[1];
