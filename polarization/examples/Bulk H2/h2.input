@@ -23,7 +23,7 @@ set type 3 static_polarizability 0.00000 #H2N
 
 # ewald and pair style
 kspace_style  ewald 1.0e-6
-pair_style lj/cut/coul/long/polarization 2.5 6 precision 0.000000000000001 max_iterations 100 damp_type exponential damp 2.1304 polar_gs_ranked yes
+pair_style lj/cut/coul/long/polarization 2.5 10.797442 damp_type exponential damp 2.1304 polar_gs_ranked yes
 
 # Lorentz-Berthelot mixed LJ parameters for each pair
 pair_coeff 1 1 0.025363 3.155280 7.888200

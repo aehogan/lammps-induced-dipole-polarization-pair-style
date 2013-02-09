@@ -66,12 +66,12 @@ PairLJCutCoulLongPolarization::PairLJCutCoulLongPolarization(LAMMPS *lmp) : Pair
   damping_type = DAMPING_NONE;
   polar_damp = 2.1304;
   zodid = 0;
-  polar_precision = 0.0000001;
+  polar_precision = 0.00000000001;
   fixed_iteration = 0;
 
   polar_gs = 0;
-  polar_gs_ranked = 0;
-  polar_gamma = 1.0;
+  polar_gs_ranked = 1;
+  polar_gamma = 1.03;
 
   use_previous = 0;
 
@@ -328,12 +328,13 @@ void PairLJCutCoulLongPolarization::compute(int eflag, int vflag)
       delz = ztmp - xjimage[2];
       rsq = delx*delx + dely*dely + delz*delz;
 
-      if (rsq < cut_coulsq)
+      if (rsq <= cut_coulsq)
       {
         if ( (molecule[i]!=molecule[j])||molecule[i]==0 )
         {
           r = sqrt(rsq);
 
+          /* Use wolf to calculate the electric field (no damping) */
           dvdrr = 1.0/rsq + f_shift;
           ef_temp = dvdrr*1.0/r;
 
@@ -421,7 +422,7 @@ void PairLJCutCoulLongPolarization::compute(int eflag, int vflag)
       u_polar_self += 0.5 * (mu[i][0]*mu[i][0]+mu[i][1]*mu[i][1]+mu[i][2]*mu[i][2])/static_polarizability[i];
 
     for (j = i+1; j < nlocal; j++) {
-      /* using minimum image again */
+      /* using minimum image again to be consistent */
       domain->closest_image(x[i],x[j],xjimage);
       delx = xtmp - xjimage[0];
       dely = ytmp - xjimage[1];
@@ -443,6 +444,7 @@ void PairLJCutCoulLongPolarization::compute(int eflag, int vflag)
 
         if ( (molecule[i]!=molecule[j])||molecule[i]==0 )
         {
+          /* using wolf again */
           dvdrr = 1.0/rsq + f_shift;
           ef_temp = dvdrr*1.0/r*elementary_charge_to_sqrt_energy_length;
 
@@ -527,17 +529,20 @@ void PairLJCutCoulLongPolarization::compute(int eflag, int vflag)
           }
 
           /* debug information */
-          if (i==0)
+          if (debug)
           {
-            forcedipolex += pre1*delx + pre2*mu[i][0] + pre3*mu[j][0] + pre4*delx + pre5*delx;
-            forcedipoley += pre1*dely + pre2*mu[i][1] + pre3*mu[j][1] + pre4*dely + pre5*dely;
-            forcedipolez += pre1*delz + pre2*mu[i][2] + pre3*mu[j][2] + pre4*delz + pre5*delz;
-          }
-          if (j==0)
-          {
-            forcedipolex -= pre1*delx + pre2*mu[i][0] + pre3*mu[j][0] + pre4*delx + pre5*delx;
-            forcedipoley -= pre1*dely + pre2*mu[i][1] + pre3*mu[j][1] + pre4*dely + pre5*dely;
-            forcedipolez -= pre1*delz + pre2*mu[i][2] + pre3*mu[j][2] + pre4*delz + pre5*delz;
+            if (i==0)
+            {
+              forcedipolex += pre1*delx + pre2*mu[i][0] + pre3*mu[j][0] + pre4*delx + pre5*delx;
+              forcedipoley += pre1*dely + pre2*mu[i][1] + pre3*mu[j][1] + pre4*dely + pre5*dely;
+              forcedipolez += pre1*delz + pre2*mu[i][2] + pre3*mu[j][2] + pre4*delz + pre5*delz;
+            }
+            if (j==0)
+            {
+              forcedipolex -= pre1*delx + pre2*mu[i][0] + pre3*mu[j][0] + pre4*delx + pre5*delx;
+              forcedipoley -= pre1*dely + pre2*mu[i][1] + pre3*mu[j][1] + pre4*dely + pre5*dely;
+              forcedipolez -= pre1*delz + pre2*mu[i][2] + pre3*mu[j][2] + pre4*delz + pre5*delz;
+            }
           }
           /* ---------------- */
         }
@@ -565,17 +570,20 @@ void PairLJCutCoulLongPolarization::compute(int eflag, int vflag)
           }
 
           /* debug information */
-          if (i==0)
+          if (debug)
           {
-            forcedipolex += pre1*delx + pre2*mu[i][0] + pre3*mu[j][0];
-            forcedipoley += pre1*dely + pre2*mu[i][1] + pre3*mu[j][1];
-            forcedipolez += pre1*delz + pre2*mu[i][2] + pre3*mu[j][2];
-          }
-          if (j==0)
-          {
-            forcedipolex -= pre1*delx + pre2*mu[i][0] + pre3*mu[j][0];
-            forcedipoley -= pre1*dely + pre2*mu[i][1] + pre3*mu[j][1];
-            forcedipolez -= pre1*delz + pre2*mu[i][2] + pre3*mu[j][2];
+            if (i==0)
+            {
+              forcedipolex += pre1*delx + pre2*mu[i][0] + pre3*mu[j][0];
+              forcedipoley += pre1*dely + pre2*mu[i][1] + pre3*mu[j][1];
+              forcedipolez += pre1*delz + pre2*mu[i][2] + pre3*mu[j][2];
+            }
+            if (j==0)
+            {
+              forcedipolex -= pre1*delx + pre2*mu[i][0] + pre3*mu[j][0];
+              forcedipoley -= pre1*dely + pre2*mu[i][1] + pre3*mu[j][1];
+              forcedipolez -= pre1*delz + pre2*mu[i][2] + pre3*mu[j][2];
+            }
           }
           /* ---------------- */
         }
@@ -621,16 +629,17 @@ void PairLJCutCoulLongPolarization::compute(int eflag, int vflag)
   force->pair->eng_pol = u_polar;
 
 
+  /* the fdotr virial is probably off, haven't looked into it deeply */
   if (vflag_fdotr) virial_fdotr_compute();
 
-  /* debugging information */
+  /* debugging information, energy is given in kelvins in MPMC so there are conversions to compare between the two programs */
   if (debug)
   {
     FILE *file = NULL;
     int myrank;
     MPI_Comm_rank(MPI_COMM_WORLD, &myrank);
     char file_name[100];
-    /*sprintf(file_name,"tensor%d.csv",myrank);
+    sprintf(file_name,"tensor%d.csv",myrank);
     file = fopen(file_name, "w");
     for (i=0;i<3*nlocal;i++)
     {
@@ -641,7 +650,7 @@ void PairLJCutCoulLongPolarization::compute(int eflag, int vflag)
       }
     if (screen) fprintf(file,"\n");
     }
-    fclose(f);*/
+    fclose(file);
     double *charge = atom->q;
     sprintf(file_name,"pos%d.xyz",myrank);
     file = fopen(file_name, "w");
@@ -681,7 +690,7 @@ void PairLJCutCoulLongPolarization::compute(int eflag, int vflag)
     {
       for (j=0;j<3;j++)
       {
-        u_polar += ((ef_static[i][j])*22.43281842)*(mu_induced[i][j]*22.43281842); //convert to K*A for comparison
+        u_polar += ((ef_static[i][j])*22.432653052265)*(mu_induced[i][j]*22.432653052265); //convert to K*A for comparison
       }
     }
     u_polar *= -0.5;
@@ -692,11 +701,11 @@ void PairLJCutCoulLongPolarization::compute(int eflag, int vflag)
     fprintf(file,"u_polar: %f\n\n",u_polar);
     for (i=0;i<nlocal;i++)
     {
-      fprintf(file,"pos: %f,%f,%f ef_static: %f,%f,%f mu: ",x[i][0],x[i][1],x[i][2],ef_static[i][0]*22.43281842,ef_static[i][1]*22.43281842,ef_static[i][2]*22.43281842); //convert to sqrt(K) for comparison
+      fprintf(file,"pos: %.20f,%.20f,%.20f ef_static: %.10f,%.10f,%.10f mu: ",x[i][0],x[i][1],x[i][2],ef_static[i][0]*22.432653052265,ef_static[i][1]*22.432653052265,ef_static[i][2]*22.432653052265); //convert to sqrt(K) for comparison
       for (j=0;j<3;j++)
       {
         if (j!=0) fprintf(file,",");
-        if (screen) fprintf(file,"%f",mu_induced[i][j]*22.43281842); //convert to sqrt(K*A) for comparison
+        if (screen) fprintf(file,"%.10f",mu_induced[i][j]*22.432653052265); //convert to sqrt(K*A) for comparison
       }
     if (screen) fprintf(file,"\n");
     }
@@ -1363,7 +1372,6 @@ void *PairLJCutCoulLongPolarization::extract(const char *str, int &dim)
 
 int PairLJCutCoulLongPolarization::DipoleSolverIterative()
 {
-  double **x = atom->x;
   double **ef_static = atom->ef_static;
   double *static_polarizability = atom->static_polarizability;
   double **mu_induced = atom->mu_induced;
@@ -1439,7 +1447,7 @@ int PairLJCutCoulLongPolarization::DipoleSolverIterative()
         u_polar += ef_static[i][0]*mu_induced[i][0] + ef_static[i][1]*mu_induced[i][1] + ef_static[i][2]*mu_induced[i][2];
       }
       u_polar *= -0.5;
-      printf("u_polar %d: %.18f\n",iterations,u_polar);
+      printf("u_polar (K) %d: %.18f\n",iterations,u_polar*22.432653052265*22.432653052265);
     }
 
     /* determine if we are done by precision */
@@ -1493,8 +1501,7 @@ int PairLJCutCoulLongPolarization::DipoleSolverIterative()
 
 void PairLJCutCoulLongPolarization::build_dipole_field_matrix()
 {
-  int nlocal = atom->nlocal;
-  int N = nlocal;
+  int N = atom->nlocal;
   double **x = atom->x;
   double *static_polarizability = atom->static_polarizability;
   int i,j,ii,jj,p,q;
@@ -1537,8 +1544,8 @@ void PairLJCutCoulLongPolarization::build_dipole_field_matrix()
       if(r == 0.0)
         r3 = r5 = DBL_MAX;
       else {
-        r3 = 1/(r*r*r);
-        r5 = 1/(r*r*r*r*r);
+        r3 = 1.0/(r*r*r);
+        r5 = 1.0/(r*r*r*r*r);
       }
 
       /* set the damping function */

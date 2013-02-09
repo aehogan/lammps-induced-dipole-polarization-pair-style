@@ -2,8 +2,6 @@ variable  temperature  equal  298.15  # deg K
 variable  freq    equal  1  # freq of output
 variable  nstep      equal  100  # number of steps
 
-#newton off
-
 timestep  2
 
 units    real
