@@ -805,14 +805,14 @@ void PairLJCutCoulLongPolarization::settings(int narg, char **arg)
     }
     else if (strcmp("polar_gs",arg[iarg])==0)
     {
-      if (polar_gs) error->all(FLERR,"polar_gs and polar_gs_ranked are mutually exclusive");
+      if (polar_gs_ranked) error->all(FLERR,"polar_gs and polar_gs_ranked are mutually exclusive");
       if (strcmp("yes",arg[iarg+1])==0) polar_gs = 1;
       else if (strcmp("no",arg[iarg+1])==0) polar_gs = 0;
       else error->all(FLERR,"Illegal pair_style command");
     }
     else if (strcmp("polar_gs_ranked",arg[iarg])==0)
     {
-      if (polar_gs_ranked) error->all(FLERR,"polar_gs and polar_gs_ranked are mutually exclusive");
+      if (polar_gs) error->all(FLERR,"polar_gs and polar_gs_ranked are mutually exclusive");
       if (strcmp("yes",arg[iarg+1])==0) polar_gs_ranked = 1;
       else if (strcmp("no",arg[iarg+1])==0) polar_gs_ranked = 0;
       else error->all(FLERR,"Illegal pair_style command");
