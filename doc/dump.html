@@ -76,9 +76,9 @@
       mux,muy,muz = orientation of dipole moment of atom
       mu = magnitude of dipole moment of atom
       radius,diameter = radius,diameter of spherical particle
-      omegax,omegay,omegaz = angular velocity of extended particle
-      angmomx,angmomy,angmomz = angular momentum of extended particle
-      tqx,tqy,tqz = torque on extended particles
+      omegax,omegay,omegaz = angular velocity of spherical particle
+      angmomx,angmomy,angmomz = angular momentum of aspherical particle
+      tqx,tqy,tqz = torque on finite-size particles
       spin = electron spin
       eradius = electron radius
       ervel = electron radial velocity
@@ -152,10 +152,10 @@ individual values and the file itself.
 format that is self-explanatory when viewing a dump file.  Many of the
 LAMMPS <A HREF = "Section_tools.html">post-processing tools</A>, including
 <A HREF = "http://www.sandia.gov/~sjplimp/pizza.html">Pizza.py</A>, work with this
-format, as does the <A HREF = "rerun.html">rerun</A> fommand.
+format, as does the <A HREF = "rerun.html">rerun</A> command.
 </P>
-<P>For post-processing purposes the <I>atom</I> and <I>custom</I> text files are
-self-describing in the following sense.
+<P>For post-processing purposes the <I>atom</I>, <I>local</I>, and <I>custom</I> text
+files are self-describing in the following sense.
 </P>
 <P>The dimensions of the simulation box are included in each snapshot.
 For an orthogonal simulation box this information is is formatted as:
@@ -308,12 +308,14 @@ minimization converges.  Note that this means a dump will not be
 performed on the initial timestep after the dump command is invoked,
 if the current timestep is not a multiple of N.  This behavior can be
 changed via the <A HREF = "dump_modify.html">dump_modify first</A> command, which
-can be useful if the dump command is invoked after a minimization
+can also be useful if the dump command is invoked after a minimization
 ended on an arbitrary timestep.  N can be changed between runs by
 using the <A HREF = "dump_modify.html">dump_modify every</A> command (not allowed
 for <I>dcd</I> style).  The <A HREF = "dump_modify.html">dump_modify every</A> command
 also allows a variable to be used to determine the sequence of
-timesteps on which dump files are written.
+timesteps on which dump files are written.  In this mode a dump on the
+first timestep of a run will also not be written unless the
+<A HREF = "dump_modify.html">dump_modify first</A> command is used.
 </P>
 <P>The specified filename determines how the dump file(s) is written.
 The default is to write one large text file, which is opened when the
@@ -406,7 +408,7 @@ including the distance and energy of each bond:
 </P>
 <PRE>compute 1 all property/local batom1 batom2 btype 
 compute 2 all bond/local dist eng
-dump 1 all local 1000 tmp.dump index c_1<B>1</B> c_1<B>2</B> c_1<B>3</B> c_2<B>1</B> c_2<B>2</B> 
+dump 1 all local 1000 tmp.dump index c_1[1] c_1[2] c_1[3] c_2[1] c_2[2] 
 </PRE>
 <HR>
 
@@ -452,22 +454,21 @@ defined with an atom style of <I>dipole</I>.  They give the orientation of
 the atom's point dipole moment.  The <I>mu</I> attribute gives the
 magnitude of the atom's dipole moment.
 </P>
-<P>The <I>radius</I> and <I>diameter</I> attributes are specific to extended
-spherical particles that have a finite size, such as those defined
-with an atom style of <I>sphere</I>.
+<P>The <I>radius</I> and <I>diameter</I> attributes are specific to spherical
+particles that have a finite size, such as those defined with an atom
+style of <I>sphere</I>.
 </P>
 <P>The <I>omegax</I>, <I>omegay</I>, and <I>omegaz</I> attributes are specific to
-extended spherical or aspherical particles that have an angular
-velocity.  Only certain atom styles, such as <I>sphere</I> define this
-quantity.
+finite-size spherical particles that have an angular velocity.  Only
+certain atom styles, such as <I>sphere</I> define this quantity.
 </P>
 <P>The <I>angmomx</I>, <I>angmomy</I>, and <I>angmomz</I> attributes are specific to
-extended aspherical particles that have an angular momentum.  Only
+finite-size aspherical particles that have an angular momentum.  Only
 the <I>ellipsoid</I> atom style defines this quantity.
 </P>
-<P>The <I>tqx</I>, <I>tqy</I>, <I>tqz</I> attributes are for extended spherical or
-aspherical particles that can sustain a rotational torque due
-to interactions with other particles.
+<P>The <I>tqx</I>, <I>tqy</I>, <I>tqz</I> attributes are for finite-size particles that
+can sustain a rotational torque due to interactions with other
+particles.
 </P>
 <P>The <I>spin</I>, <I>eradius</I>, <I>ervel</I>, and <I>erforce</I> attributes are for
 particles that represent nuclei and electrons modeled with the

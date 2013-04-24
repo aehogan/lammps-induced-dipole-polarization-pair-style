@@ -28,7 +28,7 @@ class ComputePropertyAtom : public Compute {
  public:
   ComputePropertyAtom(class LAMMPS *, int, char **);
   ~ComputePropertyAtom();
-  void init() {}
+  void init();
   void compute_peratom();
   double memory_usage();
 
@@ -41,6 +41,7 @@ class ComputePropertyAtom : public Compute {
   class AtomVecEllipsoid *avec_ellipsoid;
   class AtomVecLine *avec_line;
   class AtomVecTri *avec_tri;
+  class AtomVecBody *avec_body;
 
   typedef void (ComputePropertyAtom::*FnPtrPack)(int);
   FnPtrPack *pack_choice;              // ptrs to pack functions

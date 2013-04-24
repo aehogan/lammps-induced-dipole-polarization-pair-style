@@ -101,8 +101,8 @@ void PairBrownianPoly::compute(int eflag, int vflag)
         for (int m = 0; m < wallfix->nwall; m++){
           int dim = wallfix->wallwhich[m] / 2;
           int side = wallfix->wallwhich[m] % 2;
-          if (wallfix->wallstyle[m] == VARIABLE){
-            wallcoord = input->variable->compute_equal(wallfix->varindex[m]);
+          if (wallfix->xstyle[m] == VARIABLE){
+            wallcoord = input->variable->compute_equal(wallfix->xindex[m]);
           }
           else wallcoord = wallfix->coord0[m];
           if (side == 0) walllo[dim] = wallcoord;
@@ -352,6 +352,32 @@ void PairBrownianPoly::init_style()
 
   // set the isotropic constants that depend on the volume fraction
   // vol_T = total volume
+  // check for fix deform, if exists it must use "remap v"
+  // If box will change volume, set appropriate flag so that volume
+  // and v.f. corrections are re-calculated at every step.
+  //
+  // If available volume is different from box volume
+  // due to walls, set volume appropriately; if walls will
+  // move, set appropriate flag so that volume and v.f. corrections
+  // are re-calculated at every step.
+
+  flagdeform = flagwall = 0;
+  for (int i = 0; i < modify->nfix; i++){
+    if (strcmp(modify->fix[i]->style,"deform") == 0)
+      flagdeform = 1;
+    else if (strstr(modify->fix[i]->style,"wall") != NULL) {
+      if (flagwall) 
+        error->all(FLERR,
+                   "Cannot use multiple fix wall commands with pair brownian");
+      flagwall = 1; // Walls exist
+      wallfix = (FixWall *) modify->fix[i];
+      if (wallfix->xflag) flagwall = 2; // Moving walls exist
+    }
+  }
+
+  // set the isotropic constants that depend on the volume fraction
+  // vol_T = total volume
+
   double vol_T, wallcoord;
   if (!flagwall) vol_T = domain->xprd*domain->yprd*domain->zprd;
   else {
@@ -363,10 +389,10 @@ void PairBrownianPoly::init_style()
     for (int m = 0; m < wallfix->nwall; m++){
       int dim = wallfix->wallwhich[m] / 2;
       int side = wallfix->wallwhich[m] % 2;
-      if (wallfix->wallstyle[m] == VARIABLE){
-        wallfix->varindex[m] = input->variable->find(wallfix->varstr[m]);
+      if (wallfix->xstyle[m] == VARIABLE){
+        wallfix->xindex[m] = input->variable->find(wallfix->xstr[m]);
         // Since fix->wall->init happens after pair->init_style
-        wallcoord = input->variable->compute_equal(wallfix->varindex[m]);
+        wallcoord = input->variable->compute_equal(wallfix->xindex[m]);
       }
 
       else wallcoord = wallfix->coord0[m];
@@ -377,7 +403,6 @@ void PairBrownianPoly::init_style()
     vol_T = (wallhi[0] - walllo[0]) * (wallhi[1] - walllo[1]) *
       (wallhi[2] - walllo[2]);
   }
-
 
   // vol_P = volume of particles, assuming mono-dispersity
   // vol_f = volume fraction

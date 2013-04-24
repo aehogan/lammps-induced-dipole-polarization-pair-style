@@ -80,7 +80,7 @@ int BaseEllipsoidT::init_base(const int nlocal, const int nall,
   ucl_device=device->gpu;
   atom=&device->atom;
 
-  _block_size=device->pair_block_size();
+  _block_size=device->block_ellipse();
   compile_kernels(*ucl_device,ellipsoid_program,lj_program,k_name,ellip_sphere);
 
   // Initialize host-device load balancer
@@ -109,18 +109,17 @@ int BaseEllipsoidT::init_base(const int nlocal, const int nall,
     for (int j=i; j<ntypes; j++)
       if (_host_form[i][j]!=ELLIPSE_ELLIPSE)
         _multiple_forms=true;
-  if (_multiple_forms && host_nlocal>0) {
-    std::cerr << "Cannot use Gayberne with multiple forms and GPU neighbor.\n";
-    exit(1);
-  }
+  if (_multiple_forms && host_nlocal>0)
+    return -8;
+  if (_multiple_forms && gpu_nbor!=0)
+    return -9;
   
   if (_multiple_forms)
     ans->force.zero();
 
   // Memory for ilist ordered by particle type
-  if (host_olist.alloc(nbor->max_atoms(),*ucl_device)==UCL_SUCCESS)
-    return 0;
-  else return -3;
+  if (host_olist.alloc(nbor->max_atoms(),*ucl_device)!=UCL_SUCCESS)
+    return -3;
 
   _max_an_bytes=ans->gpu_bytes()+nbor->gpu_bytes();
 

@@ -69,6 +69,8 @@ PairLJCutCoulLongPolarization::PairLJCutCoulLongPolarization(LAMMPS *lmp) : Pair
   polar_precision = 0.00000000001;
   fixed_iteration = 0;
 
+  force->pair->ewaldflag = 1;
+
   polar_gs = 0;
   polar_gs_ranked = 1;
   polar_gamma = 1.03;
@@ -632,7 +634,7 @@ void PairLJCutCoulLongPolarization::compute(int eflag, int vflag)
   /* the fdotr virial is probably off, haven't looked into it deeply */
   if (vflag_fdotr) virial_fdotr_compute();
 
-  /* debugging information */
+  /* debugging information, energy is given in kelvins in MPMC so there are conversions to compare between the two programs */
   if (debug)
   {
     FILE *file = NULL;
@@ -805,14 +807,14 @@ void PairLJCutCoulLongPolarization::settings(int narg, char **arg)
     }
     else if (strcmp("polar_gs",arg[iarg])==0)
     {
-      if (polar_gs) error->all(FLERR,"polar_gs and polar_gs_ranked are mutually exclusive");
+      if (polar_gs_ranked) error->all(FLERR,"polar_gs and polar_gs_ranked are mutually exclusive");
       if (strcmp("yes",arg[iarg+1])==0) polar_gs = 1;
       else if (strcmp("no",arg[iarg+1])==0) polar_gs = 0;
       else error->all(FLERR,"Illegal pair_style command");
     }
     else if (strcmp("polar_gs_ranked",arg[iarg])==0)
     {
-      if (polar_gs_ranked) error->all(FLERR,"polar_gs and polar_gs_ranked are mutually exclusive");
+      if (polar_gs) error->all(FLERR,"polar_gs and polar_gs_ranked are mutually exclusive");
       if (strcmp("yes",arg[iarg+1])==0) polar_gs_ranked = 1;
       else if (strcmp("no",arg[iarg+1])==0) polar_gs_ranked = 0;
       else error->all(FLERR,"Illegal pair_style command");

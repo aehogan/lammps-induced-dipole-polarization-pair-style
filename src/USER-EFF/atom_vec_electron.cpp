@@ -33,8 +33,7 @@ using namespace LAMMPS_NS;
 
 /* ---------------------------------------------------------------------- */
 
-AtomVecElectron::AtomVecElectron(LAMMPS *lmp, int narg, char **arg) :
-  AtomVec(lmp, narg, arg)
+AtomVecElectron::AtomVecElectron(LAMMPS *lmp) : AtomVec(lmp)
 {
   comm_x_only = comm_f_only = 0;
 
@@ -48,6 +47,8 @@ AtomVecElectron::AtomVecElectron(LAMMPS *lmp, int narg, char **arg) :
   size_data_atom = 8;
   size_data_vel = 5;
   xcol_data = 6;
+
+  atom->ecp_flag = 0;
 
   atom->electron_flag = 1;
   atom->q_flag = atom->spin_flag = atom->eradius_flag =
@@ -766,6 +767,8 @@ void AtomVecElectron::data_atom(double *coord, tagint imagetmp, char **values)
 
   q[nlocal] = atof(values[2]);
   spin[nlocal] = atoi(values[3]);
+  if (spin[nlocal] == 3) atom->ecp_flag = 1;
+
   eradius[nlocal] = atof(values[4]);
 
   x[nlocal][0] = coord[0];

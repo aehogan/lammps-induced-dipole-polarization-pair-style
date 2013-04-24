@@ -13,16 +13,15 @@ OBJ = 	$(SRC:.cpp=.o)
 
 # Package variables
 
-PACKAGE = asphere class2 colloid dipole fld gpu granular kim \
+PACKAGE = asphere body class2 colloid dipole fld gpu granular kim \
 	  kspace manybody mc meam molecule opt peri poems reax replica \
-	  rigid shock srd xtc
+	  rigid shock srd voronoi xtc
 
 PACKUSER = user-misc user-atc user-awpmd user-cg-cmm user-colvars \
-	   user-cuda user-eff user-ewaldn user-omp user-molfile \
-	   user-reaxc user-sph
+	   user-cuda user-eff user-omp user-molfile user-reaxc user-sph
 
-PACKLIB = gpu kim meam poems reax user-atc user-awpmd user-colvars \
-	  user-cuda user-molfile
+PACKLIB = gpu kim meam poems reax voronoi \
+	  user-atc user-awpmd user-colvars user-cuda user-molfile
 
 PACKALL = $(PACKAGE) $(PACKUSER)
 
@@ -38,6 +37,7 @@ help:
 	@echo ''
 	@echo 'make clean-all           delete all object files'
 	@echo 'make clean-machine       delete object files for one machine'
+	@echo 'make purge               purge obsolete copies of package sources'
 	@echo 'make tar                 create lmp_src.tar.gz of src dir and packages'
 	@echo 'make makelib             create Makefile.lib for static library build'
 	@echo 'make makeshlib           create Makefile.shlib for shared library build'
@@ -99,6 +99,12 @@ clean-all:
 
 clean-%:
 	rm -rf Obj_$(@:clean-%=%)
+
+purge: Purge.list
+	@echo 'Purging obsolete and auto-generated source files'
+	@for f in `grep -v '#' Purge.list` ;		\
+	    do test -f $$f && rm $$f && echo $$f || : ;		\
+	done
 
 # Create a tarball of src dir and packages
 

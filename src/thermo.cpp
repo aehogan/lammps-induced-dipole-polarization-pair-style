@@ -47,13 +47,14 @@ using namespace MathConst;
 
 // step, elapsed, elaplong, dt, cpu, tpcpu, spcpu
 // atoms, temp, press, pe, ke, etotal, enthalpy
-// evdwl, ecoul, epair, ebond, eangle, edihed, eimp, emol, elong, etail, epol
+// evdwl, ecoul, epol, epair, ebond, eangle, edihed, eimp, emol, elong, etail
 // vol, lx, ly, lz, xlo, xhi, ylo, yhi, zlo, zhi, xy, xz, yz, xlat, ylat, zlat
 // pxx, pyy, pzz, pxy, pxz, pyz
 // fmax, fnorm
 // cella, cellb, cellc, cellalpha, cellbeta, cellgamma
 
 // customize a new thermo style by adding a DEFINE to this list
+// also insure allocation of line string is correct in constructor
 
 #define ONE "step temp epair emol etotal press"
 #define MULTI "etotal ke temp pe ebond eangle edihed eimp evdwl ecoul elong press"
@@ -67,7 +68,6 @@ enum{SCALAR,VECTOR,ARRAY};
 #define INVOKED_VECTOR 2
 #define INVOKED_ARRAY 4
 
-#define MAXLINE 8192               // make this 4x longer than Input::MAXLINE
 #define DELTA 8
 
 /* ---------------------------------------------------------------------- */
@@ -92,17 +92,24 @@ Thermo::Thermo(LAMMPS *lmp, int narg, char **arg) : Pointers(lmp)
   // set style and corresponding lineflag
   // custom style builds its own line of keywords
   // customize a new thermo style by adding to if statement
-
-  line = new char[MAXLINE];
+  // allocate line string used for 3 tasks
+  //   concat of custom style args
+  //   one-time thermo output of header line
+  //   each line of numeric thermo output
+  //   256 = extra for ONE or MULTI string or multi formatting
+  //   64 = max per-arg chars in header or numeric output
 
   if (strcmp(style,"one") == 0) {
+    line = new char[256+6*64];
     strcpy(line,ONE);
   } else if (strcmp(style,"multi") == 0) {
+    line = new char[256+12*64];
     strcpy(line,MULTI);
     lineflag = MULTILINE;
 
   } else if (strcmp(style,"custom") == 0) {
     if (narg == 1) error->all(FLERR,"Illegal thermo style custom command");
+    line = new char[256+narg*64];
     line[0] = '\0';
     for (int iarg = 1; iarg < narg; iarg++) {
       strcat(line,arg[iarg]);
@@ -336,9 +343,6 @@ void Thermo::compute(int flag)
       loc += sprintf(&line[loc],format[ifield],bivalue);
     }
   }
-
-  // kludge for RedStorm timing issue
-  // if (ntimestep == 100) return;
 
   // print line to screen and logfile
 
@@ -668,6 +672,9 @@ void Thermo::parse_fields(char *str)
       addfield("TotEng",&Thermo::compute_etotal,FLOAT);
       index_temp = add_compute(id_temp,SCALAR);
       index_pe = add_compute(id_pe,SCALAR);
+    } else if (strcmp(word,"epol") == 0) {
+      addfield("E_pol",&Thermo::compute_epol,FLOAT);
+      index_pe = add_compute(id_pe,SCALAR);
     } else if (strcmp(word,"enthalpy") == 0) {
       addfield("Enthalpy",&Thermo::compute_enthalpy,FLOAT);
       index_temp = add_compute(id_temp,SCALAR);
@@ -703,9 +710,6 @@ void Thermo::parse_fields(char *str)
       index_pe = add_compute(id_pe,SCALAR);
     } else if (strcmp(word,"etail") == 0) {
       addfield("E_tail",&Thermo::compute_etail,FLOAT);
-      index_pe = add_compute(id_pe,SCALAR);
-    } else if (strcmp(word,"epol") == 0) {
-      addfield("E_pol",&Thermo::compute_epol,FLOAT);
       index_pe = add_compute(id_pe,SCALAR);
 
     } else if (strcmp(word,"vol") == 0) {
@@ -867,9 +871,11 @@ void Thermo::parse_fields(char *str)
 
       } else if (word[0] == 'v') {
         n = input->variable->find(id);
-        if (n < 0) error->all(FLERR,"Could not find thermo custom variable name");
+        if (n < 0) 
+          error->all(FLERR,"Could not find thermo custom variable name");
         if (input->variable->equalstyle(n) == 0)
-          error->all(FLERR,"Thermo custom variable is not equal-style variable");
+          error->all(FLERR,
+                     "Thermo custom variable is not equal-style variable");
         if (argindex1[nfield])
           error->all(FLERR,"Thermo custom variable cannot be indexed");
 
@@ -955,6 +961,13 @@ int Thermo::add_variable(const char *id)
 
 int Thermo::evaluate_keyword(char *word, double *answer)
 {
+  // turn off normflag if natoms = 0 to avoid divide by 0
+  // normflag must be set for lo-level thermo routines that may be invoked
+
+  natoms = atom->natoms;
+  if (natoms == 0) normflag = 0;
+  else normflag = normvalue;
+
   // invoke a lo-level thermo routine to compute the variable value
   // if keyword requires a compute, error if thermo doesn't use the compute
   // if inbetween runs and needed compute is not current, error
@@ -1141,6 +1154,14 @@ int Thermo::evaluate_keyword(char *word, double *answer)
     pe->invoked_flag |= INVOKED_SCALAR;
     compute_ecoul();
 
+    } else if (strcmp(word,"epol") == 0) {
+      if (update->eflag_global != update->ntimestep)
+        error->all(FLERR,"Energy was not tallied on needed timestep");
+      if (!pe)
+        error->all(FLERR,"Thermo keyword in variable requires thermo to use/init pe");
+      pe->invoked_flag |= INVOKED_SCALAR;
+      compute_epol();
+
   } else if (strcmp(word,"epair") == 0) {
     if (update->eflag_global != update->ntimestep)
       error->all(FLERR,"Energy was not tallied on needed timestep");
@@ -1212,13 +1233,6 @@ int Thermo::evaluate_keyword(char *word, double *answer)
                  "Thermo keyword in variable requires thermo to use/init pe");
     pe->invoked_flag |= INVOKED_SCALAR;
     compute_etail();
-  } else if (strcmp(word,"epol") == 0) {
-    if (update->eflag_global != update->ntimestep)
-      error->all(FLERR,"Energy was not tallied on needed timestep");
-    if (!pe)
-      error->all(FLERR,"Thermo keyword in variable requires thermo to use/init pe");
-    pe->invoked_flag |= INVOKED_SCALAR;
-    compute_epol();
 
   } else if (strcmp(word,"vol") == 0) compute_vol();
   else if (strcmp(word,"lx") == 0) compute_lx();
@@ -1498,7 +1512,7 @@ void Thermo::compute_spcpu()
 
 void Thermo::compute_atoms()
 {
-  bivalue = natoms;
+  bivalue = atom->natoms;
 }
 
 /* ---------------------------------------------------------------------- */
@@ -1587,6 +1601,17 @@ void Thermo::compute_ecoul()
 }
 
 /* ---------------------------------------------------------------------- */
+
+  void Thermo::compute_epol()
+  {
+    double tmp = 0.0;
+    if (force->pair) tmp += force->pair->eng_pol;
+    MPI_Allreduce(&tmp,&dvalue,1,MPI_DOUBLE,MPI_SUM,world);
+    if (normflag) dvalue /= natoms;
+  }
+
+/* ---------------------------------------------------------------------- */
+
 
 void Thermo::compute_epair()
 {
@@ -1681,16 +1706,6 @@ void Thermo::compute_etail()
     dvalue = force->pair->etail / volume;
     if (normflag) dvalue /= natoms;
   } else dvalue = 0.0;
-}
-
-/* ---------------------------------------------------------------------- */
-
-void Thermo::compute_epol()
-{
-  double tmp = 0.0;
-  if (force->pair) tmp += force->pair->eng_pol;
-  MPI_Allreduce(&tmp,&dvalue,1,MPI_DOUBLE,MPI_SUM,world);
-  if (normflag) dvalue /= natoms;
 }
 
 /* ---------------------------------------------------------------------- */

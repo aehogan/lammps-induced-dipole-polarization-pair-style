@@ -68,6 +68,7 @@ Neighbor::Neighbor(LAMMPS *lmp) : Pointers(lmp)
   oneatom = 2000;
   binsizeflag = 0;
   build_once = 0;
+  cluster_check = 0;
 
   cutneighsq = NULL;
   cutneighghostsq = NULL;
@@ -362,6 +363,7 @@ void Neighbor::init()
   }
 
   // exclusion lists for type, group, molecule settings from neigh_modify
+  // warn if exclusions used with KSpace solver
 
   n = atom->ntypes;
 
@@ -404,6 +406,10 @@ void Neighbor::init()
     for (i = 0; i < nex_mol; i++)
       ex_mol_bit[i] = group->bitmask[ex_mol_group[i]];
   }
+
+  if (exclude && force->kspace && me == 0)
+    error->warning(FLERR,"Neighbor exclusions used with KSpace solver "
+                   "may give inconsistent Coulombic energies");
 
   // ------------------------------------------------------------------
   // pairwise lists
@@ -1667,6 +1673,13 @@ void Neighbor::modify_params(int narg, char **arg)
       if (binsize_user <= 0.0) binsizeflag = 0;
       else binsizeflag = 1;
       iarg += 2;
+    } else if (strcmp(arg[iarg],"cluster") == 0) {
+      if (iarg+2 > narg) error->all(FLERR,"Illegal neigh_modify command");
+      if (strcmp(arg[iarg+1],"yes") == 0) cluster_check = 1;
+      else if (strcmp(arg[iarg+1],"no") == 0) cluster_check = 0;
+      else error->all(FLERR,"Illegal neigh_modify command");
+      iarg += 2;
+
     } else if (strcmp(arg[iarg],"include") == 0) {
       if (iarg+2 > narg) error->all(FLERR,"Illegal neigh_modify command");
       includegroup = group->find(arg[iarg+1]);
@@ -1677,6 +1690,7 @@ void Neighbor::modify_params(int narg, char **arg)
         error->all(FLERR,
                    "Neigh_modify include group != atom_modify first group");
       iarg += 2;
+
     } else if (strcmp(arg[iarg],"exclude") == 0) {
       if (iarg+2 > narg) error->all(FLERR,"Illegal neigh_modify command");
 
@@ -1724,6 +1738,7 @@ void Neighbor::modify_params(int narg, char **arg)
       } else if (strcmp(arg[iarg+1],"none") == 0) {
         nex_type = nex_group = nex_mol = 0;
         iarg += 2;
+
       } else error->all(FLERR,"Illegal neigh_modify command");
 
     } else error->all(FLERR,"Illegal neigh_modify command");

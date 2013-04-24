@@ -41,6 +41,7 @@ class PPPM : public KSpace {
   virtual ~PPPM();
   virtual void init();
   virtual void setup();
+  void setup_grid();
   virtual void compute(int, int);
   virtual int timing_1d(int, double &);
   virtual int timing_3d(int, double &);
@@ -65,7 +66,6 @@ class PPPM : public KSpace {
   int nxlo_fft,nylo_fft,nzlo_fft,nxhi_fft,nyhi_fft,nzhi_fft;
   int nlower,nupper;
   int ngrid,nfft,nfft_both;
-  int nbuf,nbuf_peratom;
 
   FFT_SCALAR ***density_brick;
   FFT_SCALAR ***vdx_brick,***vdy_brick,***vdz_brick;
@@ -77,10 +77,11 @@ class PPPM : public KSpace {
   double *fkx,*fky,*fkz;
   FFT_SCALAR *density_fft;
   FFT_SCALAR *work1,*work2;
-  FFT_SCALAR *buf1,*buf2,*buf3,*buf4;
 
   double *gf_b;
   FFT_SCALAR **rho1d,**rho_coeff,**drho1d,**drho_coeff;
+  double *sf_precoeff1, *sf_precoeff2, *sf_precoeff3;
+  double *sf_precoeff4, *sf_precoeff5, *sf_precoeff6;
   double sf_coeff[6];          // coefficients for calculating ad self-forces
   double **acons;
 
@@ -90,9 +91,10 @@ class PPPM : public KSpace {
   FFT_SCALAR ***density_A_brick,***density_B_brick;
   FFT_SCALAR *density_A_fft,*density_B_fft;
 
-
   class FFT3d *fft1,*fft2;
   class Remap *remap;
+  class CommGrid *cg;
+  class CommGrid *cg_peratom;
 
   int **part2grid;             // storage for particle -> grid mapping
   int nmax;
@@ -104,7 +106,8 @@ class PPPM : public KSpace {
   double qdist;                // distance from O site to negative charge
   double alpha;                // geometric factor
   
-  void set_fft_parameters();
+  void set_grid_global();
+  void set_grid_local();
   void adjust_gewald();
   double newton_raphson_f();
   double derivf();
@@ -119,31 +122,21 @@ class PPPM : public KSpace {
   double estimate_ik_error(double, double, bigint);
   double compute_qopt();
   void compute_gf_denom();
-  void compute_gf_ik();
-  void compute_gf_ad();
-  void compute_sf_coeff();
+  virtual void compute_gf_ik();
+  virtual void compute_gf_ad();
+  void compute_sf_precoeff();
   
   virtual void particle_map();
   virtual void make_rho();
   virtual void brick2fft();
   
-  void set_grid();
-  
-  virtual void fillbrick();
-  void fillbrick_ik();
-  void fillbrick_ad();
-  
-  virtual void fillbrick_peratom();
-  void fillbrick_peratom_ik();
-  void fillbrick_peratom_ad();
-  
   virtual void poisson();
-  void poisson_ik();
-  void poisson_ad();
+  virtual void poisson_ik();
+  virtual void poisson_ad();
   
   virtual void fieldforce();
-  void fieldforce_ik();
-  void fieldforce_ad();
+  virtual void fieldforce_ik();
+  virtual void fieldforce_ad();
   
   virtual void poisson_peratom();
   virtual void fieldforce_peratom();
@@ -154,6 +147,13 @@ class PPPM : public KSpace {
                      const FFT_SCALAR &);
   void compute_rho_coeff();
   void slabcorr();
+
+  // grid communication
+
+  virtual void pack_forward(int, FFT_SCALAR *, int, int *);
+  virtual void unpack_forward(int, FFT_SCALAR *, int, int *);
+  virtual void pack_reverse(int, FFT_SCALAR *, int, int *);
+  virtual void unpack_reverse(int, FFT_SCALAR *, int, int *);
 
   // group-group interactions
 

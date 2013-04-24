@@ -50,7 +50,7 @@ shake</A> and <A HREF = "fix_langevin.html">fix langevin</A>.
 provide statistically similar results.  This is because the forces
 they compute depend on atom velocities, which are used at half-step
 values every timestep when forces are computed.  When a run restarts,
-forces are initiall evaluated with a full-step velocity, which is
+forces are initially evaluated with a full-step velocity, which is
 different than if the run had continued.  These pair styles include
 <A HREF = "pair_gran.html">granular pair styles</A>, <A HREF = "pair_dpd.html">pair dpd</A>, and
 <A HREF = "pair_lubricate.html">pair lubricate</A>.
@@ -108,6 +108,11 @@ after the restart file is read.
 restart files.  The doc pages for individual pair styles note if this
 is the case.  This is also true of bond_style hybrid (and angle_style,
 dihedral_style, improper_style hybrid).
+</P>
+<P>All settings made by the <A HREF = "doc/pair_modify.html">pair_modify</A> command,
+such as the shift and tail settings, are stored in the restart file
+with the pair style.  The one exception is the <A HREF = "pair_modify.html">pair_modify
+compute</A> setting is not stored.
 </P>
 <P>Information about <A HREF = "kspace_style.html">kspace_style</A> settings are not
 stored in the restart file.  Hence if you wish to use an Ewald or PPPM

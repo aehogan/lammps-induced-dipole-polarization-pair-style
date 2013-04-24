@@ -24,6 +24,7 @@
 #include "style_region.h"
 #include "atom.h"
 #include "force.h"
+#include "kspace.h"
 #include "update.h"
 #include "modify.h"
 #include "fix.h"
@@ -398,6 +399,10 @@ void Domain::reset_box()
 
   set_global_box();
   set_local_box();
+
+  // if shrink-wrapped & kspace is defined (i.e. using MSM) call setup()
+  
+  if (nonperiodic == 2 && force->kspace) force->kspace->setup();
 
   // if shrink-wrapped & triclinic, re-convert to lamda coords for new box
   // re-invoke pbc() b/c x2lamda result can be outside [0,1] due to roundoff
@@ -1147,9 +1152,9 @@ void Domain::image_flip(int m, int n, int p)
     ybox -= p*zbox;
     xbox -= m*ybox + n*zbox;
 
-    image[i] = ((zbox + (tagint) IMGMAX & IMGMASK) << IMG2BITS) |
-      ((ybox + (tagint) IMGMAX & IMGMASK) << IMGBITS) |
-      (xbox + IMGMAX & IMGMASK);
+    image[i] = ((tagint) (xbox + IMGMAX) & IMGMASK) | 
+      (((tagint) (ybox + IMGMAX) & IMGMASK) << IMGBITS) | 
+      (((tagint) (zbox + IMGMAX) & IMGMASK) << IMG2BITS);
   }
 }
 
@@ -1204,6 +1209,10 @@ void Domain::add_region(int narg, char **arg)
 
   else error->all(FLERR,"Invalid region style");
 
+  // initialize any region variables via init()
+  // in case region is used between runs, e.g. to print a variable
+
+  regions[nregion]->init();
   nregion++;
 }
 

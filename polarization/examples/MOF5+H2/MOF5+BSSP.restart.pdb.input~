@@ -39,8 +39,8 @@ set type 9 static_polarizability 0.00044 #H2E
 set type 10 static_polarizability 0.00000 #H2N
 
 # ewald and pair style
-kspace_style  ewald 1.0e-6
-pair_style lj/cut/coul/long/polarization 2.5 12.834500 precision 0.00000000001 max_iterations 100 damp_type exponential damp 2.1304 polar_gs_ranked yes debug no use_previous yes
+kspace_style  ewald 1.0e-4
+pair_style lj/long/coul/long/polarization 2.5 12.834500 precision 0.00000000001 max_iterations 100 damp_type exponential damp 2.1304 polar_gs_ranked yes debug no use_previous yes
 
 # Lorentz-Berthelot mixed LJ parameters for each pair
 pair_coeff 1 1 0.123980 2.462000 6.155000
@@ -111,7 +111,7 @@ thermo_style  custom step etotal ke pe evdwl ecoul elong epol temp press c_movin
 thermo    ${freq}
 
 velocity  all create ${temperature} 12345 rot yes mom yes dist gaussian
-fix    rigid_nvt moving rigid/nvt molecule temp ${temperature} ${temperature} 100.0
+fix    rigid_nvt moving rigid/nvt molecule temp ${temperature} ${temperature} 100.0 tparam 50 1 3
 run    ${nstep_eq}
 unfix rigid_nvt
 

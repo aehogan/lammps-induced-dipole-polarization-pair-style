@@ -50,11 +50,13 @@ own sub-directories with their own Makefiles.
 "eff"_#eff
 "emacs"_#emacs
 "ipp"_#ipp
+"kate"_#kate
 "lmp2arc"_#arc
 "lmp2cfg"_#cfg
 "lmp2vmd"_#vmd
 "matlab"_#matlab
 "micelle2d"_#micelle
+"moltemplate"_#moltemplate
 "msi2lmp"_#msi
 "pymol_asphere"_#pymol
 "python"_#pythontools
@@ -219,6 +221,17 @@ tools/createatoms tool's input file.
 
 :line
 
+kate tool :h4,link(kate)
+
+The file in the tools/kate directory is an add-on to the Kate editor
+in the KDE suite that allow syntax highlighting of LAMMPS input
+scripts.  See the README.txt file for details.
+
+The file was provided by Alessandro Luigi Sellerio
+(alessandro.sellerio at ieni.cnr.it).
+
+:line
+
 lmp2arc tool :h4,link(arc)
 
 The lmp2arc sub-directory contains a tool for converting LAMMPS output
@@ -290,6 +303,20 @@ micelle2d < def.micelle2d > data.file :pre
 See the def.micelle2d file in the tools directory for an example of a
 definition file.  This tool was used to create the system for the
 "micelle example"_Section_example.html.
+
+:line
+
+moltemplate tool :h4,link(moltemplate)
+
+The moltemplate sub-directory contains a Python-based tool for
+building molecular systems based on a text-file description, and
+creating LAMMPS data files that encode their molecular topology as
+lists of bonds, angles, dihedrals, etc.  See the README.TXT file for
+more information.
+
+This tool was written by Andrew Jewett (jewett.aij at gmail.com), who
+supports it.  It has its own WWW page at
+"http://moltemplate.org"_http://moltemplate.org.
 
 :line
 

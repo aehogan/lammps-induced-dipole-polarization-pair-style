@@ -16,6 +16,14 @@
 
 #include "pointers.h"
 
+#ifdef FFT_SINGLE
+typedef float FFT_SCALAR;
+#define MPI_FFT_SCALAR MPI_FLOAT
+#else
+typedef double FFT_SCALAR;
+#define MPI_FFT_SCALAR MPI_DOUBLE
+#endif
+
 namespace LAMMPS_NS {
 
 class KSpace : protected Pointers {
@@ -23,13 +31,23 @@ class KSpace : protected Pointers {
   friend class FixOMP;
  public:
   double energy;                  // accumulated energy
+  double energy_1,energy_6;
   double virial[6];               // accumlated virial
   double *eatom,**vatom;          // accumulated per-atom energy/virial
   double e2group;                 // accumulated group-group energy
   double f2group[3];              // accumulated group-group force
 
-  double g_ewald;
-  int nx_pppm,ny_pppm,nz_pppm;
+  int ewaldflag;                 // 1 if a Ewald solver
+  int pppmflag;                  // 1 if a PPPM solver
+  int msmflag;                   // 1 if a MSM solver
+  int dispersionflag;            // 1 if a LJ/dispersion solver
+  int tip4pflag;                 // 1 if a TIP4P solver
+
+  double g_ewald,g_ewald_6;
+  int nx_pppm,ny_pppm,nz_pppm;           // global FFT grid for Coulombics
+  int nx_pppm_6,ny_pppm_6,nz_pppm_6;     // global FFT grid for dispersion
+  int nx_msm_max,ny_msm_max,nz_msm_max;
+
   int group_group_enable;         // 1 if style supports group/group calculation
 
   unsigned int datamask;
@@ -47,20 +65,72 @@ class KSpace : protected Pointers {
 
   virtual void init() = 0;
   virtual void setup() = 0;
+  virtual void setup_grid() {};
   virtual void compute(int, int) = 0;
   virtual void compute_group_group(int, int, int) {};
+
+  virtual void pack_forward(int, FFT_SCALAR *, int, int *) {};
+  virtual void unpack_forward(int, FFT_SCALAR *, int, int *) {};
+  virtual void pack_reverse(int, FFT_SCALAR *, int, int *) {};
+  virtual void unpack_reverse(int, FFT_SCALAR *, int, int *) {};
+
   virtual int timing(int, double &, double &) {return 0;}
   virtual int timing_1d(int, double &) {return 0;}
   virtual int timing_3d(int, double &) {return 0;}
   virtual double memory_usage() {return 0.0;}
 
+/* ----------------------------------------------------------------------
+   compute gamma for MSM and pair styles
+   see Eq 4 from Parallel Computing 35 (2009) 164177
+------------------------------------------------------------------------- */
+
+  double gamma(const double &rho) const {
+    if (rho <= 1.0) {
+      const int split_order = order/2;
+      const double rho2 = rho*rho;
+      double g = gcons[split_order][0];
+      double rho_n = rho2;
+      for (int n=1; n<=split_order; n++) {
+        g += gcons[split_order][n]*rho_n;
+        rho_n *= rho2;
+      }
+      return g;
+    } else
+      return (1.0/rho);
+  }
+
+/* ----------------------------------------------------------------------
+   compute the derivative of gamma for MSM and pair styles
+   see Eq 4 from Parallel Computing 35 (2009) 164-177
+------------------------------------------------------------------------- */
+
+  double dgamma(const double &rho) const {
+    if (rho <= 1.0) {
+      const int split_order = order/2;
+      const double rho2 = rho*rho;
+      double dg = dgcons[split_order][0]*rho;
+      double rho_n = rho*rho2;
+      for (int n=1; n<split_order; n++) {
+        dg += dgcons[split_order][n]*rho_n;
+        rho_n *= rho2;
+      }
+      return dg;
+    } else
+      return (-1.0/rho/rho);
+  }
+
  protected:
-  int gridflag,gewaldflag,differentiation_flag;
-  int order;
+  int gridflag,gridflag_6;
+  int gewaldflag,gewaldflag_6;
+  int order,order_6;
+  int minorder,overlap_allowed;
+  int differentiation_flag;
   int slabflag;
+  int adjust_cutoff_flag;
   int suffix_flag;                  // suffix compatibility flag
   double scale;
   double slab_volfactor;
+  double **gcons,**dgcons;          // accumulated per-atom energy/virial
 
   double accuracy;                  // accuracy of KSpace solver (force units)
   double accuracy_absolute;         // user-specifed accuracy in force units
@@ -74,6 +144,7 @@ class KSpace : protected Pointers {
   int vflag_either,vflag_global,vflag_atom;
   int maxeatom,maxvatom;
 
+  void pair_check();
   void ev_setup(int, int);
   double estimate_table_accuracy(double, double);
 };

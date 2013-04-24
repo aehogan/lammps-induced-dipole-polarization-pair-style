@@ -98,6 +98,7 @@ section of "this page"_Section_commands.html#cmd_5.
 
 "pair_style adp"_pair_adp.html - angular dependent potential (ADP) of Mishin
 "pair_style airebo"_pair_airebo.html - AIREBO potential of Stuart
+"pair_style body"_pair_body.html - interactions between body particles
 "pair_style bop"_pair_bop.html - BOP potential of Pettifor
 "pair_style born"_pair_born.html - Born-Mayer-Huggins potential
 "pair_style born/coul/long"_pair_born.html - Born-Mayer-Huggins with long-range Coulombics
@@ -152,6 +153,7 @@ section of "this page"_Section_commands.html#cmd_5.
 "pair_style lubricateU"_pair_lubricateU.html - hydrodynamic lubrication forces for Fast Lubrication Dynamics
 "pair_style lubricateU/poly"_pair_lubricateU.html - hydrodynamic lubrication forces for Fast Lubrication with polydispersity
 "pair_style meam"_pair_meam.html - modified embedded atom method (MEAM)
+"pair_style mie/cut"_pair_mie.html - Mie potential
 "pair_style morse"_pair_morse.html - Morse potential
 "pair_style peri/lps"_pair_peri.html - peridynamic LPS potential
 "pair_style peri/pmb"_pair_peri.html - peridynamic PMB potential

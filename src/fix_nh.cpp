@@ -442,11 +442,12 @@ FixNH::FixNH(LAMMPS *lmp, int narg, char **arg) : Fix(lmp, narg, arg)
   else if (pcouple == XYZ || (dimension == 2 && pcouple == XY)) pstyle = ISO;
   else pstyle = ANISO;
 
-  // reneighboring only forced if flips can occur due to shape changes
+  // pre_exchange only required if flips can occur due to shape changes
 
-  if (flipflag && (p_flag[3] || p_flag[4] || p_flag[5])) force_reneighbor = 1;
+  pre_exchange_flag = 0;
+  if (flipflag && (p_flag[3] || p_flag[4] || p_flag[5])) pre_exchange_flag = 1;
   if (flipflag && (domain->yz != 0.0 || domain->xz != 0.0 || domain->xy != 0.0))
-    force_reneighbor = 1;
+    pre_exchange_flag = 1;
 
   // convert input periods to frequencies
 
@@ -515,7 +516,7 @@ FixNH::FixNH(LAMMPS *lmp, int narg, char **arg) : Fix(lmp, narg, arg)
   nrigid = 0;
   rfix = NULL;
 
-  if (force_reneighbor) irregular = new Irregular(lmp);
+  if (pre_exchange_flag) irregular = new Irregular(lmp);
   else irregular = NULL;
 
   // initialize vol0,t0 to zero to signal uninitialized
@@ -567,7 +568,7 @@ int FixNH::setmask()
   mask |= THERMO_ENERGY;
   mask |= INITIAL_INTEGRATE_RESPA;
   mask |= FINAL_INTEGRATE_RESPA;
-  if (force_reneighbor) mask |= PRE_EXCHANGE;
+  if (pre_exchange_flag) mask |= PRE_EXCHANGE;
   return mask;
 }
 
@@ -2093,9 +2094,7 @@ void FixNH::compute_deviatoric()
 void FixNH::compute_temp_target()
 {
   double delta = update->ntimestep - update->beginstep;
-  if (update->endstep > update->beginstep)
-    delta /= update->endstep - update->beginstep;
-  else delta = 0.0;
+  if (delta != 0.0) delta /= update->endstep - update->beginstep;
 
   t_target = t_start + delta * (t_stop-t_start);
   ke_target = tdof * boltz * t_target;
@@ -2108,9 +2107,7 @@ void FixNH::compute_temp_target()
 void FixNH::compute_press_target()
 {
   double delta = update->ntimestep - update->beginstep;
-  if (update->endstep > update->beginstep)
-    delta /= update->endstep - update->beginstep;
-  else delta = 0.0;
+  if (delta != 0.0) delta /= update->endstep - update->beginstep;
 
   p_hydro = 0.0;
   for (int i = 0; i < 3; i++)

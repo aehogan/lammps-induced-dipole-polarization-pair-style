@@ -50,6 +50,12 @@ class Pair : protected Pointers {
   int ghostneigh;                // 1 if pair style needs neighbors of ghosts
   double **cutghost;             // cutoff for each ghost pair
 
+  int ewaldflag;                 // 1 if compatible with Ewald solver
+  int pppmflag;                  // 1 if compatible with PPPM solver
+  int msmflag;                   // 1 if compatible with MSM solver
+  int dispersionflag;            // 1 if compatible with LJ/dispersion solver
+  int tip4pflag;                 // 1 if compatible with TIP4P solver
+
   int tail_flag;                 // pair_modify flag for LJ tail correction
   double etail,ptail;            // energy/pressure tail corrections
   double etail_ij,ptail_ij;
@@ -59,6 +65,10 @@ class Pair : protected Pointers {
   int vflag_either,vflag_global,vflag_atom;
 
   int ncoultablebits;            // size of Coulomb table, accessed by KSpace
+  double tabinnersq;
+  double *rtable,*drtable,*ftable,*dftable,*ctable,*dctable;
+  double *etable,*detable,*ptable,*dptable,*vtable,*dvtable;
+  int ncoulshiftbits,ncoulmask;
 
   int nextra;                    // # of extra quantities pair style calculates
   double *pvector;               // vector of extra pair quantities
@@ -114,7 +124,11 @@ class Pair : protected Pointers {
   virtual void compute_outer(int, int) {}
 
   virtual double single(int, int, int, int,
-                        double, double, double, double &) {return 0.0;}
+                        double, double, double, 
+			double& fforce) {
+    fforce = 0.0;
+    return 0.0;
+  }
 
   virtual void settings(int, char **) = 0;
   virtual void coeff(int, char **) = 0;
@@ -122,6 +136,9 @@ class Pair : protected Pointers {
   virtual void init_style();
   virtual void init_list(int, class NeighList *);
   virtual double init_one(int, int) {return 0.0;}
+
+  virtual void init_tables(double, double *);
+  virtual void free_tables();
 
   virtual void write_restart(FILE *) {}
   virtual void read_restart(FILE *) {}
@@ -172,7 +189,7 @@ class Pair : protected Pointers {
                          double, double, double, double, double, double);
   void ev_tally4(int, int, int, int, double,
                  double *, double *, double *, double *, double *, double *);
-  void ev_tally_list(int, int *, double, double *);
+  void ev_tally_tip4p(int, int *, double *, double, double);
   void v_tally2(int, int, double, double *);
   void v_tally_tensor(int, int, int, int,
                       double, double, double, double, double, double);

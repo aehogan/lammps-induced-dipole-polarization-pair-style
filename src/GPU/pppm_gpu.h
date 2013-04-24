@@ -31,24 +31,23 @@ class PPPMGPU : public PPPM {
   void init();
   void setup();
   void compute(int, int);
-  int timing(int, double &, double &);
+  int timing_1d(int, double &);
+  int timing_3d(int, double &);
   double memory_usage();
 
  protected:
-
   FFT_SCALAR ***density_brick_gpu, ***vd_brick;
   bool kspace_split, im_real_space;
-
-  void allocate();
-  void deallocate();
-  void brick2fft();
-  void fillbrick();
-  void fillbrick_ik();
-  void poisson();
-  void poisson_ik();
-
   int old_nlocal;
   double poisson_time;
+
+  void brick2fft();
+  virtual void poisson_ik();
+
+  void pack_forward(int, FFT_SCALAR *, int, int *);
+  void unpack_forward(int, FFT_SCALAR *, int, int *);
+  void pack_reverse(int, FFT_SCALAR *, int, int *);
+  void unpack_reverse(int, FFT_SCALAR *, int, int *);
 
   FFT_SCALAR ***create_3d_offset(int, int, int, int, int, int, const char *,
                                  FFT_SCALAR *, int);
@@ -67,6 +66,10 @@ E: Illegal ... command
 Self-explanatory.  Check the input script syntax and compare to the
 documentation for the command.  You can use -echo screen as a
 command-line option when running LAMMPS to see the offending line.
+
+E: Cannot currently use pppm/gpu with fix balance.
+
+Self-explanatory.
 
 E: Cannot (yet) do analytic differentiation with pppm/gpu.
 

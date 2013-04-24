@@ -135,6 +135,7 @@ class Thermo : protected Pointers {
 
   void compute_evdwl();
   void compute_ecoul();
+  void compute_epol();
   void compute_epair();
   void compute_ebond();
   void compute_eangle();
@@ -143,7 +144,6 @@ class Thermo : protected Pointers {
   void compute_emol();
   void compute_elong();
   void compute_etail();
-  void compute_epol();
 
   void compute_vol();
   void compute_lx();

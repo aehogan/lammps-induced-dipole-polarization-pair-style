@@ -131,14 +131,6 @@ FixLangevin::FixLangevin(LAMMPS *lmp, int narg, char **arg) :
     } else error->all(FLERR,"Illegal fix langevin command");
   }
 
-  // error check
-
-  if (aflag) {
-    avec = (AtomVecEllipsoid *) atom->style_match("ellipsoid");
-    if (!avec)
-      error->all(FLERR,"Fix langevin angmom requires atom style ellipsoid");
-  }
-
   // set temperature = NULL, user can override via fix_modify if wants bias
 
   id_temp = NULL;
@@ -213,6 +205,10 @@ void FixLangevin::init()
   }
 
   if (aflag) {
+    avec = (AtomVecEllipsoid *) atom->style_match("ellipsoid");
+    if (!avec)
+      error->all(FLERR,"Fix langevin angmom requires atom style ellipsoid");
+
     int *ellipsoid = atom->ellipsoid;
     int *mask = atom->mask;
     int nlocal = atom->nlocal;
@@ -285,7 +281,7 @@ void FixLangevin::post_force_no_tally()
   int nlocal = atom->nlocal;
 
   double delta = update->ntimestep - update->beginstep;
-  delta /= update->endstep - update->beginstep;
+  if (delta != 0.0) delta /= update->endstep - update->beginstep;
 
   // set current t_target and t_sqrt
   // if variable temp, evaluate variable, wrap with clear/add
@@ -480,7 +476,7 @@ void FixLangevin::post_force_tally()
   int nlocal = atom->nlocal;
 
   double delta = update->ntimestep - update->beginstep;
-  delta /= update->endstep - update->beginstep;
+  if (delta != 0.0) delta /= update->endstep - update->beginstep;
 
   // set current t_target and t_sqrt
   // if variable temp, evaluate variable, wrap with clear/add
@@ -632,15 +628,18 @@ void FixLangevin::omega_thermostat()
   int *type = atom->type;
   int nlocal = atom->nlocal;
 
+  // rescale gamma1/gamma2 by 10/3 & sqrt(10/3) for rotational thermostatting
+
+  double tendivthree = 10.0/3.0;
   double tran[3];
   double inertiaone;
-
+  
   for (int i = 0; i < nlocal; i++) {
     if (mask[i] & groupbit) {
       inertiaone = SINERTIA*radius[i]*radius[i]*rmass[i];
       if (tstyle == ATOM) tsqrt = sqrt(tforce[i]);
-      gamma1 = -inertiaone / t_period / ftm2v;
-      gamma2 = sqrt(inertiaone) * sqrt(24.0*boltz/t_period/dt/mvv2e) / ftm2v;
+      gamma1 = -tendivthree*inertiaone / t_period / ftm2v;
+      gamma2 = sqrt(inertiaone) * sqrt(80.0*boltz/t_period/dt/mvv2e) / ftm2v;
       gamma1 *= 1.0/ratio[type[i]];
       gamma2 *= 1.0/sqrt(ratio[type[i]]) * tsqrt;
       tran[0] = gamma2*(random->uniform()-0.5);
@@ -675,6 +674,9 @@ void FixLangevin::angmom_thermostat()
   int *type = atom->type;
   int nlocal = atom->nlocal;
 
+  // rescale gamma1/gamma2 by 10/3 & sqrt(10/3) for rotational thermostatting
+
+  double tendivthree = 10.0/3.0;
   double inertia[3],omega[3],tran[3];
   double *shape,*quat;
 
@@ -688,8 +690,8 @@ void FixLangevin::angmom_thermostat()
       MathExtra::mq_to_omega(angmom[i],quat,inertia,omega);
 
       if (tstyle == ATOM) tsqrt = sqrt(tforce[i]);
-      gamma1 = -1.0 / t_period / ftm2v;
-      gamma2 = sqrt(24.0*boltz/t_period/dt/mvv2e) / ftm2v;
+      gamma1 = -tendivthree / t_period / ftm2v;
+      gamma2 = sqrt(80.0*boltz/t_period/dt/mvv2e) / ftm2v;
       gamma1 *= 1.0/ratio[type[i]];
       gamma2 *= 1.0/sqrt(ratio[type[i]]) * tsqrt;
       tran[0] = sqrt(inertia[0])*gamma2*(random->uniform()-0.5);

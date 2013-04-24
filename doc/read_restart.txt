@@ -47,7 +47,7 @@ Certain pair styles will not restart exactly, though they should
 provide statistically similar results.  This is because the forces
 they compute depend on atom velocities, which are used at half-step
 values every timestep when forces are computed.  When a run restarts,
-forces are initiall evaluated with a full-step velocity, which is
+forces are initially evaluated with a full-step velocity, which is
 different than if the run had continued.  These pair styles include
 "granular pair styles"_pair_gran.html, "pair dpd"_pair_dpd.html, and
 "pair lubricate"_pair_lubricate.html.
@@ -105,6 +105,11 @@ One exception is that some pair styles do not store their info in
 restart files.  The doc pages for individual pair styles note if this
 is the case.  This is also true of bond_style hybrid (and angle_style,
 dihedral_style, improper_style hybrid).
+
+All settings made by the "pair_modify"_doc/pair_modify.html command,
+such as the shift and tail settings, are stored in the restart file
+with the pair style.  The one exception is the "pair_modify
+compute"_pair_modify.html setting is not stored.
 
 Information about "kspace_style"_kspace_style.html settings are not
 stored in the restart file.  Hence if you wish to use an Ewald or PPPM

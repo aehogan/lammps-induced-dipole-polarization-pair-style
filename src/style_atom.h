@@ -1,5 +1,6 @@
 #include "atom_vec_angle.h"
 #include "atom_vec_atomic.h"
+#include "atom_vec_body.h"
 #include "atom_vec_bond.h"
 #include "atom_vec_charge.h"
 #include "atom_vec_ellipsoid.h"

@@ -133,9 +133,9 @@ void Set::command(int narg, char **arg)
       if (iarg+2 > narg) error->all(FLERR,"Illegal set command");
       dvalue = atof(arg[iarg+1]);
       if (!atom->static_polarizability_flag)
-	      error->all(FLERR,"Cannot set this attribute for this atom style");
+        error->all(FLERR,"Cannot set this attribute for this atom style");
       if (dvalue < 0.0) 
-	      error->all(FLERR,"Invalid static polarizability in set command");
+        error->all(FLERR,"Invalid static polarizability in set command");
       set(STATIC_POLARIZABILITY);
       iarg += 2;
     } else if (strcmp(arg[iarg],"mass") == 0) {
@@ -506,9 +506,9 @@ void Set::set(int keyword)
       if (ximageflag) xbox = ximage;
       if (yimageflag) ybox = yimage;
       if (zimageflag) zbox = zimage;
-      atom->image[i] = ((zbox + (tagint) IMGMAX & IMGMASK) << IMG2BITS) |
-        ((ybox + (tagint) IMGMAX & IMGMASK) << IMGBITS) |
-        (xbox + IMGMAX & IMGMASK);
+      atom->image[i] = ((tagint) (xbox + IMGMAX) & IMGMASK) | 
+        (((tagint) (ybox + IMGMAX) & IMGMASK) << IMGBITS) | 
+        (((tagint) (zbox + IMGMAX) & IMGMASK) << IMG2BITS);
 
     // set dipole moment
 

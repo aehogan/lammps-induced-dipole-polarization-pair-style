@@ -13,7 +13,7 @@
 
 #ifdef FIX_CLASS
 
-FixStyle(append_atoms,FixAppendAtoms)
+FixStyle(append/atoms,FixAppendAtoms)
 
 #else
 
@@ -42,9 +42,10 @@ class FixAppendAtoms : public Fix {
   class RanMars *randomx;
   class RanMars *randomt;
   int scaleflag, freq;
-  int *basistype, nbasis;
-  int advance, advance_sum;
-  double size, spatlead;
+  int nbasis;
+  int *basistype;
+  int advance,advance_sum;
+  double size,spatlead;
   char *spatialid;
   double tfactor;
   double *gfactor1,*gfactor2;

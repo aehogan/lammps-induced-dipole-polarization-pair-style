@@ -252,6 +252,19 @@ void PairHybrid::settings(int narg, char **arg)
     if (count == 1) multiple[i] = 0;
   }
 
+  // set pair flags from sub-style flags
+
+  flags();
+}
+
+/* ----------------------------------------------------------------------
+   set top-level pair flags from sub-style flags
+------------------------------------------------------------------------- */
+
+void PairHybrid::flags()
+{
+  int m;
+
   // set comm_forward, comm_reverse, comm_reverse_off to max of any sub-style
 
   for (m = 0; m < nstyles; m++) {
@@ -265,16 +278,21 @@ void PairHybrid::settings(int narg, char **arg)
   // respa_enable = 1 if any sub-style is set
   // no_virial_fdotr_compute = 1 if any sub-style is set
   // ghostneigh = 1 if any sub-style is set
+  // ewaldflag, pppmflag, msmflag, dispersionflag, tip4pflag = 1
+  //   if any sub-style is set
 
   single_enable = 0;
-  for (m = 0; m < nstyles; m++)
+  for (m = 0; m < nstyles; m++) {
     if (styles[m]->single_enable) single_enable = 1;
-  for (m = 0; m < nstyles; m++)
     if (styles[m]->respa_enable) respa_enable = 1;
-  for (m = 0; m < nstyles; m++)
     if (styles[m]->no_virial_fdotr_compute) no_virial_fdotr_compute = 1;
-  for (m = 0; m < nstyles; m++)
     if (styles[m]->ghostneigh) ghostneigh = 1;
+    if (styles[m]->ewaldflag) ewaldflag = 1;
+    if (styles[m]->pppmflag) pppmflag = 1;
+    if (styles[m]->msmflag) msmflag = 1;
+    if (styles[m]->dispersionflag) dispersionflag = 1;
+    if (styles[m]->tip4pflag) tip4pflag = 1;
+  }
 
   // single_extra = min of all sub-style single_extra
   // allocate svector
@@ -630,6 +648,10 @@ void PairHybrid::read_restart(FILE *fp)
     }
     if (count == 1) multiple[i] = 0;
   }
+
+  // set pair flags from sub-style flags
+
+  flags();
 }
 
 /* ----------------------------------------------------------------------

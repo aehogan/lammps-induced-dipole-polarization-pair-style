@@ -23,8 +23,8 @@ class lammps:
     # if name = "g++", load liblammps_g++.so
     
     try:
-      if not name: self.lib = CDLL("liblammps.so")
-      else: self.lib = CDLL("liblammps_%s.so" % name)
+      if not name: self.lib = CDLL("liblammps.so",RTLD_GLOBAL)
+      else: self.lib = CDLL("liblammps_%s.so" % name,RTLD_GLOBAL)
     except:
       type,value,tb = sys.exc_info()
       traceback.print_exception(type,value,tb)
@@ -88,11 +88,11 @@ class lammps:
       self.lib.lammps_extract_compute.restype = POINTER(c_double)
       ptr = self.lib.lammps_extract_compute(self.lmp,id,style,type)
       return ptr[0]
-    elif type == 1:
+    if type == 1:
       self.lib.lammps_extract_compute.restype = POINTER(c_double)
       ptr = self.lib.lammps_extract_compute(self.lmp,id,style,type)
       return ptr
-    elif type == 2:
+    if type == 2:
       self.lib.lammps_extract_compute.restype = POINTER(POINTER(c_double))
       ptr = self.lib.lammps_extract_compute(self.lmp,id,style,type)
       return ptr
@@ -109,11 +109,11 @@ class lammps:
       result = ptr[0]
       self.lib.lammps_free(ptr)
       return result
-    elif type == 1:
+    if type == 1:
       self.lib.lammps_extract_fix.restype = POINTER(c_double)
       ptr = self.lib.lammps_extract_fix(self.lmp,id,style,type,i,j)
       return ptr
-    elif type == 2:
+    if type == 2:
       self.lib.lammps_extract_fix.restype = POINTER(POINTER(c_double))
       ptr = self.lib.lammps_extract_fix(self.lmp,id,style,type,i,j)
       return ptr
@@ -152,7 +152,7 @@ class lammps:
   def gather_atoms(self,name,type,count):
     natoms = self.lib.lammps_get_natoms(self.lmp)
     if type == 0:
-      data = ((count*natoms)*c_double)()
+      data = ((count*natoms)*c_int)()
       self.lib.lammps_gather_atoms(self.lmp,name,type,count,data)
     elif type == 1:
       data = ((count*natoms)*c_double)()

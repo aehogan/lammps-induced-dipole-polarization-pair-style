@@ -48,12 +48,13 @@ class Atom : protected Pointers {
   tagint *image;
   double **x,**v,**f;
 
+  double *static_polarizability,**ef_static,**mu_induced;
   int *molecule;
   double *q,**mu;
   double **omega,**angmom,**torque;
   double *radius,*rmass,*vfrac,*s0;
   double **x0;
-  int *ellipsoid,*line,*tri;
+  int *ellipsoid,*line,*tri,*body;
   int *spin;
   double *eradius,*ervel,*erforce,*ervelforce;
   double *cs,*csforce,*vforce;
@@ -62,8 +63,6 @@ class Atom : protected Pointers {
   double *e, *de;
   double **vest;
   double *cv;
-  double *static_polarizability,**ef_static,**mu_induced;
-  int static_polarizability_flag;
 
   int **nspecial;               // 0,1,2 = cummulative # of 1-2,1-3,1-4 neighs
   int **special;                // IDs of 1-2,1-3,1-4 neighs of each atom
@@ -91,9 +90,12 @@ class Atom : protected Pointers {
   // atom style and per-atom array existence flags
   // customize by adding new flag
 
-  int sphere_flag,ellipsoid_flag,line_flag,tri_flag,peri_flag,electron_flag;
+  int sphere_flag,ellipsoid_flag,line_flag,tri_flag,body_flag;
+  int peri_flag,electron_flag;
+  int ecp_flag;
   int wavepacket_flag,sph_flag;
 
+  int static_polarizability_flag;
   int molecule_flag,q_flag,mu_flag;
   int rmass_flag,radius_flag,omega_flag,torque_flag,angmom_flag;
   int vfrac_flag,spin_flag,eradius_flag,ervel_flag,erforce_flag;
@@ -118,6 +120,7 @@ class Atom : protected Pointers {
 
   int map_style;                  // default or user-specified style of map
                                   // 0 = none, 1 = array, 2 = hash
+  int map_tag_max;                // max atom ID that map() is setup for
 
   // spatial sorting of atoms
 
@@ -135,7 +138,7 @@ class Atom : protected Pointers {
 
   void settings(class Atom *);
   void create_avec(const char *, int, char **, char *suffix = NULL);
-  class AtomVec *new_avec(const char *, int, char **, char *, int &);
+  class AtomVec *new_avec(const char *, char *, int &);
   void init();
   void setup();
 
@@ -150,6 +153,7 @@ class Atom : protected Pointers {
   void data_atoms(int, char *);
   void data_vels(int, char *);
   void data_bonus(int, char *, class AtomVec *);
+  void data_bodies(int, char *, class AtomVecBody *);
 
   void data_bonds(int, char *);
   void data_angles(int, char *);
@@ -200,8 +204,7 @@ class Atom : protected Pointers {
 
   // global to local ID mapping
 
-  int map_tag_max;      // size of map_array
-  int *map_array;       // direct map of length max atom ID + 1
+  int *map_array;       // direct map of length map_tag_max + 1
   int smax;             // max size of sametag
 
   struct HashElem {

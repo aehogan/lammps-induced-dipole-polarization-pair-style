@@ -36,8 +36,7 @@ using namespace MathConst;
 
 /* ---------------------------------------------------------------------- */
 
-AtomVecEllipsoid::AtomVecEllipsoid(LAMMPS *lmp, int narg, char **arg) :
-  AtomVec(lmp, narg, arg)
+AtomVecEllipsoid::AtomVecEllipsoid(LAMMPS *lmp) : AtomVec(lmp)
 {
   molecular = 0;
 
@@ -107,6 +106,7 @@ void AtomVecEllipsoid::grow_reset()
   mask = atom->mask; image = atom->image;
   x = atom->x; v = atom->v; f = atom->f;
   rmass = atom->rmass; angmom = atom->angmom; torque = atom->torque;
+  ellipsoid = atom->ellipsoid;
 }
 
 /* ----------------------------------------------------------------------
@@ -145,14 +145,15 @@ void AtomVecEllipsoid::copy(int i, int j, int delflag)
   angmom[j][1] = angmom[i][1];
   angmom[j][2] = angmom[i][2];
 
-  // if delflag and atom J has bonus data, then delete it
+  // if deleting atom J via delflag and J has bonus data, then delete it
 
   if (delflag && ellipsoid[j] >= 0) {
     copy_bonus(nlocal_bonus-1,ellipsoid[j]);
     nlocal_bonus--;
   }
 
-  // if atom I has bonus data and not deleting I, repoint I's bonus to J
+  // if atom I has bonus data, reset I's bonus.ilocal to loc J
+  // do NOT do this if self-copy (I=J) since I's bonus data is already deleted
 
   if (ellipsoid[i] >= 0 && i != j) bonus[ellipsoid[i]].ilocal = j;
   ellipsoid[j] = ellipsoid[i];
@@ -164,13 +165,13 @@ void AtomVecEllipsoid::copy(int i, int j, int delflag)
 
 /* ----------------------------------------------------------------------
    copy bonus data from I to J, effectively deleting the J entry
-   insure index pointers between per-atom and bonus data are updated
+   also reset ellipsoid that points to I to now point to J
 ------------------------------------------------------------------------- */
 
 void AtomVecEllipsoid::copy_bonus(int i, int j)
 {
+  ellipsoid[bonus[i].ilocal] = j;
   memcpy(&bonus[j],&bonus[i],sizeof(Bonus));
-  ellipsoid[bonus[j].ilocal] = j;
 }
 
 /* ----------------------------------------------------------------------

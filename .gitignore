@@ -3,3 +3,5 @@
 *.o
 *.d
 lmp_openmpi
+# text editor temp files #
+*~

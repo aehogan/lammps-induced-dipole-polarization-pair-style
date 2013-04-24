@@ -37,8 +37,8 @@ class PairBornCoulLong : public Pair {
   void read_restart(FILE *);
   void write_restart_settings(FILE *);
   void read_restart_settings(FILE *);
-  double single(int, int, int, int, double, double, double, double &);
-  void *extract(const char *, int &);
+  virtual double single(int, int, int, int, double, double, double, double &);
+  virtual void *extract(const char *, int &);
 
  protected:
   double cut_lj_global;
@@ -46,6 +46,7 @@ class PairBornCoulLong : public Pair {
   double cut_coul,cut_coulsq;
   double **a,**rho,**sigma,**c,**d;
   double **rhoinv,**born1,**born2,**born3,**offset;
+  double *cut_respa;
   double g_ewald;
 
   void allocate();

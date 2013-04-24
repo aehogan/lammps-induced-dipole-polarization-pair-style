@@ -60,6 +60,7 @@ PPPMOld::PPPMOld(LAMMPS *lmp, int narg, char **arg) : KSpace(lmp, narg, arg)
 {
   if (narg < 1) error->all(FLERR,"Illegal kspace_style pppm command");
 
+  pppmflag = 1;
   group_group_enable = 1;
 
   accuracy_relative = atof(arg[0]);
@@ -155,8 +156,8 @@ void PPPMOld::init()
 
   scale = 1.0;
 
-  if (force->pair == NULL)
-    error->all(FLERR,"KSpace style is incompatible with Pair style");
+  pair_check();
+
   int itmp=0;
   double *p_cutoff = (double *) force->pair->extract("cut_coul",itmp);
   if (p_cutoff == NULL)
@@ -168,10 +169,7 @@ void PPPMOld::init()
 
   qdist = 0.0;
 
-  if ( (strcmp(force->kspace_style,"pppm/tip4p") == 0) ||
-       (strcmp(force->kspace_style,"pppm/tip4p/proxy") == 0) ) {
-    if (force->pair == NULL)
-      error->all(FLERR,"KSpace style is incompatible with Pair style");
+  if (tip4pflag) {
     double *p_qdist = (double *) force->pair->extract("qdist",itmp);
     int *p_typeO = (int *) force->pair->extract("typeO",itmp);
     int *p_typeH = (int *) force->pair->extract("typeH",itmp);
@@ -196,16 +194,6 @@ void PPPMOld::init()
     double theta = force->angle->equilibrium_angle(typeA);
     double blen = force->bond->equilibrium_distance(typeB);
     alpha = qdist / (cos(0.5*theta) * blen);
-  }
-
-  // if we have a /proxy pppm version check if the pair style is compatible
-
-  if ((strcmp(force->kspace_style,"pppm/proxy") == 0) ||
-      (strcmp(force->kspace_style,"pppm/tip4p/proxy") == 0) ) {
-    if (force->pair == NULL)
-      error->all(FLERR,"KSpace style is incompatible with Pair style");
-    if (strstr(force->pair_style,"pppm/") == NULL )
-      error->all(FLERR,"KSpace style is incompatible with Pair style");
   }
 
   // compute qsum & qsqsum and warn if not charge-neutral
@@ -2484,11 +2472,39 @@ void PPPMOld::slabcorr()
   for (int i = 0; i < nlocal; i++) f[i][2] += qscale * q[i]*ffact;
 }
 
+
 /* ----------------------------------------------------------------------
-   perform and time the 4 FFTs required for N timesteps
+   perform and time the 1d FFTs required for N timesteps
 ------------------------------------------------------------------------- */
 
-int PPPMOld::timing(int n, double &time3d, double &time1d)
+int PPPMOld::timing_1d(int n, double &time1d)
+{
+  double time1,time2;
+
+  for (int i = 0; i < 2*nfft_both; i++) work1[i] = ZEROF;
+
+  MPI_Barrier(world);
+  time1 = MPI_Wtime();
+
+  for (int i = 0; i < n; i++) {
+    fft1->timing1d(work1,nfft_both,1);
+    fft2->timing1d(work1,nfft_both,-1);
+    fft2->timing1d(work1,nfft_both,-1);
+    fft2->timing1d(work1,nfft_both,-1);
+  }
+
+  MPI_Barrier(world);
+  time2 = MPI_Wtime();
+  time1d = time2 - time1;
+
+  return 4;
+}
+
+/* ----------------------------------------------------------------------
+   perform and time the 3d FFTs required for N timesteps
+------------------------------------------------------------------------- */
+
+int PPPMOld::timing_3d(int n, double &time3d)
 {
   double time1,time2;
 
@@ -2507,20 +2523,6 @@ int PPPMOld::timing(int n, double &time3d, double &time1d)
   MPI_Barrier(world);
   time2 = MPI_Wtime();
   time3d = time2 - time1;
-
-  MPI_Barrier(world);
-  time1 = MPI_Wtime();
-
-  for (int i = 0; i < n; i++) {
-    fft1->timing1d(work1,nfft_both,1);
-    fft2->timing1d(work1,nfft_both,-1);
-    fft2->timing1d(work1,nfft_both,-1);
-    fft2->timing1d(work1,nfft_both,-1);
-  }
-
-  MPI_Barrier(world);
-  time2 = MPI_Wtime();
-  time1d = time2 - time1;
 
   return 4;
 }

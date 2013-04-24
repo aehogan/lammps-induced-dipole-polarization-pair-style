@@ -112,6 +112,7 @@ void Verlet::setup()
   comm->borders();
   if (triclinic) domain->lamda2x(atom->nlocal+atom->nghost);
   domain->box_too_small_check();
+  modify->setup_pre_neighbor();
   neighbor->build();
   neighbor->ncalls = 0;
 
@@ -169,6 +170,7 @@ void Verlet::setup_minimal(int flag)
     comm->borders();
     if (triclinic) domain->lamda2x(atom->nlocal+atom->nghost);
     domain->box_too_small_check();
+    modify->setup_pre_neighbor();
     neighbor->build();
     neighbor->ncalls = 0;
   }
@@ -316,12 +318,11 @@ void Verlet::cleanup()
 
 /* ----------------------------------------------------------------------
    clear force on own & ghost atoms
-   setup and clear other arrays as needed
+   clear other arrays as needed
 ------------------------------------------------------------------------- */
 
 void Verlet::force_clear()
 {
-  if (external_force_clear) return;
   int i;
 
   if (external_force_clear) return;

@@ -17,6 +17,7 @@
 #include "compute_gyration_molecule.h"
 #include "compute_heat_flux.h"
 #include "compute_improper_local.h"
+#include "compute_inertia_molecule.h"
 #include "compute_ke_atom.h"
 #include "compute_ke.h"
 #include "compute_msd.h"

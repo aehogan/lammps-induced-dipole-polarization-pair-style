@@ -627,8 +627,8 @@ void PairLubricateU::compute_Fh(double **x)
          for (int m = 0; m < wallfix->nwall; m++){
            int dim = wallfix->wallwhich[m] / 2;
            int side = wallfix->wallwhich[m] % 2;
-           if (wallfix->wallstyle[m] == VARIABLE){
-             wallcoord = input->variable->compute_equal(wallfix->varindex[m]);
+           if (wallfix->xstyle[m] == VARIABLE){
+             wallcoord = input->variable->compute_equal(wallfix->xindex[m]);
            }
            else wallcoord = wallfix->coord0[m];
            if (side == 0) walllo[dim] = wallcoord;
@@ -680,7 +680,7 @@ void PairLubricateU::compute_Fh(double **x)
 
     // Find the contribution to stress from isotropic RS0
     // Set psuedo force to obtain the required contribution
-    // need to set delx  and fy only
+    // need to set delx and fy only
 
     fx = 0.0; delx = radi;
     fy = vxmu2f*RS0*gdot/2.0/radi; dely = 0.0;
@@ -866,8 +866,8 @@ void PairLubricateU::compute_RU()
          for (int m = 0; m < wallfix->nwall; m++){
            int dim = wallfix->wallwhich[m] / 2;
            int side = wallfix->wallwhich[m] % 2;
-           if (wallfix->wallstyle[m] == VARIABLE){
-             wallcoord = input->variable->compute_equal(wallfix->varindex[m]);
+           if (wallfix->xstyle[m] == VARIABLE){
+             wallcoord = input->variable->compute_equal(wallfix->xindex[m]);
            }
            else wallcoord = wallfix->coord0[m];
            if (side == 0) walllo[dim] = wallcoord;
@@ -1143,8 +1143,8 @@ void PairLubricateU::compute_RU(double **x)
          for (int m = 0; m < wallfix->nwall; m++){
            int dim = wallfix->wallwhich[m] / 2;
            int side = wallfix->wallwhich[m] % 2;
-           if (wallfix->wallstyle[m] == VARIABLE){
-             wallcoord = input->variable->compute_equal(wallfix->varindex[m]);
+           if (wallfix->xstyle[m] == VARIABLE){
+             wallcoord = input->variable->compute_equal(wallfix->xindex[m]);
            }
            else wallcoord = wallfix->coord0[m];
            if (side == 0) walllo[dim] = wallcoord;
@@ -1877,12 +1877,14 @@ void PairLubricateU::init_style()
   for (int i = 0; i < modify->nfix; i++){
     if (strcmp(modify->fix[i]->style,"deform") == 0)
       flagdeform = 1;
-    else if (strstr(modify->fix[i]->style,"wall") != NULL){
+    else if (strstr(modify->fix[i]->style,"wall") != NULL) {
+      if (flagwall) 
+        error->all(FLERR,
+                   "Cannot use multiple fix wall commands with "
+                   "pair lubricateU");
       flagwall = 1; // Walls exist
-      if (((FixWall *) modify->fix[i])->varflag ) {
-        flagwall = 2; // Moving walls exist
-        wallfix = (FixWall *) modify->fix[i];
-      }
+      wallfix = (FixWall *) modify->fix[i];
+      if (wallfix->xflag) flagwall = 2; // Moving walls exist
     }
   }
 
@@ -1899,10 +1901,10 @@ void PairLubricateU::init_style()
     for (int m = 0; m < wallfix->nwall; m++){
       int dim = wallfix->wallwhich[m] / 2;
       int side = wallfix->wallwhich[m] % 2;
-      if (wallfix->wallstyle[m] == VARIABLE){
-        wallfix->varindex[m] = input->variable->find(wallfix->varstr[m]);
+      if (wallfix->xstyle[m] == VARIABLE){
+        wallfix->xindex[m] = input->variable->find(wallfix->xstr[m]);
         //Since fix->wall->init happens after pair->init_style
-        wallcoord = input->variable->compute_equal(wallfix->varindex[m]);
+        wallcoord = input->variable->compute_equal(wallfix->xindex[m]);
       }
 
       else wallcoord = wallfix->coord0[m];
