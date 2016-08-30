@@ -15,32 +15,32 @@ pair_style lj/cut/coul/long/polarization cutoff1 (cutoff2) keyword value ...
 * *keyword* = precision or zodid or fixed_iteration or damp or max_iterations or damp_type or polar_gs or polar_gs_ranked or polar_gamma
 
 * *precision* values = precision
-precision = if fixed_iteration is disabled, keep iterating until the square of the change in all dipoles is less than precision
+  * precision = if fixed_iteration is disabled, keep iterating until the square of the change in all dipoles is less than precision
 
 * *zodid* values = yes or no
-yes/no = whether to only use the first approximation for the induced dipoles
+  * yes/no = whether to only use the first approximation for the induced dipoles
 
 * *fixed_iteration* values = yes or no
-yes/no = whether to use fixed iteration or precision
+  * yes/no = whether to use fixed iteration or precision
 
 * *damp* values = damp
-damp = the damping parameter if using exponential dipole-dipole interaction damping
+  * damp = the damping parameter if using exponential dipole-dipole interaction damping
 
 * *max_iterations* values = iterations
-iterations = if using precision, the maximum number of iterations to be calculated before returning the first approximation, or, if using using fixed_iteration, the number of iterations to be calculated
+  * iterations = if using precision, the maximum number of iterations to be calculated before returning the first approximation, or, if using using fixed_iteration, the number of iterations to be calculated
 
 * *damp_type* values = exponential or none
-exponential = use exponential dipole-dipole interaction damping
-none = don't use any dipole-dipole interaction damping
+  * exponential = use exponential dipole-dipole interaction damping
+  * none = don't use any dipole-dipole interaction damping
 
 * *polar_gs* values = yes or no
-yes/no = whether to use the Gauss-Seidel method to speed up convergence
+  * yes/no = whether to use the Gauss-Seidel method to speed up convergence
 
 * *polar_gs_ranked* values = yes or no
-yes/no = whether to use the Gauss-Seidel method with a ranked array to speed up convergence
+  * yes/no = whether to use the Gauss-Seidel method with a ranked array to speed up convergence
 
 * *polar_gamma* values = gamma
-gamma = number to precondition the dipoles with to speed up convergence
+  * gamma = number to precondition the dipoles with to speed up convergence
 
 ## Examples:
 
@@ -49,7 +49,7 @@ pair_style lj/cut/coul/long/polarization 2.5 12 max_iterations 30 damp_type expo
 ## Description:
 
 
-**IMPORTANT:** This pair style does not work with multiple processors._ Undefined behavior will happen if you attempt to use this pair style with more than one process.
+**IMPORTANT: This pair style does not work with multiple processors.** Undefined behavior will happen if you attempt to use this pair style with more than one process.
 
 The pair style included in this repository adds explicit polarization using induced dipole interactions to the lj/cut/coul/long pair style.
 
