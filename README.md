@@ -2,47 +2,45 @@ This is the home of a pair style for LAMMPS that includes induced dipole polariz
 
 **IMPORTANT: This pair style does not work with multiple processors.** Undefined behavior will happen if you attempt to use this pair style with more than one process.
 
-pair_style lj/cut/coul/long/polarization command
-
 ## Syntax:
 
 pair_style lj/cut/coul/long/polarization cutoff1 (cutoff2) keyword value ...
 
-* cutoff = global cutoff for LJ (and Coulombic if only 1 arg) (distance units)
+* *cutoff* = global cutoff for LJ (and Coulombic if only 1 arg) (distance units)
 
-* cutoff2 = global cutoff for Coulombic (optional) (distance units)
+* *cutoff2* = global cutoff for Coulombic (optional) (distance units)
 
 * zero or more keyword/value pairs may be appended
 
-* keyword = precision or zodid or fixed_iteration or damp or max_iterations or damp_type or polar_gs or polar_gs_ranked or polar_gamma
+* *keyword* = precision or zodid or fixed_iteration or damp or max_iterations or damp_type or polar_gs or polar_gs_ranked or polar_gamma
 
-* **precision** values = precision
-⋅⋅* precision = if fixed_iteration is disabled, keep iterating until the square of the change in all dipoles is less than precision
+* *precision* values = precision
+precision = if fixed_iteration is disabled, keep iterating until the square of the change in all dipoles is less than precision
 
-> _zodid_ values = yes or no
-> > yes/no = whether to only use the first approximation for the induced dipoles
+* *zodid* values = yes or no
+yes/no = whether to only use the first approximation for the induced dipoles
 
-> _fixed_iteration_ values = yes or no
-> > yes/no = whether to use fixed iteration or precision
+* *fixed_iteration* values = yes or no
+yes/no = whether to use fixed iteration or precision
 
-> _damp_ values = damp
-> > damp = the damping parameter if using exponential dipole-dipole interaction damping
+* *damp* values = damp
+damp = the damping parameter if using exponential dipole-dipole interaction damping
 
-> _max_iterations_ values = iterations
-> > iterations = if using precision, the maximum number of iterations to be calculated before returning the first approximation, or, if using using fixed_iteration, the number of iterations to be calculated
+* *max_iterations* values = iterations
+iterations = if using precision, the maximum number of iterations to be calculated before returning the first approximation, or, if using using fixed_iteration, the number of iterations to be calculated
 
-> _damp_type_ values = exponential or none
-> > exponential = use exponential dipole-dipole interaction damping
-> > none = don't use any dipole-dipole interaction damping
+* *damp_type* values = exponential or none
+exponential = use exponential dipole-dipole interaction damping
+none = don't use any dipole-dipole interaction damping
 
-> _polar_gs_ values = yes or no
-> > yes/no = whether to use the Gauss-Seidel method to speed up convergence
+* *polar_gs* values = yes or no
+yes/no = whether to use the Gauss-Seidel method to speed up convergence
 
-> _polar_gs_ranked_ values = yes or no
-> > yes/no = whether to use the Gauss-Seidel method with a ranked array to speed up convergence
+* *polar_gs_ranked* values = yes or no
+yes/no = whether to use the Gauss-Seidel method with a ranked array to speed up convergence
 
-> _polar_gamma_ values = gamma
-> > gamma = number to precondition the dipoles with to speed up convergence
+* *polar_gamma* values = gamma
+gamma = number to precondition the dipoles with to speed up convergence
 
 ## Examples:
 
