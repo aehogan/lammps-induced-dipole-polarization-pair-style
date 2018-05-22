@@ -1,4 +1,4 @@
-/* ----------------------------------------------------------------------
+/* -*- c++ -*- ----------------------------------------------------------
    LAMMPS - Large-scale Atomic/Molecular Massively Parallel Simulator
    http://lammps.sandia.gov, Sandia National Laboratories
    Steve Plimpton, sjplimp@sandia.gov
@@ -34,7 +34,7 @@ class ReaderNative : public Reader {
   int read_time(bigint &);
   void skip();
   bigint read_header(double [3][3], int &, int, int, int *, char **,
-                     int, int &, int &, int &, int &);
+                     int, int, int &, int &, int &, int &);
   void read_atoms(int, int, double **);
 
 private:

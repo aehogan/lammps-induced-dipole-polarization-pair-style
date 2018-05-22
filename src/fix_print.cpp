@@ -11,8 +11,8 @@
    See the README file in the top-level LAMMPS directory.
 ------------------------------------------------------------------------- */
 
-#include "stdlib.h"
-#include "string.h"
+#include <stdlib.h>
+#include <string.h>
 #include "fix_print.h"
 #include "update.h"
 #include "input.h"
@@ -20,6 +20,7 @@
 #include "variable.h"
 #include "memory.h"
 #include "error.h"
+#include "force.h"
 
 using namespace LAMMPS_NS;
 using namespace FixConst;
@@ -27,10 +28,11 @@ using namespace FixConst;
 /* ---------------------------------------------------------------------- */
 
 FixPrint::FixPrint(LAMMPS *lmp, int narg, char **arg) :
-  Fix(lmp, narg, arg)
+  Fix(lmp, narg, arg),
+  fp(NULL), string(NULL), copy(NULL), work(NULL)
 {
   if (narg < 5) error->all(FLERR,"Illegal fix print command");
-  nevery = atoi(arg[3]);
+  nevery = force->inumeric(FLERR,arg[3]);
   if (nevery <= 0) error->all(FLERR,"Illegal fix print command");
 
   MPI_Comm_rank(world,&me);
@@ -92,7 +94,7 @@ FixPrint::FixPrint(LAMMPS *lmp, int narg, char **arg) :
   // since don't know a priori which are invoked via variables by this fix
   // once in end_of_step() can set timestep for ones actually invoked
 
-  int nfirst = (update->ntimestep/nevery)*nevery + nevery;
+  const bigint nfirst = (update->ntimestep/nevery)*nevery + nevery;
   modify->addstep_compute_all(nfirst);
 }
 

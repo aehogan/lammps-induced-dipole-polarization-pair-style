@@ -1,4 +1,4 @@
-/* ----------------------------------------------------------------------
+/* -*- c++ -*- ----------------------------------------------------------
    LAMMPS - Large-scale Atomic/Molecular Massively Parallel Simulator
    http://lammps.sandia.gov, Sandia National Laboratories
    Steve Plimpton, sjplimp@sandia.gov
@@ -29,9 +29,11 @@ class ComputeTempRegionEff : public Compute {
   ComputeTempRegionEff(class LAMMPS *, int, char **);
   virtual ~ComputeTempRegionEff();
   void init();
+  void setup();
   virtual double compute_scalar();
   virtual void compute_vector();
 
+  void dof_remove_pre(void);
   int dof_remove(int);
   void remove_bias(int, double *);
   void remove_bias_all();

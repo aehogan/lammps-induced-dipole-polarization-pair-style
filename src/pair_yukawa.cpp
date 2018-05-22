@@ -11,8 +11,8 @@
    See the README file in the top-level LAMMPS directory.
 ------------------------------------------------------------------------- */
 
-#include "math.h"
-#include "stdlib.h"
+#include <math.h>
+#include <stdlib.h>
 #include "pair_yukawa.h"
 #include "atom.h"
 #include "force.h"
@@ -25,7 +25,10 @@ using namespace LAMMPS_NS;
 
 /* ---------------------------------------------------------------------- */
 
-PairYukawa::PairYukawa(LAMMPS *lmp) : Pair(lmp) {}
+PairYukawa::PairYukawa(LAMMPS *lmp) : Pair(lmp)
+{
+  writedata = 1;
+}
 
 /* ---------------------------------------------------------------------- */
 
@@ -136,7 +139,6 @@ void PairYukawa::allocate()
       setflag[i][j] = 0;
 
   memory->create(cutsq,n+1,n+1,"pair:cutsq");
-
   memory->create(rad,n+1,"pair:rad");
   memory->create(cut,n+1,n+1,"pair:cut");
   memory->create(a,n+1,n+1,"pair:a");
@@ -151,15 +153,15 @@ void PairYukawa::settings(int narg, char **arg)
 {
   if (narg != 2) error->all(FLERR,"Illegal pair_style command");
 
-  kappa = force->numeric(arg[0]);
-  cut_global = force->numeric(arg[1]);
+  kappa = force->numeric(FLERR,arg[0]);
+  cut_global = force->numeric(FLERR,arg[1]);
 
   // reset cutoffs that have been explicitly set
 
   if (allocated) {
     int i,j;
     for (i = 1; i <= atom->ntypes; i++)
-      for (j = i+1; j <= atom->ntypes; j++)
+      for (j = i; j <= atom->ntypes; j++)
         if (setflag[i][j]) cut[i][j] = cut_global;
   }
 }
@@ -175,13 +177,13 @@ void PairYukawa::coeff(int narg, char **arg)
   if (!allocated) allocate();
 
   int ilo,ihi,jlo,jhi;
-  force->bounds(arg[0],atom->ntypes,ilo,ihi);
-  force->bounds(arg[1],atom->ntypes,jlo,jhi);
+  force->bounds(FLERR,arg[0],atom->ntypes,ilo,ihi);
+  force->bounds(FLERR,arg[1],atom->ntypes,jlo,jhi);
 
-  double a_one = force->numeric(arg[2]);
+  double a_one = force->numeric(FLERR,arg[2]);
 
   double cut_one = cut_global;
-  if (narg == 4) cut_one = force->numeric(arg[3]);
+  if (narg == 4) cut_one = force->numeric(FLERR,arg[3]);
 
   int count = 0;
   for (int i = ilo; i <= ihi; i++) {
@@ -207,7 +209,7 @@ double PairYukawa::init_one(int i, int j)
     cut[i][j] = mix_distance(cut[i][i],cut[j][j]);
   }
 
-  if (offset_flag) {
+  if (offset_flag && (cut[i][j] > 0.0)) {
     double screening = exp(-kappa * cut[i][j]);
     offset[i][j] = a[i][j] * screening / cut[i][j];
   } else offset[i][j] = 0.0;
@@ -292,6 +294,27 @@ void PairYukawa::read_restart_settings(FILE *fp)
   MPI_Bcast(&cut_global,1,MPI_DOUBLE,0,world);
   MPI_Bcast(&offset_flag,1,MPI_INT,0,world);
   MPI_Bcast(&mix_flag,1,MPI_INT,0,world);
+}
+
+/* ----------------------------------------------------------------------
+   proc 0 writes to data file
+------------------------------------------------------------------------- */
+
+void PairYukawa::write_data(FILE *fp)
+{
+  for (int i = 1; i <= atom->ntypes; i++)
+    fprintf(fp,"%d %g\n",i,a[i][i]);
+}
+
+/* ----------------------------------------------------------------------
+   proc 0 writes all pairs to data file
+------------------------------------------------------------------------- */
+
+void PairYukawa::write_data_all(FILE *fp)
+{
+  for (int i = 1; i <= atom->ntypes; i++)
+    for (int j = i; j <= atom->ntypes; j++)
+      fprintf(fp,"%d %d %g %g\n",i,j,a[i][j],cut[i][j]);
 }
 
 /* ---------------------------------------------------------------------- */

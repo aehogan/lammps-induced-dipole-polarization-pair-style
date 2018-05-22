@@ -1,4 +1,4 @@
-/* ----------------------------------------------------------------------
+/* -*- c++ -*- ----------------------------------------------------------
    LAMMPS - Large-scale Atomic/Molecular Massively Parallel Simulator
    http://lammps.sandia.gov, Sandia National Laboratories
    Steve Plimpton, sjplimp@sandia.gov
@@ -28,9 +28,9 @@ class ComputePressure : public Compute {
  public:
   ComputePressure(class LAMMPS *, int, char **);
   virtual ~ComputePressure();
-  void init();
-  double compute_scalar();
-  void compute_vector();
+  virtual void init();
+  virtual double compute_scalar();
+  virtual void compute_vector();
   void reset_extra_compute_fix(const char *);
 
  protected:
@@ -74,10 +74,19 @@ E: Compute pressure temperature ID does not compute temperature
 The compute ID assigned to a pressure computation must compute
 temperature.
 
+E: Compute pressure requires temperature ID to include kinetic energy
+
+The keflag cannot be used unless a temperature compute is provided.
+
 E: Virial was not tallied on needed timestep
 
 You are using a thermo keyword that requires potentials to
 have tallied the virial, but they didn't on this timestep.  See the
 variable doc page for ideas on how to make this work.
+
+E: Must use 'kspace_modify pressure/scalar no' for tensor components with kspace_style msm
+
+Otherwise MSM will compute only a scalar pressure.  See the kspace_modify
+command for details on this setting.
 
 */

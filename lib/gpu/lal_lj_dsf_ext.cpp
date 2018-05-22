@@ -34,7 +34,7 @@ int ljd_gpu_init(const int ntypes, double **cutsq, double **host_lj1,
                  const double cell_size, int &gpu_mode, FILE *screen,
                  double **host_cut_ljsq, const double host_cut_coulsq,
                  double *host_special_coul, const double qqrd2e,
-                 const double e_shift, const double f_shift, 
+                 const double e_shift, const double f_shift,
                  const double alpha) {
   LJDMF.clear();
   gpu_mode=LJDMF.device->gpu_mode();
@@ -52,7 +52,7 @@ int ljd_gpu_init(const int ntypes, double **cutsq, double **host_lj1,
     message=true;
 
   if (message) {
-    fprintf(screen,"Initializing GPU and compiling on process 0...");
+    fprintf(screen,"Initializing Device and compiling on process 0...");
     fflush(screen);
   }
 
@@ -71,9 +71,9 @@ int ljd_gpu_init(const int ntypes, double **cutsq, double **host_lj1,
   for (int i=0; i<procs_per_gpu; i++) {
     if (message) {
       if (last_gpu-first_gpu==0)
-        fprintf(screen,"Initializing GPU %d on core %d...",first_gpu,i);
+        fprintf(screen,"Initializing Device %d on core %d...",first_gpu,i);
       else
-        fprintf(screen,"Initializing GPUs %d-%d on core %d...",first_gpu,
+        fprintf(screen,"Initializing Devices %d-%d on core %d...",first_gpu,
                 last_gpu,i);
       fflush(screen);
     }
@@ -85,7 +85,7 @@ int ljd_gpu_init(const int ntypes, double **cutsq, double **host_lj1,
                          f_shift, alpha);
 
     LJDMF.device->gpu_barrier();
-    if (message) 
+    if (message)
       fprintf(screen,"Done.\n");
   }
   if (message)
@@ -102,8 +102,8 @@ void ljd_gpu_clear() {
 
 int** ljd_gpu_compute_n(const int ago, const int inum_full,
                         const int nall, double **host_x, int *host_type,
-                        double *sublo, double *subhi, int *tag, int **nspecial, 
-                        int **special, const bool eflag, const bool vflag,
+                        double *sublo, double *subhi, tagint *tag, int **nspecial,
+                        tagint **special, const bool eflag, const bool vflag,
                         const bool eatom, const bool vatom, int &host_start,
                         int **ilist, int **jnum, const double cpu_time,
                         bool &success, double *host_q, double *boxlo,
@@ -112,8 +112,8 @@ int** ljd_gpu_compute_n(const int ago, const int inum_full,
                        subhi, tag, nspecial, special, eflag, vflag, eatom,
                        vatom, host_start, ilist, jnum, cpu_time, success,
                        host_q, boxlo, prd);
-}  
-			
+}
+
 void ljd_gpu_compute(const int ago, const int inum_full, const int nall,
                      double **host_x, int *host_type, int *ilist, int *numj,
                      int **firstneigh, const bool eflag, const bool vflag,

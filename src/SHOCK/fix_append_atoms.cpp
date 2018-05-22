@@ -11,9 +11,9 @@
    See the README file in the top-level LAMMPS directory.
 ------------------------------------------------------------------------- */
 
-#include "math.h"
-#include "string.h"
-#include "stdlib.h"
+#include <math.h>
+#include <string.h>
+#include <stdlib.h>
 #include "fix_append_atoms.h"
 #include "atom.h"
 #include "atom_vec.h"
@@ -29,17 +29,20 @@
 using namespace LAMMPS_NS;
 using namespace FixConst;
 
+enum{LAYOUT_UNIFORM,LAYOUT_NONUNIFORM,LAYOUT_TILED};    // several files
+
 #define BIG      1.0e30
 #define EPSILON  1.0e-6
 
 /* ---------------------------------------------------------------------- */
 
 FixAppendAtoms::FixAppendAtoms(LAMMPS *lmp, int narg, char **arg) :
-  Fix(lmp, narg, arg)
+  Fix(lmp, narg, arg), randomx(NULL), randomt(NULL), basistype(NULL),
+  spatialid(NULL), gfactor1(NULL), gfactor2(NULL)
 {
   force_reneighbor = 1;
   next_reneighbor = -1;
-  box_change = 1;
+  box_change_size = 1;
   time_depend = 1;
 
   if (narg < 4) error->all(FLERR,"Illegal fix append/atoms command");
@@ -48,6 +51,7 @@ FixAppendAtoms::FixAppendAtoms(LAMMPS *lmp, int narg, char **arg) :
 
   scaleflag = 1;
   spatflag=0;
+  spatialid = NULL;
   xloflag = xhiflag = yloflag = yhiflag = zloflag = zhiflag = 0;
 
   tempflag = 0;
@@ -60,7 +64,7 @@ FixAppendAtoms::FixAppendAtoms(LAMMPS *lmp, int narg, char **arg) :
   randomx = NULL;
   randomt = NULL;
 
-  if (!domain->lattice) 
+  if (domain->lattice->nbasis == 0)
     error->all(FLERR,"Fix append/atoms requires a lattice be defined");
 
   nbasis = domain->lattice->nbasis;
@@ -107,7 +111,7 @@ FixAppendAtoms::FixAppendAtoms(LAMMPS *lmp, int narg, char **arg) :
         error->all(FLERR,"Append boundary must be shrink/minimum");
     } else if (strcmp(arg[iarg],"freq") == 0) {
       if (iarg+2 > narg) error->all(FLERR,"Illegal fix append/atoms command");
-      freq = atoi(arg[iarg+1]);
+      freq = force->inumeric(FLERR,arg[iarg+1]);
       iarg += 2;
     } else if (strcmp(arg[iarg],"spatial") == 0) {
       if (iarg+3 > narg) error->all(FLERR,"Illegal fix append/atoms command");
@@ -116,7 +120,7 @@ FixAppendAtoms::FixAppendAtoms(LAMMPS *lmp, int narg, char **arg) :
                    "Bad fix ID in fix append/atoms command");
       spatflag = 1;
       int n = strlen(arg[iarg+1]);
-      spatlead = atof(arg[iarg+2]);
+      spatlead = force->numeric(FLERR,arg[iarg+2]);
       char *suffix = new char[n];
       strcpy(suffix,&arg[iarg+1][2]);
       n = strlen(suffix) + 1;
@@ -126,17 +130,15 @@ FixAppendAtoms::FixAppendAtoms(LAMMPS *lmp, int narg, char **arg) :
       iarg += 3;
     } else if (strcmp(arg[iarg],"basis") == 0) {
       if (iarg+3 > narg) error->all(FLERR,"Illegal fix append/atoms command");
-      if (domain->lattice == NULL)
-        error->all(FLERR,"Must define lattice to append/atoms");
-      int ibasis = atoi(arg[iarg+1]);
-      int itype = atoi(arg[iarg+2]);
+      int ibasis = force->inumeric(FLERR,arg[iarg+1]);
+      int itype = force->inumeric(FLERR,arg[iarg+2]);
       if (ibasis <= 0 || ibasis > nbasis || itype <= 0 || itype > atom->ntypes)
-        error->all(FLERR,"Illegal fix append/atoms command");
+        error->all(FLERR,"Invalid basis setting in fix append/atoms command");
       basistype[ibasis-1] = itype;
       iarg += 3;
     } else if (strcmp(arg[iarg],"size") == 0) {
       if (iarg+2 > narg) error->all(FLERR,"Illegal fix append/atoms command");
-      size = atof(arg[iarg+1]);
+      size = force->numeric(FLERR,arg[iarg+1]);
       iarg += 2;
     } else if (strcmp(arg[iarg],"units") == 0) {
       if (iarg+2 > narg) error->all(FLERR,"Illegal fix append/atoms command");
@@ -147,20 +149,20 @@ FixAppendAtoms::FixAppendAtoms(LAMMPS *lmp, int narg, char **arg) :
     } else if (strcmp(arg[iarg],"random") == 0) {
       if (iarg+5 > narg) error->all(FLERR,"Illegal fix append/atoms command");
       ranflag = 1;
-      ranx = atof(arg[iarg+1]);
-      rany = atof(arg[iarg+2]);
-      ranz = atof(arg[iarg+3]);
-      xseed = atoi(arg[iarg+4]);
+      ranx = force->numeric(FLERR,arg[iarg+1]);
+      rany = force->numeric(FLERR,arg[iarg+2]);
+      ranz = force->numeric(FLERR,arg[iarg+3]);
+      xseed = force->inumeric(FLERR,arg[iarg+4]);
       if (xseed <= 0) error->all(FLERR,"Illegal fix append/atoms command");
       randomx = new RanMars(lmp,xseed + comm->me);
       iarg += 5;
     } else if (strcmp(arg[iarg],"temp") == 0) {
       if (iarg+5 > narg) error->all(FLERR,"Illegal fix append/atoms command");
       tempflag = 1;
-      t_target = atof(arg[iarg+1]);
-      t_period = atof(arg[iarg+2]);
-      tseed    = atoi(arg[iarg+3]);
-      t_extent = atof(arg[iarg+4]);
+      t_target = force->numeric(FLERR,arg[iarg+1]);
+      t_period = force->numeric(FLERR,arg[iarg+2]);
+      tseed    = force->inumeric(FLERR,arg[iarg+3]);
+      t_extent = force->numeric(FLERR,arg[iarg+4]);
       if (t_target <= 0) error->all(FLERR,"Illegal fix append/atoms command");
       if (t_period <= 0) error->all(FLERR,"Illegal fix append/atoms command");
       if (t_extent <= 0) error->all(FLERR,"Illegal fix append/atoms command");
@@ -183,9 +185,6 @@ FixAppendAtoms::FixAppendAtoms(LAMMPS *lmp, int narg, char **arg) :
     error->all(FLERR,"Cannot append atoms to a triclinic box");
 
   // setup scaling
-
-  if (scaleflag && domain->lattice == NULL)
-    error->all(FLERR,"Use of fix append/atoms with undefined lattice");
 
   double xscale,yscale,zscale;
   if (scaleflag) {
@@ -213,6 +212,7 @@ FixAppendAtoms::~FixAppendAtoms()
   delete [] basistype;
 
   if (ranflag) delete randomx;
+  if (spatflag) delete[] spatialid;
   if (tempflag) {
     delete randomt;
     delete [] gfactor1;
@@ -320,7 +320,8 @@ int FixAppendAtoms::get_spatial()
 
     if (domain->boxhi[2] - shockfront_loc < spatlead) advance = 1;
 
-    delete [] pos,val;
+    delete [] pos;
+    delete [] val;
   }
 
   advance_sum = 0;
@@ -414,7 +415,15 @@ void FixAppendAtoms::pre_exchange()
 
   if (ntimestep % freq == 0) {
     if (spatflag==1) if (get_spatial()==0) return;
-    if (comm->myloc[2] == comm->procgrid[2]-1) {
+
+    int addflag = 0;
+    if (comm->layout != LAYOUT_TILED) {
+      if (comm->myloc[2] == comm->procgrid[2]-1) addflag = 1;
+    } else {
+      if (comm->mysplit[2][1] == 1.0) addflag = 1;
+    }
+
+    if (addflag) {
       double bboxlo[3],bboxhi[3];
 
       bboxlo[0] = domain->sublo[0]; bboxhi[0] = domain->subhi[0];
@@ -458,7 +467,6 @@ void FixAppendAtoms::pre_exchange()
       double x[3];
       double *sublo = domain->sublo;
       double *subhi = domain->subhi;
-      double *mass = atom->mass;
 
       int i,j,k,m;
       for (k = klo; k <= khi; k++) {
@@ -500,14 +508,14 @@ void FixAppendAtoms::pre_exchange()
 
     if (addtotal) {
       domain->reset_box();
-      if (atom->tag_enable) {
-        atom->tag_extend();
-        atom->natoms += addtotal;
-        if (atom->map_style) {
-          atom->nghost = 0;
-          atom->map_init();
-          atom->map_set();
-        }
+      atom->natoms += addtotal;
+      if (atom->natoms < 0)
+        error->all(FLERR,"Too many total atoms");
+      if (atom->tag_enable) atom->tag_extend();
+      if (atom->map_style) {
+        atom->nghost = 0;
+        atom->map_init();
+        atom->map_set();
       }
     }
   }

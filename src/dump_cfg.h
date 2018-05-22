@@ -1,4 +1,4 @@
-/* ----------------------------------------------------------------------
+/* -*- c++ -*- ----------------------------------------------------------
    LAMMPS - Large-scale Atomic/Molecular Massively Parallel Simulator
    http://lammps.sandia.gov, Sandia National Laboratories
    Steve Plimpton, sjplimp@sandia.gov
@@ -26,19 +26,24 @@ namespace LAMMPS_NS {
 
 class DumpCFG : public DumpCustom {
  public:
-  DumpCFG(class LAMMPS *, int, char **);
-  ~DumpCFG();
+  int multifile_override;          // used by write_dump command
 
- private:
+  DumpCFG(class LAMMPS *, int, char **);
+  virtual ~DumpCFG();
+
+ protected:
   char **auxname;            // name strings of auxiliary properties
-  int nchosen;               // # of lines to be written on a writing proc
-  int nlines;                // # of lines transferred from buf to rbuf
-  double **rbuf;             // buf of data lines for data lines rearrangement
   int unwrapflag;            // 1 if unwrapped coordinates are requested
 
   void init_style();
-  void write_header(bigint);
-  void write_data(int, double *);
+  virtual void write_header(bigint);
+  int convert_string(int, double *);
+  virtual void write_data(int, double *);
+
+  typedef void (DumpCFG::*FnPtrWrite)(int, double *);
+  FnPtrWrite write_choice;             // ptr to write data functions
+  void write_string(int, double *);
+  void write_lines(int, double *);
 };
 
 }
@@ -48,9 +53,10 @@ class DumpCFG : public DumpCustom {
 
 /* ERROR/WARNING messages:
 
-E: Dump cfg arguments must start with 'id type xs ys zs' or 'id type xsu ysu zsu'
+E: Dump cfg arguments must start with 'mass type xs ys zs' or 'mass type xsu ysu zsu'
 
-This is a requirement of the CFG output format.
+This is a requirement of the CFG output format.  See the dump cfg doc
+page for more details.
 
 E: Dump cfg arguments can not mix xs|ys|zs with xsu|ysu|zsu
 

@@ -28,8 +28,8 @@ static RESquared<PRECISION,ACC_PRECISION> REMF;
 // Allocate memory on host and device and copy constants to device
 // ---------------------------------------------------------------------------
 int re_gpu_init(const int ntypes, double **shape, double **well, double **cutsq,
-                double **sigma, double **epsilon, 
-                int **form, double **host_lj1, double **host_lj2, 
+                double **sigma, double **epsilon,
+                int **form, double **host_lj1, double **host_lj2,
                 double **host_lj3, double **host_lj4, double **offset,
                 double *special_lj, const int inum, const int nall,
                 const int max_nbors, const int maxspecial,
@@ -50,13 +50,13 @@ int re_gpu_init(const int ntypes, double **shape, double **well, double **cutsq,
     message=true;
 
   if (message) {
-    fprintf(screen,"Initializing GPU and compiling on process 0...");
+    fprintf(screen,"Initializing Device and compiling on process 0...");
     fflush(screen);
   }
 
   int init_ok=0;
   if (world_me==0)
-    init_ok=REMF.init(ntypes, shape, well, cutsq, sigma, epsilon, 
+    init_ok=REMF.init(ntypes, shape, well, cutsq, sigma, epsilon,
                       form, host_lj1, host_lj2, host_lj3, host_lj4, offset,
                       special_lj, inum, nall, max_nbors, maxspecial, cell_size,
                       gpu_split, screen);
@@ -64,24 +64,24 @@ int re_gpu_init(const int ntypes, double **shape, double **well, double **cutsq,
   REMF.device->world_barrier();
   if (message)
     fprintf(screen,"Done.\n");
-        
+
   for (int i=0; i<procs_per_gpu; i++) {
     if (message) {
       if (last_gpu-first_gpu==0)
-        fprintf(screen,"Initializing GPU %d on core %d...",first_gpu,i);
+        fprintf(screen,"Initializing Device %d on core %d...",first_gpu,i);
       else
-        fprintf(screen,"Initializing GPUs %d-%d on core %d...",first_gpu,
+        fprintf(screen,"Initializing Devices %d-%d on core %d...",first_gpu,
                 last_gpu,i);
       fflush(screen);
     }
     if (gpu_rank==i && world_me!=0)
-      init_ok=REMF.init(ntypes, shape, well, cutsq,  sigma, epsilon, 
+      init_ok=REMF.init(ntypes, shape, well, cutsq,  sigma, epsilon,
                         form, host_lj1, host_lj2, host_lj3,
                         host_lj4, offset, special_lj,  inum, nall,
                         max_nbors, maxspecial, cell_size, gpu_split, screen);
 
     REMF.device->gpu_barrier();
-    if (message) 
+    if (message)
       fprintf(screen,"Done.\n");
   }
   if (message)
@@ -101,21 +101,21 @@ void re_gpu_clear() {
 
   int** compute(const int ago, const int inum_full, const int nall,
                 double **host_x, int *host_type, double *sublo,
-                double *subhi, int *tag, int **nspecial,
-                int **special, const bool eflag, const bool vflag, 
-                const bool eatom, const bool vatom, int &host_start, 
+                double *subhi, tagint *tag, int **nspecial,
+                tagint **special, const bool eflag, const bool vflag,
+                const bool eatom, const bool vatom, int &host_start,
                 int **ilist, int **numj, const double cpu_time, bool &success,
                 double **host_quat);
 
 int** re_gpu_compute_n(const int ago, const int inum_full, const int nall,
                        double **host_x, int *host_type, double *sublo,
-                       double *subhi, int *tag, int **nspecial, int **special,
+                       double *subhi, tagint *tag, int **nspecial, tagint **special,
                        const bool eflag, const bool vflag, const bool eatom,
                        const bool vatom, int &host_start, int **ilist,
                        int **jnum, const double cpu_time, bool &success,
                        double **host_quat) {
-  return REMF.compute(ago, inum_full, nall, host_x, host_type, sublo, subhi, 
-                      tag, nspecial, special, eflag, vflag, eatom, vatom, 
+  return REMF.compute(ago, inum_full, nall, host_x, host_type, sublo, subhi,
+                      tag, nspecial, special, eflag, vflag, eatom, vatom,
                       host_start, ilist, jnum, cpu_time, success, host_quat);
 }
 

@@ -1,4 +1,4 @@
-/* ----------------------------------------------------------------------
+/* -*- c++ -*- ----------------------------------------------------------
    LAMMPS - Large-scale Atomic/Molecular Massively Parallel Simulator
    http://lammps.sandia.gov, Sandia National Laboratories
    Steve Plimpton, sjplimp@sandia.gov
@@ -41,13 +41,15 @@ public:
   void coeff(int, char **);
 
   /// This is for MPI communication with neighbor nodes.
-  int pack_comm(int, int *, double *, int, int *);
-  void unpack_comm(int, int, double *);
+  int pack_forward_comm(int, int *, double *, int, int *);
+  void unpack_forward_comm(int, int, double *);
   int pack_reverse_comm(int, int, double *);
   void unpack_reverse_comm(int, int *, double *);
 
   /// Reports the memory usage of this pair style to LAMMPS.
   double memory_usage();
+
+  void *extract(const char *, int &) { return NULL; }
 
   /// Parses the coefficients of the h polynomial from the end of the EAM file.
   void read_h_coeff(char* filename);

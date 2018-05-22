@@ -1,4 +1,4 @@
-/* ----------------------------------------------------------------------
+/* -*- c++ -*- ----------------------------------------------------------
    LAMMPS - Large-scale Atomic/Molecular Massively Parallel Simulator
    http://lammps.sandia.gov, Sandia National Laboratories
    Steve Plimpton, sjplimp@sandia.gov
@@ -20,7 +20,7 @@ FixStyle(reax/bonds,FixReaxBonds)
 #ifndef LMP_FIX_REAX_BONDS_H
 #define LMP_FIX_REAX_BONDS_H
 
-#include "stdio.h"
+#include <stdio.h>
 #include "fix.h"
 
 namespace LAMMPS_NS {
@@ -63,7 +63,7 @@ Check that the path and name are correct.
 
 E: Cannot use fix reax/bonds without pair_style reax
 
-Self-explantory.
+Self-explanatory.
 
 E: Fix reax/bonds numbonds > nsbmax_most
 

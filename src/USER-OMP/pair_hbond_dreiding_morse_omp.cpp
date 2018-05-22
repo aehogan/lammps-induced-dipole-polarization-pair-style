@@ -12,9 +12,11 @@
    Contributing author: Axel Kohlmeyer (Temple U)
 ------------------------------------------------------------------------- */
 
-#include "math.h"
+#include <math.h>
 #include "pair_hbond_dreiding_morse_omp.h"
 #include "atom.h"
+#include "atom_vec.h"
+#include "molecule.h"
 #include "comm.h"
 #include "domain.h"
 #include "force.h"
@@ -22,10 +24,12 @@
 #include "neigh_list.h"
 
 #include "math_const.h"
+#include "math_special.h"
 
 #include "suffix.h"
 using namespace LAMMPS_NS;
 using namespace MathConst;
+using namespace MathSpecial;
 
 #define SMALL 0.001
 
@@ -79,6 +83,7 @@ void PairHbondDreidingMorseOMP::compute(int eflag, int vflag)
 
     loop_setup_thr(ifrom, ito, tid, inum, nthreads);
     ThrData *thr = fix->get_thr(tid);
+    thr->timer(Timer::START);
     ev_setup_thr(eflag, vflag, nall, eatom, vatom, thr);
 
     if (evflag) {
@@ -94,6 +99,7 @@ void PairHbondDreidingMorseOMP::compute(int eflag, int vflag)
       else eval<0,0,0>(ifrom, ito, thr);
     }
 
+    thr->timer(Timer::PAIR);
     reduce_thr(this, eflag, vflag, thr);
   } // end of omp parallel region
 
@@ -111,29 +117,34 @@ void PairHbondDreidingMorseOMP::compute(int eflag, int vflag)
 template <int EVFLAG, int EFLAG, int NEWTON_PAIR>
 void PairHbondDreidingMorseOMP::eval(int iifrom, int iito, ThrData * const thr)
 {
-  int i,j,k,m,ii,jj,kk,jnum,itype,jtype,ktype;
+  int i,j,k,m,ii,jj,kk,jnum,knum,itype,jtype,ktype,imol,iatom;
+  tagint tagprev;
   double xtmp,ytmp,ztmp,delx,dely,delz,rsq,rsq1,rsq2,r1,r2;
   double factor_hb,force_angle,force_kernel,evdwl;
   double c,s,a,b,ac,a11,a12,a22,vx1,vx2,vy1,vy2,vz1,vz2;
   double fi[3],fj[3],delr1[3],delr2[3];
   double r,dr,dexp,eng_morse,switch1,switch2;
   int *ilist,*jlist,*numneigh,**firstneigh;
-  Param *pm;
+  const tagint *klist;
 
   evdwl = 0.0;
 
-  const double * const * const x = atom->x;
-  double * const * const f = thr->get_f();
-  const int * const type = atom->type;
-  const double * const special_lj = force->special_lj;
+  const dbl3_t * _noalias const x = (dbl3_t *) atom->x[0];
+  dbl3_t * _noalias const f = (dbl3_t *) thr->get_f()[0];
+  const tagint * _noalias const tag = atom->tag;
+  const int * _noalias const type = atom->type;
+  const int * _noalias const molindex = atom->molindex;
+  const int * _noalias const molatom = atom->molatom;
+  const double * _noalias const special_lj = force->special_lj;
   const int * const * const nspecial = atom->nspecial;
-  const int * const * const special = atom->special;
+  const tagint * const * const special = atom->special;
+  const int molecular = atom->molecular;
+  Molecule * const * const onemols = atom->avec->onemols;
   double fxtmp,fytmp,fztmp;
 
   ilist = list->ilist;
   numneigh = list->numneigh;
   firstneigh = list->firstneigh;
-
 
   // ii = loop over donors
   // jj = loop over acceptors
@@ -147,16 +158,24 @@ void PairHbondDreidingMorseOMP::eval(int iifrom, int iito, ThrData * const thr)
     i = ilist[ii];
     itype = type[i];
     if (!donor[itype]) continue;
-
-    const int * const klist = special[i];
-    const int knum = nspecial[i][0];
+    if (molecular == 1) {
+      klist = special[i];
+      knum = nspecial[i][0];
+    } else {
+      if (molindex[i] < 0) continue;
+      imol = molindex[i];
+      iatom = molatom[i];
+      klist = onemols[imol]->special[iatom];
+      knum = onemols[imol]->nspecial[iatom][0];
+      tagprev = tag[i] - iatom - 1;
+    }
     jlist = firstneigh[i];
     jnum = numneigh[i];
     fxtmp=fytmp=fztmp=0.0;
 
-    xtmp = x[i][0];
-    ytmp = x[i][1];
-    ztmp = x[i][2];
+    xtmp = x[i].x;
+    ytmp = x[i].y;
+    ztmp = x[i].z;
 
     for (jj = 0; jj < jnum; jj++) {
       j = jlist[jj];
@@ -166,30 +185,31 @@ void PairHbondDreidingMorseOMP::eval(int iifrom, int iito, ThrData * const thr)
       jtype = type[j];
       if (!acceptor[jtype]) continue;
 
-      delx = xtmp - x[j][0];
-      dely = ytmp - x[j][1];
-      delz = ztmp - x[j][2];
+      delx = xtmp - x[j].x;
+      dely = ytmp - x[j].y;
+      delz = ztmp - x[j].z;
       rsq = delx*delx + dely*dely + delz*delz;
 
       for (kk = 0; kk < knum; kk++) {
-        k = atom->map(klist[kk]);
+        if (molecular == 1) k = atom->map(klist[kk]);
+        else k = atom->map(klist[kk]+tagprev);
         if (k < 0) continue;
         ktype = type[k];
         m = type2param[itype][jtype][ktype];
         if (m < 0) continue;
-        pm = &params[m];
+        const Param &pm = params[m];
 
-        if (rsq < pm->cut_outersq) {
-          delr1[0] = xtmp - x[k][0];
-          delr1[1] = ytmp - x[k][1];
-          delr1[2] = ztmp - x[k][2];
+        if (rsq < pm.cut_outersq) {
+          delr1[0] = xtmp - x[k].x;
+          delr1[1] = ytmp - x[k].y;
+          delr1[2] = ztmp - x[k].z;
           domain->minimum_image(delr1);
           rsq1 = delr1[0]*delr1[0] + delr1[1]*delr1[1] + delr1[2]*delr1[2];
           r1 = sqrt(rsq1);
 
-          delr2[0] = x[j][0] - x[k][0];
-          delr2[1] = x[j][1] - x[k][1];
-          delr2[2] = x[j][2] - x[k][2];
+          delr2[0] = x[j].x - x[k].x;
+          delr2[1] = x[j].y - x[k].y;
+          delr2[2] = x[j].z - x[k].z;
           domain->minimum_image(delr2);
           rsq2 = delr2[0]*delr2[0] + delr2[1]*delr2[1] + delr2[2]*delr2[2];
           r2 = sqrt(rsq2);
@@ -202,31 +222,32 @@ void PairHbondDreidingMorseOMP::eval(int iifrom, int iito, ThrData * const thr)
           if (c < -1.0) c = -1.0;
           ac = acos(c);
 
-          if (ac > pm->cut_angle && ac < (2.0*MY_PI - pm->cut_angle)) {
+          if (ac > pm.cut_angle && ac < (2.0*MY_PI - pm.cut_angle)) {
             s = sqrt(1.0 - c*c);
             if (s < SMALL) s = SMALL;
 
             // Morse-specific kernel
 
             r = sqrt(rsq);
-            dr = r - pm->r0;
-            dexp = exp(-pm->alpha * dr);
-            eng_morse = pm->d0 * (dexp*dexp - 2.0*dexp);
-            force_kernel = pm->morse1*(dexp*dexp - dexp)/r * pow(c,(double)pm->ap);
-            force_angle = pm->ap * eng_morse * pow(c,(double)pm->ap-1.0)*s;
+            dr = r - pm.r0;
+            dexp = exp(-pm.alpha * dr);
+            eng_morse = pm.d0 * (dexp*dexp - 2.0*dexp);
+            force_kernel = pm.morse1*(dexp*dexp - dexp)/r * powint(c,pm.ap);
+            force_angle = pm.ap * eng_morse * powint(c,pm.ap-1)*s;
 
-            if (rsq > pm->cut_innersq) {
-              switch1 = (pm->cut_outersq-rsq) * (pm->cut_outersq-rsq) *
-                        (pm->cut_outersq + 2.0*rsq - 3.0*pm->cut_innersq) /
-                        pm->denom_vdw;
-              switch2 = 12.0*rsq * (pm->cut_outersq-rsq) *
-                        (rsq-pm->cut_innersq) / pm->denom_vdw;
-              force_kernel = force_kernel*switch1 + eng_morse*switch2;
-              eng_morse *= switch1;
+            if (rsq > pm.cut_innersq) {
+              switch1 = (pm.cut_outersq-rsq) * (pm.cut_outersq-rsq) *
+                        (pm.cut_outersq + 2.0*rsq - 3.0*pm.cut_innersq) /
+                        pm.denom_vdw;
+              switch2 = 12.0*rsq * (pm.cut_outersq-rsq) *
+                        (rsq-pm.cut_innersq) / pm.denom_vdw;
+              force_kernel = force_kernel*switch1 + eng_morse*switch2/rsq;
+              force_angle  *= switch1;
+              eng_morse    *= switch1;
             }
 
             if (EFLAG) {
-              evdwl = eng_morse * pow(c,(double)params[m].ap);
+              evdwl = eng_morse * powint(c,pm.ap);
               evdwl *= factor_hb;
             }
 
@@ -255,13 +276,13 @@ void PairHbondDreidingMorseOMP::eval(int iifrom, int iito, ThrData * const thr)
             fytmp += fi[1];
             fztmp += fi[2];
 
-            f[j][0] += fj[0];
-            f[j][1] += fj[1];
-            f[j][2] += fj[2];
+            f[j].x += fj[0];
+            f[j].y += fj[1];
+            f[j].z += fj[2];
 
-            f[k][0] -= vx1 + vx2;
-            f[k][1] -= vy1 + vy2;
-            f[k][2] -= vz1 + vz2;
+            f[k].x -= vx1 + vx2;
+            f[k].y -= vy1 + vy2;
+            f[k].z -= vz1 + vz2;
 
             // KIJ instead of IJK b/c delr1/delr2 are both with respect to k
 
@@ -274,9 +295,9 @@ void PairHbondDreidingMorseOMP::eval(int iifrom, int iito, ThrData * const thr)
         }
       }
     }
-    f[i][0] += fxtmp;
-    f[i][1] += fytmp;
-    f[i][2] += fztmp;
+    f[i].x += fxtmp;
+    f[i].y += fytmp;
+    f[i].z += fztmp;
   }
   const int tid = thr->get_tid();
   hbcount_thr[tid] = static_cast<double>(hbcount);

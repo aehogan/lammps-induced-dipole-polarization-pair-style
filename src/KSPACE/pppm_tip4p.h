@@ -1,4 +1,4 @@
-/* ----------------------------------------------------------------------
+/* -*- c++ -*- ----------------------------------------------------------
    LAMMPS - Large-scale Atomic/Molecular Massively Parallel Simulator
    http://lammps.sandia.gov, Sandia National Laboratories
    Steve Plimpton, sjplimp@sandia.gov
@@ -51,6 +51,10 @@ class PPPMTIP4P : public PPPM {
 E: Kspace style pppm/tip4p requires newton on
 
 Self-explanatory.
+
+E: Non-numeric box dimensions - simulation unstable
+
+The box size has apparently blown up.
 
 E: Out of range atoms - cannot compute PPPM
 

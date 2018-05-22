@@ -1,4 +1,4 @@
-/* ----------------------------------------------------------------------
+/* -*- c++ -*- ----------------------------------------------------------
    LAMMPS - Large-scale Atomic/Molecular Massively Parallel Simulator
    http://lammps.sandia.gov, Sandia National Laboratories
    Steve Plimpton, sjplimp@sandia.gov
@@ -20,7 +20,7 @@ PairStyle(eim,PairEIM)
 #ifndef LMP_PAIR_EIM_H
 #define LMP_PAIR_EIM_H
 
-#include "stdio.h"
+#include <stdio.h>
 #include "pair.h"
 
 namespace LAMMPS_NS {
@@ -35,8 +35,8 @@ class PairEIM : public Pair {
   void init_style();
   double init_one(int, int);
 
-  int pack_comm(int, int *, double *, int, int *);
-  void unpack_comm(int, int, double *);
+  int pack_forward_comm(int, int *, double *, int, int *);
+  void unpack_forward_comm(int, int, double *);
   int pack_reverse_comm(int, int, double *);
   void unpack_reverse_comm(int, int *, double *);
   double memory_usage();

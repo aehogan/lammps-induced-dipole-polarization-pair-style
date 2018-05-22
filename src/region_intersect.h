@@ -1,4 +1,4 @@
-/* ----------------------------------------------------------------------
+/* -*- c++ -*- ----------------------------------------------------------
    LAMMPS - Large-scale Atomic/Molecular Massively Parallel Simulator
    http://lammps.sandia.gov, Sandia National Laboratories
    Steve Plimpton, sjplimp@sandia.gov
@@ -29,15 +29,19 @@ class RegIntersect : public Region {
   RegIntersect(class LAMMPS *, int, char **);
   ~RegIntersect();
   void init();
-  int dynamic_check();
   int inside(double, double, double);
   int surface_interior(double *, double);
   int surface_exterior(double *, double);
   void shape_update();
+  void pretransform();
+  void set_velocity();
+  void length_restart_string(int&);
+  void write_restart(FILE *);
+  int restart(char *, int&);
+  void reset_vel();
 
  private:
-  int nregion;
-  int *list;
+  char **idsub;
 };
 
 }
@@ -56,5 +60,10 @@ command-line option when running LAMMPS to see the offending line.
 E: Region intersect region ID does not exist
 
 Self-explanatory.
+
+E: Region union region ID does not exist
+
+One or more of the region IDs specified by the region union command
+does not exist.
 
 */

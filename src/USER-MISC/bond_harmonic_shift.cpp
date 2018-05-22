@@ -15,8 +15,8 @@
    Contributing author: Carsten Svaneborg, science@zqex.dk
 ------------------------------------------------------------------------- */
 
-#include "math.h"
-#include "stdlib.h"
+#include <math.h>
+#include <stdlib.h>
 #include "bond_harmonic_shift.h"
 #include "atom.h"
 #include "neighbor.h"
@@ -129,11 +129,13 @@ void BondHarmonicShift::coeff(int narg, char **arg)
   if (!allocated) allocate();
 
   int ilo,ihi;
-  force->bounds(arg[0],atom->nbondtypes,ilo,ihi);
+  force->bounds(FLERR,arg[0],atom->nbondtypes,ilo,ihi);
 
-  double Umin = force->numeric(arg[1]);   // energy at minimum
-  double r0_one = force->numeric(arg[2]); // position of minimum
-  double r1_one = force->numeric(arg[3]);  // position where energy = 0
+  double Umin = force->numeric(FLERR,arg[1]);   // energy at minimum
+  double r0_one = force->numeric(FLERR,arg[2]); // position of minimum
+  double r1_one = force->numeric(FLERR,arg[3]);  // position where energy = 0
+  if (r0_one == r1_one)
+    error->all(FLERR,"Bond harmonic/shift r0 and r1 must be different");
 
   int count = 0;
   for (int i = ilo; i <= ihi; i++) {
@@ -187,13 +189,27 @@ void BondHarmonicShift::read_restart(FILE *fp)
   for (int i = 1; i <= atom->nbondtypes; i++) setflag[i] = 1;
 }
 
+/* ----------------------------------------------------------------------
+   proc 0 writes to data file
+------------------------------------------------------------------------- */
+
+void BondHarmonicShift::write_data(FILE *fp)
+{
+  for (int i = 1; i <= atom->nbondtypes; i++) {
+    double d2 = (r0[i]-r1[i])*(r0[i]-r1[i]);
+    fprintf(fp,"%d %g %g %g\n",i,k[i]*d2,r0[i],r1[i]);
+  }
+}
+
 /* ---------------------------------------------------------------------- */
 
-double BondHarmonicShift::single(int type, double rsq, int i, int j)
+double BondHarmonicShift::single(int type, double rsq, int i, int j,
+                                 double &fforce)
 {
   double r = sqrt(rsq);
   double dr = r - r0[type];
   double dr2=r0[type]-r1[type];
 
+  fforce =  -2.0*k[type]*dr/r;
   return k[type]*(dr*dr - dr2*dr2);
 }

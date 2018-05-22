@@ -24,23 +24,24 @@
   <http://www.gnu.org/licenses/>.
   ----------------------------------------------------------------------*/
 
-#include "pair_reax_c.h"
-#if defined(PURE_REAX)
-#include "valence_angles.h"
-#include "bond_orders.h"
-#include "list.h"
-#include "vector.h"
-#elif defined(LAMMPS_REAX)
+#include "pair_reaxc.h"
 #include "reaxc_valence_angles.h"
 #include "reaxc_bond_orders.h"
 #include "reaxc_list.h"
 #include "reaxc_vector.h"
-#endif
 
+static double Dot( double* v1, double* v2, int k )
+{
+  double ret = 0.0;
 
-/* calculates the theta angle between i-j-k */
-void Calculate_Theta( rvec dvec_ji, real d_ji, rvec dvec_jk, real d_jk,
-                      real *theta, real *cos_theta )
+  for( int i=0; i < k; ++i )
+    ret +=  v1[i] * v2[i];
+
+  return ret;
+}
+
+void Calculate_Theta( rvec dvec_ji, double d_ji, rvec dvec_jk, double d_jk,
+                      double *theta, double *cos_theta )
 {
   (*cos_theta) = Dot( dvec_ji, dvec_jk, 3 ) / ( d_ji * d_jk );
   if( *cos_theta > 1. ) *cos_theta  = 1.0;
@@ -49,20 +50,18 @@ void Calculate_Theta( rvec dvec_ji, real d_ji, rvec dvec_jk, real d_jk,
   (*theta) = acos( *cos_theta );
 }
 
-
-/* calculates the derivative of the cosine of the angle between i-j-k */
-void Calculate_dCos_Theta( rvec dvec_ji, real d_ji, rvec dvec_jk, real d_jk,
+void Calculate_dCos_Theta( rvec dvec_ji, double d_ji, rvec dvec_jk, double d_jk,
                            rvec* dcos_theta_di,
                            rvec* dcos_theta_dj,
                            rvec* dcos_theta_dk )
 {
   int t;
-  real sqr_d_ji = SQR(d_ji);
-  real sqr_d_jk = SQR(d_jk);
-  real inv_dists = 1.0 / (d_ji * d_jk);
-  real inv_dists3 = pow( inv_dists, 3.0 );
-  real dot_dvecs = Dot( dvec_ji, dvec_jk, 3 );
-  real Cdot_inv3 = dot_dvecs * inv_dists3;
+  double sqr_d_ji = SQR(d_ji);
+  double sqr_d_jk = SQR(d_jk);
+  double inv_dists = 1.0 / (d_ji * d_jk);
+  double inv_dists3 = pow( inv_dists, 3.0 );
+  double dot_dvecs = Dot( dvec_ji, dvec_jk, 3 );
+  double Cdot_inv3 = dot_dvecs * inv_dists3;
 
   for( t = 0; t < 3; ++t ) {
     (*dcos_theta_di)[t] = dvec_jk[t] * inv_dists -
@@ -75,8 +74,6 @@ void Calculate_dCos_Theta( rvec dvec_ji, real d_ji, rvec dvec_jk, real d_jk,
 }
 
 
-/* this is a 3-body interaction in which the main role is
-   played by j which sits in the middle of the other two. */
 void Valence_Angles( reax_system *system, control_params *control,
                      simulation_data *data, storage *workspace,
                      reax_list **lists, output_controls *out_control )
@@ -86,29 +83,27 @@ void Valence_Angles( reax_system *system, control_params *control,
   int start_j, end_j, start_pk, end_pk;
   int cnt, num_thb_intrs;
 
-  real temp, temp_bo_jt, pBOjt7;
-  real p_val1, p_val2, p_val3, p_val4, p_val5;
-  real p_val6, p_val7, p_val8, p_val9, p_val10;
-  real p_pen1, p_pen2, p_pen3, p_pen4;
-  real p_coa1, p_coa2, p_coa3, p_coa4;
-  real trm8, expval6, expval7, expval2theta, expval12theta, exp3ij, exp3jk;
-  real exp_pen2ij, exp_pen2jk, exp_pen3, exp_pen4, trm_pen34, exp_coa2;
-  real dSBO1, dSBO2, SBO, SBO2, CSBO2, SBOp, prod_SBO, vlpadj;
-  real CEval1, CEval2, CEval3, CEval4, CEval5, CEval6, CEval7, CEval8;
-  real CEpen1, CEpen2, CEpen3;
-  real e_ang, e_coa, e_pen;
-  real CEcoa1, CEcoa2, CEcoa3, CEcoa4, CEcoa5;
-  real Cf7ij, Cf7jk, Cf8j, Cf9j;
-  real f7_ij, f7_jk, f8_Dj, f9_Dj;
-  real Ctheta_0, theta_0, theta_00, theta, cos_theta, sin_theta;
-  real r_ij, r_jk;
-  real BOA_ij, BOA_jk;
+  double temp, temp_bo_jt, pBOjt7;
+  double p_val1, p_val2, p_val3, p_val4, p_val5;
+  double p_val6, p_val7, p_val8, p_val9, p_val10;
+  double p_pen1, p_pen2, p_pen3, p_pen4;
+  double p_coa1, p_coa2, p_coa3, p_coa4;
+  double trm8, expval6, expval7, expval2theta, expval12theta, exp3ij, exp3jk;
+  double exp_pen2ij, exp_pen2jk, exp_pen3, exp_pen4, trm_pen34, exp_coa2;
+  double dSBO1, dSBO2, SBO, SBO2, CSBO2, SBOp, prod_SBO, vlpadj;
+  double CEval1, CEval2, CEval3, CEval4, CEval5, CEval6, CEval7, CEval8;
+  double CEpen1, CEpen2, CEpen3;
+  double e_ang, e_coa, e_pen;
+  double CEcoa1, CEcoa2, CEcoa3, CEcoa4, CEcoa5;
+  double Cf7ij, Cf7jk, Cf8j, Cf9j;
+  double f7_ij, f7_jk, f8_Dj, f9_Dj;
+  double Ctheta_0, theta_0, theta_00, theta, cos_theta, sin_theta;
+  double BOA_ij, BOA_jk;
   rvec force, ext_press;
-  // rtensor temp_rtensor, total_rtensor;
 
   // Tallying variables
-  real eng_tmp, f_scaler, fi_tmp[3], fj_tmp[3], fk_tmp[3];
-  real delij[3], delkj[3];
+  double eng_tmp, fi_tmp[3], fj_tmp[3], fk_tmp[3];
+  double delij[3], delkj[3];
 
   three_body_header *thbh;
   three_body_parameters *thbp;
@@ -127,8 +122,8 @@ void Valence_Angles( reax_system *system, control_params *control,
 
 
   for( j = 0; j < system->N; ++j ) {         // Ray: the first one with system->N
-    // fprintf( out_control->eval, "j: %d\n", j );
     type_j = system->my_atoms[j].type;
+    if (type_j < 0) continue;
     start_j = Start_Index(j, bonds);
     end_j = End_Index(j, bonds);
 
@@ -145,7 +140,6 @@ void Valence_Angles( reax_system *system, control_params *control,
       prod_SBO *= exp( -temp );
     }
 
-    /* modifications to match Adri's code - 09/01/09 */
     if( workspace->vlpex[j] >= 0 ){
       vlpadj = 0;
       dSBO2 = prod_SBO - 1;
@@ -183,16 +177,9 @@ void Valence_Angles( reax_system *system, control_params *control,
       if( BOA_ij/*bo_ij->BO*/ > 0.0 &&
           ( j < system->n || pbond_ij->nbr < system->n ) ) {
         i = pbond_ij->nbr;
-        r_ij = pbond_ij->d;
         type_i = system->my_atoms[i].type;
-        // fprintf( out_control->eval, "i: %d\n", i );
 
-
-        /* first copy 3-body intrs from previously computed ones where i>k.
-           in the second for-loop below,
-           we compute only new 3-body intrs where i < k */
         for( pk = start_j; pk < pi; ++pk ) {
-          // fprintf( out_control->eval, "pk: %d\n", pk );
           start_pk = Start_Index( pk, thb_intrs );
           end_pk = End_Index( pk, thb_intrs );
 
@@ -213,8 +200,6 @@ void Valence_Angles( reax_system *system, control_params *control,
             }
         }
 
-
-        /* and this is the second for loop mentioned above */
         for( pk = pi+1; pk < end_j; ++pk ) {
           pbond_jk = &(bonds->select.bond_list[pk]);
           bo_jk    = &(pbond_jk->bo_data);
@@ -246,26 +231,9 @@ void Valence_Angles( reax_system *system, control_params *control,
               (bo_ij->BO > control->thb_cut) &&
               (bo_jk->BO > control->thb_cut) &&
               (bo_ij->BO * bo_jk->BO > control->thb_cutsq) ) {
-            r_jk = pbond_jk->d;
             thbh = &( system->reax_param.thbp[ type_i ][ type_j ][ type_k ] );
 
-            /* if( system->my_atoms[i].orig_id < system->my_atoms[k].orig_id )
-               fprintf( fval, "%6d %6d %6d %7.3f %7.3f %7.3f\n",
-               system->my_atoms[i].orig_id,
-               system->my_atoms[j].orig_id,
-               system->my_atoms[k].orig_id,
-               bo_ij->BO, bo_jk->BO, p_ijk->theta );
-               else
-               fprintf( fval, "%6d %6d %6d %7.3f %7.3f %7.3f\n",
-               system->my_atoms[k].orig_id,
-               system->my_atoms[j].orig_id,
-               system->my_atoms[i].orig_id,
-               bo_jk->BO, bo_ij->BO, p_ijk->theta ); */
-
             for( cnt = 0; cnt < thbh->cnt; ++cnt ) {
-              // fprintf( out_control->eval, "%6d%6d%6d -- exists in thbp\n",
-              //          i+1, j+1, k+1 );
-
               if( fabs(thbh->prm[cnt].p_val1) > 0.001 ) {
                 thbp = &( thbh->prm[cnt] );
 
@@ -319,7 +287,6 @@ void Valence_Angles( reax_system *system, control_params *control,
                   f7_ij * f7_jk * f8_Dj * expval12theta;
                 /* END ANGLE ENERGY*/
 
-
                 /* PENALTY ENERGY */
                 p_pen1 = thbp->p_pen1;
                 p_pen2 = system->reax_param.gp.l[19];
@@ -346,7 +313,6 @@ void Valence_Angles( reax_system *system, control_params *control,
                 CEpen3 = temp * (BOA_jk - 2.0);
                 /* END PENALTY ENERGY */
 
-
                 /* COALITION ENERGY */
                 p_coa1 = thbp->p_coa1;
                 p_coa2 = system->reax_param.gp.l[2];
@@ -370,7 +336,6 @@ void Valence_Angles( reax_system *system, control_params *control,
                   (workspace->total_bond_order[k]-BOA_jk) * e_coa;
                 /* END COALITION ENERGY */
 
-
                 /* FORCES */
                 bo_ij->Cdbo += (CEval1 + CEpen2 + (CEcoa1 - CEcoa4));
                 bo_jk->Cdbo += (CEval2 + CEpen3 + (CEcoa2 - CEcoa5));
@@ -385,10 +350,6 @@ void Valence_Angles( reax_system *system, control_params *control,
                     temp = CUBE( temp_bo_jt );
                     pBOjt7 = temp * temp * temp_bo_jt;
 
-                    // fprintf( out_control->eval, "%6d%12.8f\n",
-                    // workspace->reverse_map[bonds->select.bond_list[t].nbr],
-                    // (CEval6 * pBOjt7) );
-
                     bo_jt->Cdbo += (CEval6 * pBOjt7);
                     bo_jt->Cdbopi += CEval5;
                     bo_jt->Cdbopi2 += CEval5;
@@ -400,8 +361,6 @@ void Valence_Angles( reax_system *system, control_params *control,
                   rvec_ScaledAdd( workspace->f[k], CEval8, p_ijk->dcos_dk );
                 }
                 else {
-                  /* terms not related to bond order derivatives are
-                     added directly into forces and pressure vector/tensor */
                   rvec_Scale( force, CEval8, p_ijk->dcos_di );
                   rvec_Add( workspace->f[i], force );
                   rvec_iMultiply( ext_press, pbond_ij->rel_box, force );
@@ -435,104 +394,6 @@ void Valence_Angles( reax_system *system, control_params *control,
                   if( system->pair_ptr->vflag_atom)
                           system->pair_ptr->v_tally3(i,j,k,fi_tmp,fk_tmp,delij,delkj);
                 }
-
-#ifdef TEST_ENERGY
-                /*fprintf( out_control->eval, "%12.8f%12.8f%12.8f%12.8f\n",
-                  p_val3, p_val4, BOA_ij, BOA_jk );
-                fprintf(out_control->eval, "%13.8f%13.8f%13.8f%13.8f%13.8f\n",
-                        workspace->Delta_e[j], workspace->vlpex[j],
-                        dSBO1, dSBO2, vlpadj );
-                fprintf( out_control->eval, "%12.8f%12.8f%12.8f%12.8f\n",
-                         f7_ij, f7_jk, f8_Dj, expval12theta );
-                fprintf( out_control->eval,
-                         "%12.8f%12.8f%12.8f%12.8f%12.8f%12.8f%12.8f%12.8f\n",
-                         CEval1, CEval2, CEval3, CEval4,
-                         CEval5, CEval6, CEval7, CEval8 );
-
-                fprintf( out_control->eval,
-                "%12.8f%12.8f%12.8f\n%12.8f%12.8f%12.8f\n%12.8f%12.8f%12.8f\n",
-                   p_ijk->dcos_di[0]/sin_theta, p_ijk->dcos_di[1]/sin_theta,
-                   p_ijk->dcos_di[2]/sin_theta,
-                   p_ijk->dcos_dj[0]/sin_theta, p_ijk->dcos_dj[1]/sin_theta,
-                   p_ijk->dcos_dj[2]/sin_theta,
-                   p_ijk->dcos_dk[0]/sin_theta, p_ijk->dcos_dk[1]/sin_theta,
-                   p_ijk->dcos_dk[2]/sin_theta);
-
-                fprintf( out_control->eval,
-                         "%6d%6d%6d%15.8f%15.8f\n",
-                         system->my_atoms[i].orig_id,
-                         system->my_atoms[j].orig_id,
-                         system->my_atoms[k].orig_id,
-                         RAD2DEG(theta), e_ang );*/
-
-                fprintf( out_control->eval,
-                //"%6d%6d%6d%24.15e%24.15e%24.15e%24.15e%24.15e%24.15e\n",
-                         "%6d%6d%6d%12.4f%12.4f%12.4f%12.4f%12.4f%12.4f\n",
-                         system->my_atoms[i].orig_id,
-                         system->my_atoms[j].orig_id,
-                         system->my_atoms[k].orig_id,
-                         RAD2DEG(theta), theta_0, BOA_ij, BOA_jk,
-                         e_ang, data->my_en.e_ang );
-
-                fprintf( out_control->epen,
-                         //"%6d%6d%6d%24.15e%24.15e%24.15e%24.15e%24.15e\n",
-                         "%6d%6d%6d%12.4f%12.4f%12.4f%12.4f%12.4f\n",
-                         system->my_atoms[i].orig_id,
-                         system->my_atoms[j].orig_id,
-                         system->my_atoms[k].orig_id,
-                         RAD2DEG(theta), BOA_ij, BOA_jk, e_pen,
-                         data->my_en.e_pen );
-
-                fprintf( out_control->ecoa,
-                         //"%6d%6d%6d%24.15e%24.15e%24.15e%24.15e%24.15e\n",
-                         "%6d%6d%6d%12.4f%12.4f%12.4f%12.4f%12.4f\n",
-                         system->my_atoms[i].orig_id,
-                         system->my_atoms[j].orig_id,
-                         system->my_atoms[k].orig_id,
-                         RAD2DEG(theta), BOA_ij, BOA_jk,
-                         e_coa, data->my_en.e_coa );
-#endif
-
-#ifdef TEST_FORCES            /* angle forces */
-                Add_dBO( system, lists, j, pi, CEval1, workspace->f_ang );
-                Add_dBO( system, lists, j, pk, CEval2, workspace->f_ang );
-                Add_dDelta( system, lists, j,
-                            CEval3 + CEval7, workspace->f_ang );
-
-                for( t = start_j; t < end_j; ++t ) {
-                  pbond_jt = &( bonds->select.bond_list[t] );
-                  bo_jt = &(pbond_jt->bo_data);
-                  temp_bo_jt = bo_jt->BO;
-                  temp = CUBE( temp_bo_jt );
-                  pBOjt7 = temp * temp * temp_bo_jt;
-
-                  Add_dBO( system, lists, j, t, pBOjt7 * CEval6,
-                           workspace->f_ang );
-                  Add_dBOpinpi2( system, lists, j, t, CEval5, CEval5,
-                                 workspace->f_ang, workspace->f_ang );
-                }
-
-                rvec_ScaledAdd( workspace->f_ang[i], CEval8, p_ijk->dcos_di );
-                rvec_ScaledAdd( workspace->f_ang[j], CEval8, p_ijk->dcos_dj );
-                rvec_ScaledAdd( workspace->f_ang[k], CEval8, p_ijk->dcos_dk );
-                /* end angle forces */
-
-                /* penalty forces */
-                Add_dDelta( system, lists, j, CEpen1, workspace->f_pen );
-                Add_dBO( system, lists, j, pi, CEpen2, workspace->f_pen );
-                Add_dBO( system, lists, j, pk, CEpen3, workspace->f_pen );
-                /* end penalty forces */
-
-                /* coalition forces */
-                Add_dBO( system, lists, j, pi, CEcoa1 - CEcoa4,
-                         workspace->f_coa );
-                Add_dBO( system, lists, j, pk, CEcoa2 - CEcoa5,
-                         workspace->f_coa );
-                Add_dDelta( system, lists, j, CEcoa3, workspace->f_coa );
-                Add_dDelta( system, lists, i, CEcoa4, workspace->f_coa );
-                Add_dDelta( system, lists, k, CEcoa5, workspace->f_coa );
-                /* end coalition forces */
-#endif
               }
             }
           }
@@ -551,16 +412,5 @@ void Valence_Angles( reax_system *system, control_params *control,
       MPI_Abort( MPI_COMM_WORLD, INSUFFICIENT_MEMORY );
     }
   }
-  //fprintf( stderr,"%d: Number of angle interactions: %d\n",
-  // data->step, num_thb_intrs );
 
-#if defined(DEBUG)
-  fprintf( stderr, "Number of angle interactions: %d\n", num_thb_intrs );
-  fprintf( stderr,
-           "Angle Energy: %g\t Penalty Energy: %g\t Coalition Energy: %g\t\n",
-           data->my_en.e_ang, data->my_en.e_pen, data->my_en.e_coa );
-
-  fprintf( stderr, "3body: ext_press (%12.6f %12.6f %12.6f)\n",
-           data->ext_press[0], data->ext_press[1], data->ext_press[2] );
-#endif
 }

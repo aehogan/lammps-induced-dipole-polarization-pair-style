@@ -24,21 +24,12 @@
   <http://www.gnu.org/licenses/>.
   ----------------------------------------------------------------------*/
 
-#include "pair_reax_c.h"
-#if defined(PURE_REAX)
-#include "bonds.h"
-#include "bond_orders.h"
-#include "list.h"
-#include "tool_box.h"
-#include "vector.h"
-#elif defined(LAMMPS_REAX)
+#include "pair_reaxc.h"
 #include "reaxc_bonds.h"
 #include "reaxc_bond_orders.h"
 #include "reaxc_list.h"
 #include "reaxc_tool_box.h"
 #include "reaxc_vector.h"
-#endif
-
 
 void Bonds( reax_system *system, control_params *control,
             simulation_data *data, storage *workspace, reax_list **lists,
@@ -47,10 +38,10 @@ void Bonds( reax_system *system, control_params *control,
   int i, j, pj, natoms;
   int start_i, end_i;
   int type_i, type_j;
-  real ebond, pow_BOs_be2, exp_be12, CEbo;
-  real gp3, gp4, gp7, gp10, gp37;
-  real exphu, exphua1, exphub1, exphuov, hulpov, estriph;
-  real decobdbo, decobdboua, decobdboub;
+  double ebond, pow_BOs_be2, exp_be12, CEbo;
+  double gp3, gp4, gp7, gp10, gp37;
+  double exphu, exphua1, exphub1, exphuov, hulpov, estriph;
+  double decobdbo, decobdboua, decobdboub;
   single_body_parameters *sbp_i, *sbp_j;
   two_body_parameters *twbp;
   bond_order_data *bo_ij;
@@ -71,89 +62,75 @@ void Bonds( reax_system *system, control_params *control,
     for( pj = start_i; pj < end_i; ++pj ) {
       j = bonds->select.bond_list[pj].nbr;
 
-      if( system->my_atoms[i].orig_id <= system->my_atoms[j].orig_id ) {
-        /* set the pointers */
-        type_i = system->my_atoms[i].type;
-        type_j = system->my_atoms[j].type;
-        sbp_i = &( system->reax_param.sbp[type_i] );
-        sbp_j = &( system->reax_param.sbp[type_j] );
-        twbp = &( system->reax_param.tbp[type_i][type_j] );
-        bo_ij = &( bonds->select.bond_list[pj].bo_data );
+      if( system->my_atoms[i].orig_id > system->my_atoms[j].orig_id )
+        continue;
+      if( system->my_atoms[i].orig_id == system->my_atoms[j].orig_id ) {
+        if (system->my_atoms[j].x[2] <  system->my_atoms[i].x[2]) continue;
+        if (system->my_atoms[j].x[2] == system->my_atoms[i].x[2] &&
+            system->my_atoms[j].x[1] <  system->my_atoms[i].x[1]) continue;
+        if (system->my_atoms[j].x[2] == system->my_atoms[i].x[2] &&
+            system->my_atoms[j].x[1] == system->my_atoms[i].x[1] &&
+            system->my_atoms[j].x[0] <  system->my_atoms[i].x[0]) continue;
+      }
 
-        /* calculate the constants */
-        pow_BOs_be2 = pow( bo_ij->BO_s, twbp->p_be2 );
-        exp_be12 = exp( twbp->p_be1 * ( 1.0 - pow_BOs_be2 ) );
-        CEbo = -twbp->De_s * exp_be12 *
-          ( 1.0 - twbp->p_be1 * twbp->p_be2 * pow_BOs_be2 );
+      /* set the pointers */
+      type_i = system->my_atoms[i].type;
+      type_j = system->my_atoms[j].type;
+      sbp_i = &( system->reax_param.sbp[type_i] );
+      sbp_j = &( system->reax_param.sbp[type_j] );
+      twbp = &( system->reax_param.tbp[type_i][type_j] );
+      bo_ij = &( bonds->select.bond_list[pj].bo_data );
 
-        /* calculate the Bond Energy */
-        data->my_en.e_bond += ebond =
-          -twbp->De_s * bo_ij->BO_s * exp_be12
-          -twbp->De_p * bo_ij->BO_pi
-          -twbp->De_pp * bo_ij->BO_pi2;
+      /* calculate the constants */
+      if (bo_ij->BO_s == 0.0) pow_BOs_be2 = 0.0;
+      else pow_BOs_be2 = pow( bo_ij->BO_s, twbp->p_be2 );
+      exp_be12 = exp( twbp->p_be1 * ( 1.0 - pow_BOs_be2 ) );
+      CEbo = -twbp->De_s * exp_be12 *
+        ( 1.0 - twbp->p_be1 * twbp->p_be2 * pow_BOs_be2 );
 
-        /* tally into per-atom energy */
-        if( system->pair_ptr->evflag)
-          system->pair_ptr->ev_tally(i,j,natoms,1,ebond,0.0,0.0,0.0,0.0,0.0);
+      /* calculate the Bond Energy */
+      data->my_en.e_bond += ebond =
+        -twbp->De_s * bo_ij->BO_s * exp_be12
+        -twbp->De_p * bo_ij->BO_pi
+        -twbp->De_pp * bo_ij->BO_pi2;
 
-        /* calculate derivatives of Bond Orders */
-        bo_ij->Cdbo += CEbo;
-        bo_ij->Cdbopi -= (CEbo + twbp->De_p);
-        bo_ij->Cdbopi2 -= (CEbo + twbp->De_pp);
+      /* tally into per-atom energy */
+      if( system->pair_ptr->evflag)
+        system->pair_ptr->ev_tally(i,j,natoms,1,ebond,0.0,0.0,0.0,0.0,0.0);
 
-#ifdef TEST_ENERGY
-        //fprintf( out_control->ebond, "%6d%6d%24.15e%24.15e%24.15e\n",
-        fprintf( out_control->ebond, "%6d%6d%12.4f%12.4f%12.4f\n",
-                 system->my_atoms[i].orig_id,
-                 system->my_atoms[j].orig_id,
-                 bo_ij->BO, ebond, data->my_en.e_bond );
-#endif
-#ifdef TEST_FORCES
-        Add_dBO( system, lists, i, pj, CEbo, workspace->f_be );
-        Add_dBOpinpi2( system, lists, i, pj,
-                       -(CEbo + twbp->De_p), -(CEbo + twbp->De_pp),
-                       workspace->f_be, workspace->f_be );
-#endif
-        /* Stabilisation terminal triple bond */
-        if( bo_ij->BO >= 1.00 ) {
-          if( gp37 == 2 ||
-              (sbp_i->mass == 12.0000 && sbp_j->mass == 15.9990) ||
-              (sbp_j->mass == 12.0000 && sbp_i->mass == 15.9990) ) {
-            exphu = exp( -gp7 * SQR(bo_ij->BO - 2.50) );
-            exphua1 = exp(-gp3 * (workspace->total_bond_order[i]-bo_ij->BO));
-            exphub1 = exp(-gp3 * (workspace->total_bond_order[j]-bo_ij->BO));
-            exphuov = exp(gp4 * (workspace->Delta[i] + workspace->Delta[j]));
-            hulpov = 1.0 / (1.0 + 25.0 * exphuov);
+      /* calculate derivatives of Bond Orders */
+      bo_ij->Cdbo += CEbo;
+      bo_ij->Cdbopi -= (CEbo + twbp->De_p);
+      bo_ij->Cdbopi2 -= (CEbo + twbp->De_pp);
 
-            estriph = gp10 * exphu * hulpov * (exphua1 + exphub1);
-            data->my_en.e_bond += estriph;
+      /* Stabilisation terminal triple bond */
+      if( bo_ij->BO >= 1.00 ) {
+        if( gp37 == 2 ||
+            (sbp_i->mass == 12.0000 && sbp_j->mass == 15.9990) ||
+            (sbp_j->mass == 12.0000 && sbp_i->mass == 15.9990) ) {
+          exphu = exp( -gp7 * SQR(bo_ij->BO - 2.50) );
+          exphua1 = exp(-gp3 * (workspace->total_bond_order[i]-bo_ij->BO));
+          exphub1 = exp(-gp3 * (workspace->total_bond_order[j]-bo_ij->BO));
+          exphuov = exp(gp4 * (workspace->Delta[i] + workspace->Delta[j]));
+          hulpov = 1.0 / (1.0 + 25.0 * exphuov);
 
-            decobdbo = gp10 * exphu * hulpov * (exphua1 + exphub1) *
-              ( gp3 - 2.0 * gp7 * (bo_ij->BO-2.50) );
-            decobdboua = -gp10 * exphu * hulpov *
-              (gp3*exphua1 + 25.0*gp4*exphuov*hulpov*(exphua1+exphub1));
-            decobdboub = -gp10 * exphu * hulpov *
-              (gp3*exphub1 + 25.0*gp4*exphuov*hulpov*(exphua1+exphub1));
+          estriph = gp10 * exphu * hulpov * (exphua1 + exphub1);
+          data->my_en.e_bond += estriph;
 
-            /* tally into per-atom energy */
-            if( system->pair_ptr->evflag)
-              system->pair_ptr->ev_tally(i,j,natoms,1,estriph,0.0,0.0,0.0,0.0,0.0);
+          decobdbo = gp10 * exphu * hulpov * (exphua1 + exphub1) *
+            ( gp3 - 2.0 * gp7 * (bo_ij->BO-2.50) );
+          decobdboua = -gp10 * exphu * hulpov *
+            (gp3*exphua1 + 25.0*gp4*exphuov*hulpov*(exphua1+exphub1));
+          decobdboub = -gp10 * exphu * hulpov *
+            (gp3*exphub1 + 25.0*gp4*exphuov*hulpov*(exphua1+exphub1));
 
-            bo_ij->Cdbo += decobdbo;
-            workspace->CdDelta[i] += decobdboua;
-            workspace->CdDelta[j] += decobdboub;
-#ifdef TEST_ENERGY
-            //fprintf( out_control->ebond,
-            //  "%6d%6d%24.15e%24.15e%24.15e%24.15e\n",
-            //  system->my_atoms[i].orig_id, system->my_atoms[j].orig_id,
-            //  estriph, decobdbo, decobdboua, decobdboub );
-#endif
-#ifdef TEST_FORCES
-            Add_dBO( system, lists, i, pj, decobdbo, workspace->f_be );
-            Add_dDelta( system, lists, i, decobdboua, workspace->f_be );
-            Add_dDelta( system, lists, j, decobdboub, workspace->f_be );
-#endif
-          }
+          /* tally into per-atom energy */
+          if( system->pair_ptr->evflag)
+            system->pair_ptr->ev_tally(i,j,natoms,1,estriph,0.0,0.0,0.0,0.0,0.0);
+
+          bo_ij->Cdbo += decobdbo;
+          workspace->CdDelta[i] += decobdboua;
+          workspace->CdDelta[j] += decobdboub;
         }
       }
     }

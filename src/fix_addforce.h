@@ -1,4 +1,4 @@
-/* ----------------------------------------------------------------------
+/* -*- c++ -*- ----------------------------------------------------------
    LAMMPS - Large-scale Atomic/Molecular Massively Parallel Simulator
    http://lammps.sandia.gov, Sandia National Laboratories
    Steve Plimpton, sjplimp@sandia.gov
@@ -47,7 +47,7 @@ class FixAddForce : public Fix {
   int xvar,yvar,zvar,evar,xstyle,ystyle,zstyle,estyle;
   double foriginal[4],foriginal_all[4];
   int force_flag;
-  int nlevels_respa;
+  int ilevel_respa;
 
   int maxatom;
   double **sforce;
@@ -85,7 +85,7 @@ in energy directly.
 
 E: Must use variable energy with fix addforce
 
-Must define an energy vartiable when applyting a dynamic
+Must define an energy variable when applying a dynamic
 force during minimization.
 
 */

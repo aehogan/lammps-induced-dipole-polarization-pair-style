@@ -1,4 +1,4 @@
-/* ----------------------------------------------------------------------
+/* -*- c++ -*- ----------------------------------------------------------
    LAMMPS - Large-scale Atomic/Molecular Massively Parallel Simulator
    http://lammps.sandia.gov, Sandia National Laboratories
    Steve Plimpton, sjplimp@sandia.gov
@@ -27,11 +27,14 @@ namespace LAMMPS_NS {
 class PairLJCharmmCoulMSM : public PairLJCharmmCoulLong {
  public:
   PairLJCharmmCoulMSM(class LAMMPS *);
-  virtual ~PairLJCharmmCoulMSM(){};
+  virtual ~PairLJCharmmCoulMSM();
   virtual void compute(int, int);
   virtual double single(int, int, int, int, double, double, double, double &);
   virtual void compute_outer(int, int);
   virtual void *extract(const char *, int &);
+ protected:
+  int nmax;
+  double **ftmp;
 };
 
 }
@@ -41,37 +44,12 @@ class PairLJCharmmCoulMSM : public PairLJCharmmCoulLong {
 
 /* ERROR/WARNING messages:
 
-E: Illegal ... command
+E: Must use 'kspace_modify pressure/scalar no' to obtain per-atom virial with kspace_style MSM
 
-Self-explanatory.  Check the input script syntax and compare to the
-documentation for the command.  You can use -echo screen as a
-command-line option when running LAMMPS to see the offending line.
+The kspace scalar pressure option cannot be used to obtain per-atom virial.
 
-E: Incorrect args for pair coefficients
+E: Must use 'kspace_modify pressure/scalar no' for rRESPA with kspace_style MSM
 
-Self-explanatory.  Check the input script or data file.
-
-E: Pair style lj/charmm/coul/long requires atom attribute q
-
-The atom style defined does not have these attributes.
-
-E: Pair inner cutoff >= Pair outer cutoff
-
-The specified cutoffs for the pair style are inconsistent.
-
-E: Pair cutoff < Respa interior cutoff
-
-One or more pairwise cutoffs are too short to use with the specified
-rRESPA cutoffs.
-
-E: Pair inner cutoff < Respa interior cutoff
-
-One or more pairwise cutoffs are too short to use with the specified
-rRESPA cutoffs.
-
-E: Pair style is incompatible with KSpace style
-
-If a pair style with a long-range Coulombic component is selected,
-then a kspace style must also be used.
+The kspace scalar pressure option cannot (yet) be used with rRESPA.
 
 */

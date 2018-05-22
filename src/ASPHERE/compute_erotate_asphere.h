@@ -1,4 +1,4 @@
-/* ----------------------------------------------------------------------
+/* -*- c++ -*- ----------------------------------------------------------
    LAMMPS - Large-scale Atomic/Molecular Massively Parallel Simulator
    http://lammps.sandia.gov, Sandia National Laboratories
    Steve Plimpton, sjplimp@sandia.gov
@@ -56,6 +56,6 @@ Self-explanatory.
 
 E: Compute erotate/asphere requires extended particles
 
-This compute cannot be used with point paritlces.
+This compute cannot be used with point particles.
 
 */

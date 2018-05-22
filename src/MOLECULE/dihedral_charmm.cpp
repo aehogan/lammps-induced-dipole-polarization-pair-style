@@ -15,10 +15,10 @@
    Contributing author: Paul Crozier (SNL)
 ------------------------------------------------------------------------- */
 
-#include "lmptype.h"
-#include "mpi.h"
-#include "math.h"
-#include "stdlib.h"
+#include <mpi.h>
+#include <math.h>
+#include <stdlib.h>
+#include <string.h>
 #include "dihedral_charmm.h"
 #include "atom.h"
 #include "comm.h"
@@ -27,6 +27,7 @@
 #include "force.h"
 #include "pair.h"
 #include "update.h"
+#include "respa.h"
 #include "math_const.h"
 #include "memory.h"
 #include "error.h"
@@ -38,13 +39,17 @@ using namespace MathConst;
 
 /* ---------------------------------------------------------------------- */
 
-DihedralCharmm::DihedralCharmm(LAMMPS *lmp) : Dihedral(lmp) {}
+DihedralCharmm::DihedralCharmm(LAMMPS *lmp) : Dihedral(lmp)
+{
+  weightflag = 0;
+  writedata = 1;
+}
 
 /* ---------------------------------------------------------------------- */
 
 DihedralCharmm::~DihedralCharmm()
 {
-  if (allocated) {
+  if (allocated && !copymode) {
     memory->destroy(setflag);
     memory->destroy(k);
     memory->destroy(multiplicity);
@@ -146,7 +151,9 @@ void DihedralCharmm::compute(int eflag, int vflag)
       MPI_Comm_rank(world,&me);
       if (screen) {
         char str[128];
-        sprintf(str,"Dihedral problem: %d " BIGINT_FORMAT " %d %d %d %d",
+        sprintf(str,"Dihedral problem: %d " BIGINT_FORMAT " "
+                TAGINT_FORMAT " " TAGINT_FORMAT " "
+                TAGINT_FORMAT " " TAGINT_FORMAT,
                 me,update->ntimestep,
                 atom->tag[i1],atom->tag[i2],atom->tag[i3],atom->tag[i4]);
         error->warning(FLERR,str,0);
@@ -325,21 +332,22 @@ void DihedralCharmm::coeff(int narg, char **arg)
   if (!allocated) allocate();
 
   int ilo,ihi;
-  force->bounds(arg[0],atom->ndihedraltypes,ilo,ihi);
+  force->bounds(FLERR,arg[0],atom->ndihedraltypes,ilo,ihi);
 
   // require integer values of shift for backwards compatibility
   // arbitrary phase angle shift could be allowed, but would break
   //   backwards compatibility and is probably not needed
 
-  double k_one = force->numeric(arg[1]);
-  int multiplicity_one = force->inumeric(arg[2]);
-  int shift_one = force->inumeric(arg[3]);
-  double weight_one = force->numeric(arg[4]);
+  double k_one = force->numeric(FLERR,arg[1]);
+  int multiplicity_one = force->inumeric(FLERR,arg[2]);
+  int shift_one = force->inumeric(FLERR,arg[3]);
+  double weight_one = force->numeric(FLERR,arg[4]);
 
   if (multiplicity_one < 0)
     error->all(FLERR,"Incorrect multiplicity arg for dihedral coefficients");
   if (weight_one < 0.0 || weight_one > 1.0)
     error->all(FLERR,"Incorrect weight arg for dihedral coefficients");
+  if (weight_one > 0.0) weightflag=1;
 
   int count = 0;
   for (int i = ilo; i <= ihi; i++) {
@@ -362,14 +370,26 @@ void DihedralCharmm::coeff(int narg, char **arg)
 
 void DihedralCharmm::init_style()
 {
+  if (strstr(update->integrate_style,"respa")) {
+    Respa *r = (Respa *) update->integrate;
+    if (r->level_pair >= 0 && (r->level_pair != r->level_dihedral))
+      error->all(FLERR,"Dihedral style charmm must be set to same"
+                 " r-RESPA level as 'pair'");
+    if (r->level_outer >= 0 && (r->level_outer != r->level_dihedral))
+      error->all(FLERR,"Dihedral style charmm must be set to same"
+                 " r-RESPA level as 'outer'");
+  }
+
   // insure use of CHARMM pair_style if any weight factors are non-zero
   // set local ptrs to LJ 14 arrays setup by Pair
-
-  weightflag = 0;
-  for (int i = 1; i <= atom->ndihedraltypes; i++)
-    if (weight[i] > 0.0) weightflag = 1;
+  // also verify that the correct 1-4 scaling is set
 
   if (weightflag) {
+
+    if ((force->special_lj[3] != 0.0) || (force->special_coul[3] != 0.0))
+      error->all(FLERR,"Must use 'special_bonds charmm' with"
+                 " dihedral style charmm for use with CHARMM pair styles");
+
     int itmp;
     if (force->pair == NULL)
       error->all(FLERR,"Dihedral charmm is incompatible with Pair style");
@@ -394,6 +414,7 @@ void DihedralCharmm::write_restart(FILE *fp)
   fwrite(&multiplicity[1],sizeof(int),atom->ndihedraltypes,fp);
   fwrite(&shift[1],sizeof(int),atom->ndihedraltypes,fp);
   fwrite(&weight[1],sizeof(double),atom->ndihedraltypes,fp);
+  fwrite(&weightflag,sizeof(int),1,fp);
 }
 
 /* ----------------------------------------------------------------------
@@ -409,11 +430,13 @@ void DihedralCharmm::read_restart(FILE *fp)
     fread(&multiplicity[1],sizeof(int),atom->ndihedraltypes,fp);
     fread(&shift[1],sizeof(int),atom->ndihedraltypes,fp);
     fread(&weight[1],sizeof(double),atom->ndihedraltypes,fp);
+    fread(&weightflag,sizeof(int),1,fp);
   }
   MPI_Bcast(&k[1],atom->ndihedraltypes,MPI_DOUBLE,0,world);
   MPI_Bcast(&multiplicity[1],atom->ndihedraltypes,MPI_INT,0,world);
   MPI_Bcast(&shift[1],atom->ndihedraltypes,MPI_INT,0,world);
   MPI_Bcast(&weight[1],atom->ndihedraltypes,MPI_DOUBLE,0,world);
+  MPI_Bcast(&weightflag,1,MPI_INT,0,world);
 
   for (int i = 1; i <= atom->ndihedraltypes; i++) {
     setflag[i] = 1;
@@ -421,3 +444,14 @@ void DihedralCharmm::read_restart(FILE *fp)
     sin_shift[i] = sin(MY_PI*shift[i]/180.0);
   }
 }
+
+/* ----------------------------------------------------------------------
+   proc 0 writes to data file
+------------------------------------------------------------------------- */
+
+void DihedralCharmm::write_data(FILE *fp)
+{
+  for (int i = 1; i <= atom->ndihedraltypes; i++)
+    fprintf(fp,"%d %g %d %d %g\n",i,k[i],multiplicity[i],shift[i],weight[i]);
+}
+

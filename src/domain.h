@@ -1,4 +1,4 @@
-/* ----------------------------------------------------------------------
+/* -*- c++ -*- ----------------------------------------------------------
    LAMMPS - Large-scale Atomic/Molecular Massively Parallel Simulator
    http://lammps.sandia.gov, Sandia National Laboratories
    Steve Plimpton, sjplimp@sandia.gov
@@ -14,8 +14,10 @@
 #ifndef LMP_DOMAIN_H
 #define LMP_DOMAIN_H
 
-#include "math.h"
+#include <math.h>
 #include "pointers.h"
+#include <map>
+#include <string>
 
 namespace LAMMPS_NS {
 
@@ -75,7 +77,11 @@ class Domain : protected Pointers {
   double h[6],h_inv[6];                  // shape matrix in Voigt notation
   double h_rate[6],h_ratelo[3];          // rate of box size/shape change
 
-  int box_change;                 // 1 if box bounds ever change, 0 if fixed
+  int box_change;                // 1 if any of next 3 flags are set, else 0
+  int box_change_size;           // 1 if box size changes, 0 if not
+  int box_change_shape;          // 1 if box shape changes, 0 if not
+  int box_change_domain;         // 1 if proc sub-domains change, 0 if not
+
   int deform_flag;                // 1 if fix deform exist, else 0
   int deform_vremap;              // 1 if fix deform remaps v, else 0
   int deform_groupbit;            // atom group to perform v remap for
@@ -86,27 +92,39 @@ class Domain : protected Pointers {
   int maxregion;                           // max # list can hold
   class Region **regions;                  // list of defined Regions
 
+  int copymode;
+
+  typedef Region *(*RegionCreator)(LAMMPS *,int,char**);
+  typedef std::map<std::string,RegionCreator> RegionCreatorMap;
+  RegionCreatorMap *region_map;
+
   Domain(class LAMMPS *);
   virtual ~Domain();
   virtual void init();
-  void set_initial_box();
+  void set_initial_box(int expandflag=1);
   virtual void set_global_box();
   virtual void set_lamda_box();
   virtual void set_local_box();
   virtual void reset_box();
   virtual void pbc();
+  void image_check();
   void box_too_small_check();
+  void subbox_too_small_check(double);
   void minimum_image(double &, double &, double &);
   void minimum_image(double *);
+  void minimum_image_once(double *);
   int closest_image(int, int);
+  int closest_image(double *, int);
   void closest_image(const double * const, const double * const,
                      double * const);
-  void remap(double *, tagint &);
+  void remap(double *, imageint &);
   void remap(double *);
   void remap_near(double *, double *);
-  void unmap(double *, tagint);
-  void unmap(double *, tagint, double *);
+  void unmap(double *, imageint);
+  void unmap(const double *, imageint, double *);
   void image_flip(int, int, int);
+  int ownatom(int, double *, imageint *, int);
+
   void set_lattice(int, char **);
   void add_region(int, char **);
   void delete_region(int, char **);
@@ -120,12 +138,18 @@ class Domain : protected Pointers {
   virtual void x2lamda(int);
   virtual void lamda2x(double *, double *);
   virtual void x2lamda(double *, double *);
+  int inside(double *);
+  int inside_nonperiodic(double *);
   void x2lamda(double *, double *, double *, double *);
   void bbox(double *, double *, double *, double *);
   void box_corners();
+  void subbox_corners();
+  void lamda_box_corners(double *, double *);
 
   // minimum image convention check
   // return 1 if any distance > 1/2 of box size
+  // indicates a special neighbor is actually not in a bond,
+  //   but is a far-away image that should be treated as an unbonded neighbor
   // inline since called from neighbor build inner loop
 
   inline int minimum_image_check(double dx, double dy, double dz) {
@@ -137,6 +161,9 @@ class Domain : protected Pointers {
 
  protected:
   double small[3];                  // fractions of box lengths
+
+ private:
+  template <typename T> static Region *region_creator(LAMMPS *,int,char**);
 };
 
 }
@@ -158,12 +185,46 @@ E: Triclinic box skew is too large
 
 The displacement in a skewed direction must be less than half the box
 length in that dimension.  E.g. the xy tilt must be between -half and
-+half of the x box length. This constraint can be relaxed by increasing
-the value of DELTATILT defined in domain.cpp.
++half of the x box length.  This constraint can be relaxed by using
+the box tilt command.
+
+W: Triclinic box skew is large
+
+The displacement in a skewed direction is normally required to be less
+than half the box length in that dimension.  E.g. the xy tilt must be
+between -half and +half of the x box length.  You have relaxed the
+constraint using the box tilt command, but the warning means that a
+LAMMPS simulation may be inefficient as a result.
 
 E: Illegal simulation box
 
 The lower bound of the simulation box is greater than the upper bound.
+
+E: Bond atom missing in image check
+
+The 2nd atom in a particular bond is missing on this processor.
+Typically this is because the pairwise cutoff is set too short or the
+bond has blown apart and an atom is too far away.
+
+W: Inconsistent image flags
+
+The image flags for a pair on bonded atoms appear to be inconsistent.
+Inconsistent means that when the coordinates of the two atoms are
+unwrapped using the image flags, the two atoms are far apart.
+Specifically they are further apart than half a periodic box length.
+Or they are more than a box length apart in a non-periodic dimension.
+This is usually due to the initial data file not having correct image
+flags for the 2 atoms in a bond that straddles a periodic boundary.
+They should be different by 1 in that case.  This is a warning because
+inconsistent image flags will not cause problems for dynamics or most
+LAMMPS simulations.  However they can cause problems when such atoms
+are used with the fix rigid or replicate commands.
+
+W: Bond atom missing in image check
+
+The 2nd atom in a particular bond is missing on this processor.
+Typically this is because the pairwise cutoff is set too short or the
+bond has blown apart and an atom is too far away.
 
 E: Bond atom missing in box size check
 
@@ -171,7 +232,13 @@ The 2nd atoms needed to compute a particular bond is missing on this
 processor.  Typically this is because the pairwise cutoff is set too
 short or the bond has blown apart and an atom is too far away.
 
-E: Bond/angle/dihedral extent > half of periodic box length
+W: Bond atom missing in box size check
+
+The 2nd atoms needed to compute a particular bond is missing on this
+processor.  Typically this is because the pairwise cutoff is set too
+short or the bond has blown apart and an atom is too far away.
+
+W: Bond/angle/dihedral extent > half of periodic box length
 
 This is a restriction because LAMMPS can be confused about which image
 of an atom in the bonded interaction is the correct one to use.
@@ -179,6 +246,15 @@ of an atom in the bonded interaction is the correct one to use.
 bond/angle/dihedral.  LAMMPS computes this by taking the maximum bond
 length, multiplying by the number of bonds in the interaction (e.g. 3
 for a dihedral) and adding a small amount of stretch.
+
+W: Proc sub-domain size < neighbor skin, could lead to lost atoms
+
+The decomposition of the physical domain (likely due to load
+balancing) has led to a processor's sub-domain being smaller than the
+neighbor skin in one or more dimensions.  Since reneighboring is
+triggered by atoms moving the skin distance, this may lead to lost
+atoms, if an atom moves all the way across a neighboring processor's
+sub-domain before reneighboring is triggered.
 
 E: Illegal ... command
 
@@ -190,7 +266,7 @@ E: Reuse of region ID
 
 A region ID cannot be used twice.
 
-E: Invalid region style
+E: Unknown region style
 
 The choice of region style is unknown.
 

@@ -1,4 +1,4 @@
-/* ----------------------------------------------------------------------
+/* -*- c++ -*- ----------------------------------------------------------
    LAMMPS - Large-scale Atomic/Molecular Massively Parallel Simulator
    http://lammps.sandia.gov, Sandia National Laboratories
    Steve Plimpton, sjplimp@sandia.gov
@@ -15,12 +15,11 @@
 #define LMP_NEIGHBOR_H
 
 #include "pointers.h"
+#include <map>
 
 namespace LAMMPS_NS {
 
 class Neighbor : protected Pointers {
-  friend class Cuda;
-
  public:
   int style;                       // 0,1,2 = nsq, bin, multi
   int every;                       // build every this many steps
@@ -31,28 +30,68 @@ class Neighbor : protected Pointers {
   int oneatom;                     // max # of neighbors for one atom
   int includegroup;                // only build pairwise lists for this group
   int build_once;                  // 1 if only build lists once per run
-  int cudable;                     // GPU <-> CPU communication flag for CUDA
 
   double skin;                     // skin distance
   double cutneighmin;              // min neighbor cutoff for all type pairs
   double cutneighmax;              // max neighbor cutoff for all type pairs
+  double cutneighmaxsq;            // cutneighmax squared
+  double **cutneighsq;             // neighbor cutneigh sq for each type pair
+  double **cutneighghostsq;        // cutneigh sq for each ghost type pair
   double *cuttype;                 // for each type, max neigh cut w/ others
+  double *cuttypesq;               // cuttype squared
+  double cut_inner_sq;             // outer cutoff for inner neighbor list
+  double cut_middle_sq;            // outer cutoff for middle neighbor list
+  double cut_middle_inside_sq;     // inner cutoff for middle neighbor list
+
+  int binsizeflag;                 // user-chosen bin size
+  double binsize_user;             // set externally by some accelerator pkgs
 
   bigint ncalls;                   // # of times build has been called
   bigint ndanger;                  // # of dangerous builds
   bigint lastcall;                 // timestep of last neighbor::build() call
 
-  int nrequest;                    // requests for pairwise neighbor lists
-  class NeighRequest **requests;   // from Pair, Fix, Compute, Command classes
-  int maxrequest;
+  // geometry and static info, used by other Neigh classes
 
-  int old_style;                   // previous run info to avoid
-  int old_nrequest;                // re-creation of pairwise neighbor lists
-  int old_triclinic;
-  class NeighRequest **old_requests;
+  double *bboxlo,*bboxhi;          // ptrs to full domain bounding box
+                                   // different for orthog vs triclinic
 
-  int nlist;                       // pairwise neighbor lists
+  // exclusion info, used by NeighPair
+
+  int exclude;                     // 0 if no type/group exclusions, 1 if yes
+
+  int nex_type;                    // # of entries in type exclusion list
+  int *ex1_type,*ex2_type;         // pairs of types to exclude
+  int **ex_type;                   // 2d array of excluded type pairs
+
+  int nex_group;                   // # of entries in group exclusion list
+  int *ex1_group,*ex2_group;       // pairs of group #'s to exclude
+  int *ex1_bit,*ex2_bit;           // pairs of group bits to exclude
+
+  int nex_mol;                     // # of entries in molecule exclusion list
+  int *ex_mol_group;               // molecule group #'s to exclude
+  int *ex_mol_bit;                 // molecule group bits to exclude
+  int *ex_mol_intra;               // 0 = exclude if in 2 molecules (inter)
+                                   // 1 = exclude if in same molecule (intra)
+
+  // special info, used by NeighPair
+
+  int special_flag[4];             // flags for 1-2, 1-3, 1-4 neighbors
+
+  // cluster setting, used by NeighTopo
+
+  int cluster_check;               // 1 if check bond/angle/etc satisfies minimg
+
+  // pairwise neighbor lists and corresponding requests
+
+  int nlist;                           // # of pairwise neighbor lists
+  int nrequest;                        // # of requests, same as nlist
+  int old_nrequest;                    // # of requests for previous run
+
   class NeighList **lists;
+  class NeighRequest **requests;       // from Pair,Fix,Compute,Command classes
+  class NeighRequest **old_requests;   // copy of requests to compare to
+
+  // data from topology neighbor lists
 
   int nbondlist;                   // list of bonds to compute
   int **bondlist;
@@ -63,248 +102,183 @@ class Neighbor : protected Pointers {
   int nimproperlist;               // list of impropers to compute
   int **improperlist;
 
+  // public methods
+
   Neighbor(class LAMMPS *);
   virtual ~Neighbor();
   virtual void init();
-  int request(void *);              // another class requests a neighbor list
-  void print_lists_of_lists();      // debug print out
+  int request(void *, int instance=0);
   int decide();                     // decide whether to build or not
   virtual int check_distance();     // check max distance moved since last build
   void setup_bins();                // setup bins based on box and cutoff
-  virtual void build(int topoflag=1);  // create all neighbor lists (pair,bond)
-  virtual void build_topology();    // create all topology neighbor lists
-  void build_one(int);              // create a single neighbor list
+  virtual void build(int);          // build all perpetual neighbor lists
+  virtual void build_topology();    // pairwise topology neighbor lists
+  void build_one(class NeighList *list, int preflag=0);
+                                    // create a one-time pairwise neigh list
   void set(int, char **);           // set neighbor style and skin distance
-  void modify_params(int, char**);  // modify parameters that control builds
+  void reset_timestep(bigint);      // reset of timestep counter
+  void modify_params(int, char**);  // modify params that control builds
+
+  void exclusion_group_group_delete(int, int);  // rm a group-group exclusion
+  int exclude_setting();            // return exclude value to accelerator pkg
+  class NeighRequest *find_request(void *);  // find a neighbor request
+
   bigint memory_usage();
-  int exclude_setting();
 
  protected:
   int me,nprocs;
+  int firsttime;                   // flag for calling init_styles() only once
 
-  int maxatom;                     // size of atom-based NeighList arrays
-  int maxbond,maxangle,maxdihedral,maximproper;   // size of bond lists
-  int maxwt;                       // max weighting factor applied + 1
+  int dimension;                   // 2/3 for 2d/3d
+  int triclinic;                   // 0 if domain is orthog, 1 if triclinic
+  int newton_pair;                 // 0 if newton off for pairwise, 1 if on
 
   int must_check;                  // 1 if must check other classes to reneigh
   int restart_check;               // 1 if restart enabled, 0 if no
   int fix_check;                   // # of fixes that induce reneigh
   int *fixchecklist;               // which fixes to check
 
-  double **cutneighsq;             // neighbor cutneigh sq for each type pair
-  double **cutneighghostsq;        // neighbor cutnsq for each ghost type pair
-  double cutneighmaxsq;            // cutneighmax squared
-  double *cuttypesq;               // cuttype squared
+  bigint last_setup_bins;          // step of last neighbor::setup_bins() call
 
   double triggersq;                // trigger = build when atom moves this dist
-  int cluster_check;               // 1 if check bond/angle/etc satisfies minimg
 
   double **xhold;                      // atom coords at last neighbor build
   int maxhold;                         // size of xhold array
+
   int boxcheck;                        // 1 if need to store box size
   double boxlo_hold[3],boxhi_hold[3];  // box size at last neighbor build
   double corners_hold[8][3];           // box corners at last neighbor build
-
-  int nbinx,nbiny,nbinz;           // # of global bins
-  int *bins;                       // ptr to next atom in each bin
-  int maxbin;                      // size of bins array
-
-  int *binhead;                    // ptr to 1st atom in each bin
-  int maxhead;                     // size of binhead array
-
-  int mbins;                       // # of local bins and offset
-  int mbinx,mbiny,mbinz;
-  int mbinxlo,mbinylo,mbinzlo;
-
-  int binsizeflag;                 // user-chosen bin size
-  double binsize_user;
-
-  double binsizex,binsizey,binsizez;  // actual bin sizes and inverse sizes
-  double bininvx,bininvy,bininvz;
-
-  int sx,sy,sz,smax;               // bin stencil extents
-
-  int dimension;                   // 2/3 for 2d/3d
-  int triclinic;                   // 0 if domain is orthog, 1 if triclinic
-  int newton_pair;                 // 0 if newton off, 1 if on for pairwise
-
-  double *bboxlo,*bboxhi;          // ptrs to full domain bounding box
-  double (*corners)[3];            // ptr to 8 corners of triclinic box
+  double (*corners)[3];                // ptr to 8 corners of triclinic box
 
   double inner[2],middle[2];       // rRESPA cutoffs for extra lists
-  double cut_inner_sq;                   // outer cutoff for inner neighbor list
-  double cut_middle_sq;            // outer cutoff for middle neighbor list
-  double cut_middle_inside_sq;     // inner cutoff for middle neighbor list
 
-  int special_flag[4];             // flags for 1-2, 1-3, 1-4 neighbors
+  int old_style,old_triclinic;     // previous run info
+  int old_pgsize,old_oneatom;      // used to avoid re-creating neigh lists
 
-  int anyghostlist;                // 1 if any non-occasional list
-                                   // stores neighbors of ghosts
+  int nstencil_perpetual;         // # of perpetual NeighStencil classes
+  int npair_perpetual;            // #x of perpetual NeighPair classes
+  int *slist;                     // indices of them in neigh_stencil
+  int *plist;                     // indices of them in neigh_pair
 
-  int exclude;                     // 0 if no type/group exclusions, 1 if yes
+  int maxex_type;                  // max # in exclusion type list
+  int maxex_group;                 // max # in exclusion group list
+  int maxex_mol;                   // max # in exclusion molecule list
 
-  int nex_type;                    // # of entries in type exclusion list
-  int maxex_type;                  // max # in type list
-  int *ex1_type,*ex2_type;         // pairs of types to exclude
-  int **ex_type;                   // 2d array of excluded type pairs
+  int maxatom;                     // max size of atom-based NeighList arrays
+  int maxrequest;                  // max size of NeighRequest list
+  int maxwt;                       // max weighting factor applied + 1
 
-  int nex_group;                   // # of entries in group exclusion list
-  int maxex_group;                 // max # in group list
-  int *ex1_group,*ex2_group;       // pairs of group #'s to exclude
-  int *ex1_bit,*ex2_bit;           // pairs of group bits to exclude
+  // info for other Neigh classes: NBin,NStencil,NPair,NTopo
 
-  int nex_mol;                     // # of entries in molecule exclusion list
-  int maxex_mol;                   // max # in molecule list
-  int *ex_mol_group;               // molecule group #'s to exclude
-  int *ex_mol_bit;                 // molecule group bits to exclude
+  int nbin,nstencil;
+  int nbclass,nsclass,npclass;
+  int bondwhich,anglewhich,dihedralwhich,improperwhich;
 
-  int nblist,nglist,nslist;    // # of pairwise neigh lists of various kinds
-  int *blist;                  // lists to build every reneighboring
-  int *glist;                  // lists to grow atom arrays every reneigh
-  int *slist;                  // lists to grow stencil arrays every reneigh
+  typedef class NBin *(*BinCreator)(class LAMMPS *);
+  BinCreator *binclass;
+  char **binnames;
+  int *binmasks;
+  class NBin **neigh_bin;
 
-  void bin_atoms();                     // bin all atoms
-  double bin_distance(int, int, int);   // distance between binx
-  int coord2bin(double *);              // mapping atom coord to a bin
-  int coord2bin(double *, int &, int &, int&); // ditto
+  typedef class NStencil *(*StencilCreator)(class LAMMPS *);
+  StencilCreator *stencilclass;
+  char **stencilnames;
+  int *stencilmasks;
+  class NStencil **neigh_stencil;
 
-  int exclusion(int, int, int,
-                int, int *, int *) const;  // test for pair exclusion
+  typedef class NPair *(*PairCreator)(class LAMMPS *);
+  PairCreator *pairclass;
+  char **pairnames;
+  int *pairmasks;
+  class NPair **neigh_pair;
 
-  virtual void choose_build(int, class NeighRequest *);
-  void choose_stencil(int, class NeighRequest *);
+  class NTopo *neigh_bond;
+  class NTopo *neigh_angle;
+  class NTopo *neigh_dihedral;
+  class NTopo *neigh_improper;
 
-  // pairwise build functions
+  // internal methods
+  // including creator methods for Nbin,Nstencil,Npair instances
 
-  typedef void (Neighbor::*PairPtr)(class NeighList *);
-  PairPtr *pair_build;
+  void init_styles();
+  int init_pair();
+  virtual void init_topology();
 
-  void half_nsq_no_newton(class NeighList *);
-  void half_nsq_no_newton_ghost(class NeighList *);
-  void half_nsq_newton(class NeighList *);
+  void morph_unique();
+  void morph_skip();
+  void morph_granular();
+  void morph_halffull();
+  void morph_copy();
 
-  void half_bin_no_newton(class NeighList *);
-  void half_bin_no_newton_ghost(class NeighList *);
-  void half_bin_newton(class NeighList *);
-  void half_bin_newton_tri(class NeighList *);
+  void print_pairwise_info();
+  void requests_new2old();
 
-  void half_multi_no_newton(class NeighList *);
-  void half_multi_newton(class NeighList *);
-  void half_multi_newton_tri(class NeighList *);
+  int choose_bin(class NeighRequest *);
+  int choose_stencil(class NeighRequest *);
+  int choose_pair(class NeighRequest *);
 
-  void full_nsq(class NeighList *);
-  void full_nsq_ghost(class NeighList *);
-  void full_bin(class NeighList *);
-  void full_bin_ghost(class NeighList *);
-  void full_multi(class NeighList *);
+  template <typename T> static NBin *bin_creator(class LAMMPS *);
+  template <typename T> static NStencil *stencil_creator(class LAMMPS *);
+  template <typename T> static NPair *pair_creator(class LAMMPS *);
 
-  void half_from_full_no_newton(class NeighList *);
-  void half_from_full_newton(class NeighList *);
-  void skip_from(class NeighList *);
-  void skip_from_granular(class NeighList *);
-  void skip_from_respa(class NeighList *);
-  void copy_from(class NeighList *);
+  // dummy functions provided by NeighborKokkos, called in init()
+  // otherwise NeighborKokkos would have to overwrite init()
 
-  void granular_nsq_no_newton(class NeighList *);
-  void granular_nsq_newton(class NeighList *);
-  void granular_bin_no_newton(class NeighList *);
-  void granular_bin_newton(class NeighList *);
-  void granular_bin_newton_tri(class NeighList *);
+  int copymode;
 
-  void respa_nsq_no_newton(class NeighList *);
-  void respa_nsq_newton(class NeighList *);
-  void respa_bin_no_newton(class NeighList *);
-  void respa_bin_newton(class NeighList *);
-  void respa_bin_newton_tri(class NeighList *);
-
-  // OpenMP multi-threaded neighbor list build versions
-
-#include "accelerator_omp.h"
-
-  // pairwise stencil creation functions
-
-  typedef void (Neighbor::*StencilPtr)(class NeighList *, int, int, int);
-  StencilPtr *stencil_create;
-
-  void stencil_half_bin_2d_no_newton(class NeighList *, int, int, int);
-  void stencil_half_ghost_bin_2d_no_newton(class NeighList *, int, int, int);
-  void stencil_half_bin_3d_no_newton(class NeighList *, int, int, int);
-  void stencil_half_ghost_bin_3d_no_newton(class NeighList *, int, int, int);
-  void stencil_half_bin_2d_newton(class NeighList *, int, int, int);
-  void stencil_half_bin_3d_newton(class NeighList *, int, int, int);
-  void stencil_half_bin_2d_newton_tri(class NeighList *, int, int, int);
-  void stencil_half_bin_3d_newton_tri(class NeighList *, int, int, int);
-
-  void stencil_half_multi_2d_no_newton(class NeighList *, int, int, int);
-  void stencil_half_multi_3d_no_newton(class NeighList *, int, int, int);
-  void stencil_half_multi_2d_newton(class NeighList *, int, int, int);
-  void stencil_half_multi_3d_newton(class NeighList *, int, int, int);
-  void stencil_half_multi_2d_newton_tri(class NeighList *, int, int, int);
-  void stencil_half_multi_3d_newton_tri(class NeighList *, int, int, int);
-
-  void stencil_full_bin_2d(class NeighList *, int, int, int);
-  void stencil_full_ghost_bin_2d(class NeighList *, int, int, int);
-  void stencil_full_bin_3d(class NeighList *, int, int, int);
-  void stencil_full_ghost_bin_3d(class NeighList *, int, int, int);
-  void stencil_full_multi_2d(class NeighList *, int, int, int);
-  void stencil_full_multi_3d(class NeighList *, int, int, int);
-
-  // topology build functions
-
-  typedef void (Neighbor::*BondPtr)();   // ptrs to topology build functions
-
-  BondPtr bond_build;                 // ptr to bond list functions
-  void bond_all();                    // bond list with all bonds
-  void bond_partial();                // exclude certain bonds
-  void bond_check();
-
-  BondPtr angle_build;                // ptr to angle list functions
-  void angle_all();                   // angle list with all angles
-  void angle_partial();               // exclude certain angles
-  void angle_check();
-
-  BondPtr dihedral_build;             // ptr to dihedral list functions
-  void dihedral_all();                // dihedral list with all dihedrals
-  void dihedral_partial();            // exclude certain dihedrals
-  void dihedral_check(int **);
-
-  BondPtr improper_build;             // ptr to improper list functions
-  void improper_all();                // improper list with all impropers
-  void improper_partial();            // exclude certain impropers
-
-  // find_special: determine if atom j is in special list of atom i
-  // if it is not, return 0
-  // if it is and special flag is 0 (both coeffs are 0.0), return -1
-  // if it is and special flag is 1 (both coeffs are 1.0), return 0
-  // if it is and special flag is 2 (otherwise), return 1,2,3
-  //   for which level of neighbor it is (and which coeff it maps to)
-
-  inline int find_special(const int *list, const int *nspecial,
-                          const int tag) const {
-    const int n1 = nspecial[0];
-    const int n2 = nspecial[1];
-    const int n3 = nspecial[2];
-
-    for (int i = 0; i < n3; i++) {
-      if (list[i] == tag) {
-        if (i < n1) {
-          if (special_flag[1] == 0) return -1;
-          else if (special_flag[1] == 1) return 0;
-          else return 1;
-        } else if (i < n2) {
-          if (special_flag[2] == 0) return -1;
-          else if (special_flag[2] == 1) return 0;
-          else return 2;
-        } else {
-          if (special_flag[3] == 0) return -1;
-          else if (special_flag[3] == 1) return 0;
-          else return 3;
-        }
-      }
-    }
-    return 0;
-  };
+  virtual void init_cutneighsq_kokkos(int) {}
+  virtual void create_kokkos_list(int) {}
+  virtual void init_ex_type_kokkos(int) {}
+  virtual void init_ex_bit_kokkos() {}
+  virtual void init_ex_mol_bit_kokkos() {}
+  virtual void grow_ex_mol_intra_kokkos() {}
 };
+
+namespace NeighConst {
+  static const int NB_INTEL         = 1<<0;
+  static const int NB_KOKKOS_DEVICE = 1<<1;
+  static const int NB_KOKKOS_HOST   = 1<<2;
+  static const int NB_SSA           = 1<<3;
+
+  static const int NS_BIN     = 1<<0;
+  static const int NS_MULTI   = 1<<1;
+  static const int NS_HALF    = 1<<2;
+  static const int NS_FULL    = 1<<3;
+  static const int NS_2D      = 1<<4;
+  static const int NS_3D      = 1<<5;
+  static const int NS_NEWTON  = 1<<6;
+  static const int NS_NEWTOFF = 1<<7;
+  static const int NS_ORTHO   = 1<<8;
+  static const int NS_TRI     = 1<<9;
+  static const int NS_GHOST   = 1<<10;
+  static const int NS_SSA     = 1<<11;
+
+  static const int NP_NSQ           = 1<<0;
+  static const int NP_BIN           = 1<<1;
+  static const int NP_MULTI         = 1<<2;
+  static const int NP_HALF          = 1<<3;
+  static const int NP_FULL          = 1<<4;
+  static const int NP_ORTHO         = 1<<5;
+  static const int NP_TRI           = 1<<6;
+  static const int NP_ATOMONLY      = 1<<7;
+  static const int NP_MOLONLY       = 1<<8;
+  static const int NP_NEWTON        = 1<<9;
+  static const int NP_NEWTOFF       = 1<<10;
+  static const int NP_GHOST         = 1<<11;
+  static const int NP_SIZE          = 1<<12;
+  static const int NP_ONESIDE       = 1<<13;
+  static const int NP_RESPA         = 1<<14;
+  static const int NP_BOND          = 1<<15;
+  static const int NP_OMP           = 1<<16;
+  static const int NP_INTEL         = 1<<17;
+  static const int NP_KOKKOS_DEVICE = 1<<18;
+  static const int NP_KOKKOS_HOST   = 1<<19;
+  static const int NP_SSA           = 1<<20;
+  static const int NP_COPY          = 1<<21;
+  static const int NP_SKIP          = 1<<22;
+  static const int NP_HALF_FULL     = 1<<23;
+  static const int NP_OFF2ON        = 1<<24;
+}
 
 }
 
@@ -325,6 +299,16 @@ This is required to prevent wasting too much memory.
 E: Invalid atom type in neighbor exclusion list
 
 Atom types must range from 1 to Ntypes inclusive.
+
+W: Neighbor exclusions used with KSpace solver may give inconsistent Coulombic energies
+
+This is because excluding specific pair interactions also excludes
+them from long-range interactions which may not be the desired effect.
+The special_bonds command handles this consistently by insuring
+excluded (or weighted) 1-2, 1-3, 1-4 interactions are treated
+consistently by both the short-range pair style and the long-range
+solver.  This is not done for exclusions of charged atom pairs via the
+neigh_modify exclude command.
 
 E: Neighbor include group not allowed with ghost neighbors
 
@@ -348,11 +332,9 @@ The number of nlocal + nghost atoms on a processor
 is limited by the size of a 32-bit integer with 2 bits
 removed for masking 1-2, 1-3, 1-4 neighbors.
 
-W: Building an occasional neighobr list when atoms may have moved too far
+E: Trying to build an occasional neighbor list before initialization completed
 
-This can cause LAMMPS to crash when the neighbor list is built.
-The solution is to check for building the regular neighbor lists
-more frequently.
+This is not allowed.  Source code caller needs to be modified.
 
 E: Domain too large for neighbor bins
 

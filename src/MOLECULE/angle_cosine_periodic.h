@@ -1,4 +1,4 @@
-/* ----------------------------------------------------------------------
+/* -*- c++ -*- ----------------------------------------------------------
    LAMMPS - Large-scale Atomic/Molecular Massively Parallel Simulator
    http://lammps.sandia.gov, Sandia National Laboratories
    Steve Plimpton, sjplimp@sandia.gov
@@ -20,7 +20,7 @@ AngleStyle(cosine/periodic, AngleCosinePeriodic)
 #ifndef LMP_ANGLE_PERIODIC_H
 #define LMP_ANGLE_PERIODIC_H
 
-#include "stdio.h"
+#include <stdio.h>
 #include "angle.h"
 
 namespace LAMMPS_NS {
@@ -34,6 +34,7 @@ class AngleCosinePeriodic : public Angle {
   double equilibrium_angle(int);
   void write_restart(FILE *);
   void read_restart(FILE *);
+  void write_data(FILE *);
   double single(int, int, int, int);
 
  protected:

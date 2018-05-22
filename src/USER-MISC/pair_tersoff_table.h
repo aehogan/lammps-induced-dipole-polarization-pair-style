@@ -1,4 +1,4 @@
-/* ----------------------------------------------------------------------
+/* -*- c++ -*- ----------------------------------------------------------
    LAMMPS - Large-scale Atomic/Molecular Massively Parallel Simulator
    http://lammps.sandia.gov, Sandia National Laboratories
    Steve Plimpton, sjplimp@sandia.gov
@@ -26,8 +26,8 @@ PairStyle(tersoff/table,PairTersoffTable)
 
 #else
 
-#ifndef LMP_PAIR_Tersoff_H
-#define LMP_PAIR_Tersoff_H
+#ifndef LMP_PAIR_TERSOFF_TABLE_H
+#define LMP_PAIR_TERSOFF_TABLE_H
 
 #include "pair.h"
 
@@ -68,14 +68,14 @@ class PairTersoffTable : public Pair {
   void allocate();
 
   void read_file(char *);
-  void setup();
+  void setup_params();
 
   // pre-loop coordination functions
 
   double **preGtetaFunction, **preGtetaFunctionDerived;
   double *preCutoffFunction, *preCutoffFunctionDerived;
-  void allocatePreLoops(void);
-  void deallocatePreLoops(void);
+  virtual void allocatePreLoops(void);
+  virtual void deallocatePreLoops(void);
 
   // grids
 

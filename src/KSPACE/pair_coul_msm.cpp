@@ -15,10 +15,10 @@
    Contributing authors: Stan Moore (SNL), Paul Crozier (SNL)
 ------------------------------------------------------------------------- */
 
-#include "math.h"
-#include "stdio.h"
-#include "stdlib.h"
-#include "string.h"
+#include <math.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
 #include "pair_coul_msm.h"
 #include "atom.h"
 #include "comm.h"
@@ -53,7 +53,19 @@ void PairCoulMSM::compute(int eflag, int vflag)
   double egamma,fgamma,prefactor;
   int *ilist,*jlist,*numneigh,**firstneigh;
   double rsq;
-  
+
+  if (force->kspace->scalar_pressure_flag && vflag) {
+    if (vflag > 2)
+      error->all(FLERR,"Must use 'kspace_modify pressure/scalar no' "
+        "to obtain per-atom virial with kspace_style MSM");
+
+    // must switch on global energy computation if not already on
+
+    if (eflag == 0 || eflag == 2) {
+      eflag++;
+    }
+  }
+
   ecoul = 0.0;
   if (eflag || vflag) ev_setup(eflag,vflag);
   else evflag = vflag_fdotr = 0;
@@ -140,13 +152,19 @@ void PairCoulMSM::compute(int eflag, int vflag)
           if (factor_coul < 1.0) ecoul -= (1.0-factor_coul)*prefactor;
         }
 
+        if (force->kspace->scalar_pressure_flag)
+          fpair = 0.0;
+
         if (evflag) ev_tally(i,j,nlocal,newton_pair,
                              0.0,ecoul,fpair,delx,dely,delz);
       }
     }
   }
 
-  if (vflag_fdotr) virial_fdotr_compute();
+  if (vflag_fdotr && !force->kspace->scalar_pressure_flag)
+    virial_fdotr_compute();
+  if (force->kspace->scalar_pressure_flag && vflag)
+    for (i = 0; i < 3; i++) virial[i] += force->pair->eng_coul/3.0;
 }
 
 /* ---------------------------------------------------------------------- */
@@ -200,7 +218,7 @@ double PairCoulMSM::single(int i, int j, int itype, int jtype,
 
 void *PairCoulMSM::extract(const char *str, int &dim)
 {
-  if (strcmp(str,"cut_msm") == 0) {
+  if (strcmp(str,"cut_coul") == 0) {
     dim = 0;
     return (void *) &cut_coul;
   }

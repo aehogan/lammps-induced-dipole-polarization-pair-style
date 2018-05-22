@@ -1,4 +1,4 @@
-/* ----------------------------------------------------------------------
+/* -*- c++ -*- ----------------------------------------------------------
    LAMMPS - Large-scale Atomic/Molecular Massively Parallel Simulator
    http://lammps.sandia.gov, Sandia National Laboratories
    Steve Plimpton, sjplimp@sandia.gov
@@ -21,7 +21,8 @@ PairStyle(lcbop,PairLCBOP)
 #define LMP_PAIR_LCBOP_H
 
 #include "pair.h"
-#include "math.h"
+#include "my_page.h"
+#include <math.h>
 #include "math_const.h"
 
 namespace LAMMPS_NS {
@@ -42,18 +43,20 @@ class PairLCBOP : public Pair {
   int *map;                        // 0 (C) or -1 (NULL) for each type
 
   int me;
-  int maxlocal;                    // size of numneigh, firstneigh arrays
-  int maxpage;                     // # of pages currently allocated
-  int pgsize;                      // size of neighbor page
-  int oneatom;                     // max # of neighbors for one atom
 
   double cutLR;                    // LR cutoff
 
   double cutLRsq;                  // LR cutoff squared
   double cut3rebo;                 // maximum distance for 3rd SR neigh
 
+  int maxlocal;                    // size of numneigh, firstneigh arrays
+  int maxpage;                     // # of pages currently allocated
+  int pgsize;                      // size of neighbor page
+  int oneatom;                     // max # of neighbors for one atom
+  MyPage<int> *ipage;              // neighbor list pages
   int *SR_numneigh;                // # of pair neighbors for each atom
   int **SR_firstneigh;             // ptr to 1st neighbor of each atom
+
   double *N;                       // sum of cutoff fns ( f_C ) with SR neighs
   double *M;                       // sum_j f_C_ij*F(N_j - f_C_ij)
 
@@ -80,6 +83,7 @@ class PairLCBOP : public Pair {
         f_y_10,
         f_y_11;
   } F_conj_field[3][3][2];
+
   double F_conj_data[4][4][2][3]; // temporary data from file
   double gX[6];        // x coordinates for described points[# of points];
   double gC[5+1][6-1]; // coefficients for each period between described points [degree of polynomial+1][# of points-1]
@@ -98,7 +102,6 @@ class PairLCBOP : public Pair {
   void g_decompose_x( double, size_t*, double* );
   double F_conj( double, double, double, double*, double*, double* );
 
-  void add_pages(int howmany = 1);
   void read_file( char * );
 
   void spline_init();
@@ -182,7 +185,7 @@ This is a requirement to use the LCBOP potential.
 
 E: Pair style LCBOP requires newton pair on
 
-See the newton command.  This is a restriction to use the LCBOP
+See the newton command.  This is a restriction to use the Tersoff
 potential.
 
 E: All pair coeffs are not set
@@ -190,11 +193,11 @@ E: All pair coeffs are not set
 All pair coefficients must be set in the data file or by the
 pair_coeff command before running a simulation.
 
-E: Neighbor list overflow, boost neigh_modify one or page
+E: Neighbor list overflow, boost neigh_modify one
 
 There are too many neighbors of a single atom.  Use the neigh_modify
-command to increase the neighbor page size and the max number of
-neighbors allowed for one atom.
+command to increase the max number of neighbors allowed for one atom.
+You may also want to boost the page size.
 
 E: Cannot open LCBOP potential file %s
 

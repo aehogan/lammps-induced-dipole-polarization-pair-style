@@ -5,7 +5,7 @@
 
    Copyright (2003) Sandia Corporation.  Under the terms of Contract
    DE-AC04-94AL85000 with Sandia Corporation, the U.S. Government retains
-   certain rights in this software.  This software is distributed under 
+   certain rights in this software.  This software is distributed under
    the GNU General Public License.
 
    See the README file in the top-level LAMMPS directory.
@@ -16,10 +16,9 @@
    [ based on dihedral_charmm.cpp Paul Crozier (SNL) ]
 ------------------------------------------------------------------------- */
 
-#include "lmptype.h"
-#include "mpi.h"
-#include "math.h"
-#include "stdlib.h"
+#include <mpi.h>
+#include <math.h>
+#include <stdlib.h>
 #include "dihedral_fourier.h"
 #include "atom.h"
 #include "comm.h"
@@ -39,7 +38,10 @@ using namespace MathConst;
 
 /* ---------------------------------------------------------------------- */
 
-DihedralFourier::DihedralFourier(LAMMPS *lmp) : Dihedral(lmp) {}
+DihedralFourier::DihedralFourier(LAMMPS *lmp) : Dihedral(lmp)
+{
+   writedata = 1;
+}
 
 /* ---------------------------------------------------------------------- */
 
@@ -74,23 +76,18 @@ void DihedralFourier::compute(int eflag, int vflag)
   double edihedral,f1[3],f2[3],f3[3],f4[3];
   double ax,ay,az,bx,by,bz,rasq,rbsq,rgsq,rg,rginv,ra2inv,rb2inv,rabinv;
   double df,df1_,ddf1_,fg,hg,fga,hgb,gaa,gbb;
-  double dtfx,dtfy,dtfz,dtgx,dtgy,dtgz,dthx,dthy,dthz;  
-  double c,s,p,p_,sx2,sy2,sz2;
-  int itype,jtype;
-  double delx,dely,delz,rsq,r2inv,r6inv;
+  double dtfx,dtfy,dtfz,dtgx,dtgy,dtgz,dthx,dthy,dthz;
+  double c,s,p_,sx2,sy2,sz2;
 
   if (eflag || vflag) ev_setup(eflag,vflag);
   else evflag = 0;
 
   double **x = atom->x;
   double **f = atom->f;
-  double *q = atom->q;
-  int *atomtype = atom->type;
   int **dihedrallist = neighbor->dihedrallist;
   int ndihedrallist = neighbor->ndihedrallist;
   int nlocal = atom->nlocal;
   int newton_bond = force->newton_bond;
-  double qqrd2e = force->qqrd2e;
 
   for (n = 0; n < ndihedrallist; n++) {
     i1 = dihedrallist[n][0];
@@ -149,7 +146,9 @@ void DihedralFourier::compute(int eflag, int vflag)
       MPI_Comm_rank(world,&me);
       if (screen) {
         char str[128];
-        sprintf(str,"Dihedral problem: %d " BIGINT_FORMAT " %d %d %d %d",
+        sprintf(str,"Dihedral problem: %d " BIGINT_FORMAT " "
+                TAGINT_FORMAT " " TAGINT_FORMAT " "
+                TAGINT_FORMAT " " TAGINT_FORMAT,
                 me,update->ntimestep,
                 atom->tag[i1],atom->tag[i2],atom->tag[i3],atom->tag[i4]);
         error->warning(FLERR,str,0);
@@ -176,8 +175,8 @@ void DihedralFourier::compute(int eflag, int vflag)
     {
       m = multiplicity[type][j];
       p_ = 1.0;
-      df1_ = 0.0;
-    
+      ddf1_ = df1_ = 0.0;
+
       for (i = 0; i < m; i++) {
         ddf1_ = p_*c - df1_*s;
         df1_ = p_*s + df1_*c;
@@ -188,13 +187,13 @@ void DihedralFourier::compute(int eflag, int vflag)
       df1_ = df1_*cos_shift[type][j] - ddf1_*sin_shift[type][j];
       df1_ *= -m;
       p_ += 1.0;
- 
+
       if (m == 0) {
         p_ = 1.0 + cos_shift[type][j];
         df1_ = 0.0;
       }
 
-      if (eflag) edihedral += k[type][j] * p_; 
+      if (eflag) edihedral += k[type][j] * p_;
 
       df += (-k[type][j] * df1_);
     }
@@ -286,7 +285,7 @@ void DihedralFourier::allocate()
     k[i] = shift[i] = cos_shift[i] = sin_shift[i] = 0;
     multiplicity[i] = 0;
   }
-  
+
   memory->create(setflag,n+1,"dihedral:setflag");
   for (int i = 1; i <= n; i++) setflag[i] = 0;
 }
@@ -301,7 +300,7 @@ void DihedralFourier::coeff(int narg, char **arg)
   if (!allocated) allocate();
 
   int ilo,ihi;
-  force->bounds(arg[0],atom->ndihedraltypes,ilo,ihi);
+  force->bounds(FLERR,arg[0],atom->ndihedraltypes,ilo,ihi);
 
   // require integer values of shift for backwards compatibility
   // arbitrary phase angle shift could be allowed, but would break
@@ -310,7 +309,7 @@ void DihedralFourier::coeff(int narg, char **arg)
   double k_one;
   int multiplicity_one;
   double shift_one;
-  int nterms_one = force->inumeric(arg[1]);
+  int nterms_one = force->inumeric(FLERR,arg[1]);
 
   if (nterms_one < 1)
     error->all(FLERR,"Incorrect number of terms arg for dihedral coefficients");
@@ -324,13 +323,13 @@ void DihedralFourier::coeff(int narg, char **arg)
     k[i] = new double [nterms_one];
     multiplicity[i] = new int [nterms_one];
     shift[i] = new double [nterms_one];
-    cos_shift[i] = new double [nterms_one]; 
-    sin_shift[i] = new double [nterms_one]; 
+    cos_shift[i] = new double [nterms_one];
+    sin_shift[i] = new double [nterms_one];
     for (int j = 0; j<nterms_one; j++) {
       int offset = 1+3*j;
-      k_one = force->numeric(arg[offset+1]);
-      multiplicity_one = force->inumeric(arg[offset+2]);
-      shift_one = force->numeric(arg[offset+3]);
+      k_one = force->numeric(FLERR,arg[offset+1]);
+      multiplicity_one = force->inumeric(FLERR,arg[offset+2]);
+      shift_one = force->numeric(FLERR,arg[offset+3]);
       k[i][j] = k_one;
       multiplicity[i][j] = multiplicity_one;
       shift[i][j] = shift_one;
@@ -345,7 +344,7 @@ void DihedralFourier::coeff(int narg, char **arg)
 }
 
 /* ----------------------------------------------------------------------
-   proc 0 writes out coeffs to restart file 
+   proc 0 writes out coeffs to restart file
 ------------------------------------------------------------------------- */
 
 void DihedralFourier::write_restart(FILE *fp)
@@ -361,7 +360,7 @@ void DihedralFourier::write_restart(FILE *fp)
 }
 
 /* ----------------------------------------------------------------------
-   proc 0 reads coeffs from restart file, bcasts them 
+   proc 0 reads coeffs from restart file, bcasts them
 ------------------------------------------------------------------------- */
 
 void DihedralFourier::read_restart(FILE *fp)
@@ -373,7 +372,7 @@ void DihedralFourier::read_restart(FILE *fp)
 
   MPI_Bcast(&nterms[1],atom->ndihedraltypes,MPI_INT,0,world);
 
-  // allocate 
+  // allocate
   for (int i=1; i<=atom->ndihedraltypes; i++) {
     k[i] = new double [nterms[i]];
     multiplicity[i] = new int [nterms[i]];
@@ -402,6 +401,21 @@ void DihedralFourier::read_restart(FILE *fp)
       cos_shift[i][j] = cos(MY_PI*shift[i][j]/180.0);
       sin_shift[i][j] = sin(MY_PI*shift[i][j]/180.0);
     }
+  }
+}
+
+/* ----------------------------------------------------------------------
+   proc 0 writes to data file
+------------------------------------------------------------------------- */
+
+void DihedralFourier::write_data(FILE *fp)
+{
+  for (int i = 1; i <= atom->ndihedraltypes; i++)
+  {
+    fprintf(fp,"%d %d",i,nterms[i]);
+    for(int j = 0; j < nterms[i]; j++)
+       fprintf(fp," %g %d %g",k[i][j],multiplicity[i][j],shift[i][j]);
+    fprintf(fp,"\n");
   }
 }
 

@@ -15,10 +15,10 @@
    Contributing authors: Stephen Foiles (SNL), Murray Daw (SNL)
 ------------------------------------------------------------------------- */
 
-#include "math.h"
-#include "stdio.h"
-#include "stdlib.h"
-#include "string.h"
+#include <math.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
 #include "pair_eam.h"
 #include "atom.h"
 #include "force.h"
@@ -37,10 +37,13 @@ using namespace LAMMPS_NS;
 PairEAM::PairEAM(LAMMPS *lmp) : Pair(lmp)
 {
   restartinfo = 0;
+  manybody_flag = 1;
 
   nmax = 0;
   rho = NULL;
   fp = NULL;
+  map = NULL;
+  type2frho = NULL;
 
   nfuncfl = 0;
   funcfl = NULL;
@@ -51,6 +54,7 @@ PairEAM::PairEAM(LAMMPS *lmp) : Pair(lmp)
   frho = NULL;
   rhor = NULL;
   z2r = NULL;
+  scale = NULL;
 
   frho_spline = NULL;
   rhor_spline = NULL;
@@ -68,6 +72,8 @@ PairEAM::PairEAM(LAMMPS *lmp) : Pair(lmp)
 
 PairEAM::~PairEAM()
 {
+  if (copymode) return;
+
   memory->destroy(rho);
   memory->destroy(fp);
 
@@ -76,8 +82,11 @@ PairEAM::~PairEAM()
     memory->destroy(cutsq);
     delete [] map;
     delete [] type2frho;
+    map = NULL;
+    type2frho = NULL;
     memory->destroy(type2rhor);
     memory->destroy(type2z2r);
+    memory->destroy(scale);
   }
 
   if (funcfl) {
@@ -88,6 +97,7 @@ PairEAM::~PairEAM()
       memory->destroy(funcfl[i].zr);
     }
     memory->sfree(funcfl);
+    funcfl = NULL;
   }
 
   if (setfl) {
@@ -98,6 +108,7 @@ PairEAM::~PairEAM()
     memory->destroy(setfl->rhor);
     memory->destroy(setfl->z2r);
     delete setfl;
+    setfl = NULL;
   }
 
   if (fs) {
@@ -108,6 +119,7 @@ PairEAM::~PairEAM()
     memory->destroy(fs->rhor);
     memory->destroy(fs->z2r);
     delete fs;
+    fs = NULL;
   }
 
   memory->destroy(frho);
@@ -148,6 +160,7 @@ void PairEAM::compute(int eflag, int vflag)
   double **f = atom->f;
   int *type = atom->type;
   int nlocal = atom->nlocal;
+  int nall = nlocal + atom->nghost;
   int newton_pair = force->newton_pair;
 
   inum = list->inum;
@@ -158,8 +171,7 @@ void PairEAM::compute(int eflag, int vflag)
   // zero out density
 
   if (newton_pair) {
-    m = nlocal + atom->nghost;
-    for (i = 0; i < m; i++) rho[i] = 0.0;
+    for (i = 0; i < nall; i++) rho[i] = 0.0;
   } else for (i = 0; i < nlocal; i++) rho[i] = 0.0;
 
   // rho = density at each atom
@@ -221,6 +233,7 @@ void PairEAM::compute(int eflag, int vflag)
     if (eflag) {
       phi = ((coeff[3]*p + coeff[4])*p + coeff[5])*p + coeff[6];
       if (rho[i] > rhomax) phi += fp[i] * (rho[i]-rhomax);
+      phi *= scale[type[i]][type[i]];
       if (eflag_global) eng_vdwl += phi;
       if (eflag_atom) eatom[i] += phi;
     }
@@ -270,6 +283,7 @@ void PairEAM::compute(int eflag, int vflag)
         // psip needs both fp[i] and fp[j] terms since r_ij appears in two
         //   terms of embed eng: Fi(sum rho_ij) and Fj(sum rho_ji)
         //   hence embed' = Fi(sum rho_ij) rhojp + Fj(sum rho_ji) rhoip
+        // scale factor can be applied by thermodynamic integration
 
         coeff = rhor_spline[type2rhor[itype][jtype]][m];
         rhoip = (coeff[0]*p + coeff[1])*p + coeff[2];
@@ -283,7 +297,7 @@ void PairEAM::compute(int eflag, int vflag)
         phi = z2*recip;
         phip = z2p*recip - phi*recip;
         psip = fp[i]*rhojp + fp[j]*rhoip + phip;
-        fpair = -psip*recip;
+        fpair = -scale[itype][jtype]*psip*recip;
 
         f[i][0] += delx*fpair;
         f[i][1] += dely*fpair;
@@ -294,7 +308,7 @@ void PairEAM::compute(int eflag, int vflag)
           f[j][2] -= delz*fpair;
         }
 
-        if (eflag) evdwl = phi;
+        if (eflag) evdwl = scale[itype][jtype]*phi;
         if (evflag) ev_tally(i,j,nlocal,newton_pair,
                              evdwl,0.0,fpair,delx,dely,delz);
       }
@@ -326,6 +340,7 @@ void PairEAM::allocate()
   type2frho = new int[n+1];
   memory->create(type2rhor,n+1,n+1,"pair:type2rhor");
   memory->create(type2z2r,n+1,n+1,"pair:type2z2r");
+  memory->create(scale,n+1,n+1,"pair:scale");
 }
 
 /* ----------------------------------------------------------------------
@@ -351,8 +366,8 @@ void PairEAM::coeff(int narg, char **arg)
   // parse pair of atom types
 
   int ilo,ihi,jlo,jhi;
-  force->bounds(arg[0],atom->ntypes,ilo,ihi);
-  force->bounds(arg[1],atom->ntypes,jlo,jhi);
+  force->bounds(FLERR,arg[0],atom->ntypes,ilo,ihi);
+  force->bounds(FLERR,arg[1],atom->ntypes,jlo,jhi);
 
   // read funcfl file if hasn't already been read
   // store filename in Funcfl data struct
@@ -380,9 +395,10 @@ void PairEAM::coeff(int narg, char **arg)
       if (i == j) {
         setflag[i][i] = 1;
         map[i] = ifuncfl;
-        atom->set_mass(i,funcfl[ifuncfl].mass);
+        atom->set_mass(FLERR,i,funcfl[ifuncfl].mass);
         count++;
       }
+      scale[i][j] = 1.0;
     }
   }
 
@@ -400,7 +416,7 @@ void PairEAM::init_style()
   file2array();
   array2spline();
 
-  neighbor->request(this);
+  neighbor->request(this,instance_me);
 }
 
 /* ----------------------------------------------------------------------
@@ -412,6 +428,9 @@ double PairEAM::init_one(int i, int j)
   // single global cutoff = max of cut from all files read in
   // for funcfl could be multiple files
   // for setfl or fs, just one file
+
+  if (setflag[i][j] == 0) scale[i][j] = 1.0;
+  scale[j][i] = scale[i][j];
 
   if (funcfl) {
     cutmax = 0.0;
@@ -438,7 +457,7 @@ void PairEAM::read_file(char *filename)
   char line[MAXLINE];
 
   if (me == 0) {
-    fptr = fopen(filename,"r");
+    fptr = force->open_potential(filename);
     if (fptr == NULL) {
       char str[128];
       sprintf(str,"Cannot open EAM potential file %s",filename);
@@ -446,22 +465,26 @@ void PairEAM::read_file(char *filename)
     }
   }
 
-  int tmp;
+  int tmp,nwords;
   if (me == 0) {
     fgets(line,MAXLINE,fptr);
     fgets(line,MAXLINE,fptr);
     sscanf(line,"%d %lg",&tmp,&file->mass);
     fgets(line,MAXLINE,fptr);
-    sscanf(line,"%d %lg %d %lg %lg",
+    nwords = sscanf(line,"%d %lg %d %lg %lg",
            &file->nrho,&file->drho,&file->nr,&file->dr,&file->cut);
   }
 
+  MPI_Bcast(&nwords,1,MPI_INT,0,world);
   MPI_Bcast(&file->mass,1,MPI_DOUBLE,0,world);
   MPI_Bcast(&file->nrho,1,MPI_INT,0,world);
   MPI_Bcast(&file->drho,1,MPI_DOUBLE,0,world);
   MPI_Bcast(&file->nr,1,MPI_INT,0,world);
   MPI_Bcast(&file->dr,1,MPI_DOUBLE,0,world);
   MPI_Bcast(&file->cut,1,MPI_DOUBLE,0,world);
+
+  if ((nwords != 5) || (file->nrho <= 0) || (file->nr <= 0) || (file->dr <= 0.0))
+    error->all(FLERR,"Invalid EAM potential file");
 
   memory->create(file->frho,(file->nrho+1),"pair:frho");
   memory->create(file->rhor,(file->nr+1),"pair:rhor");
@@ -765,7 +788,7 @@ void PairEAM::grab(FILE *fptr, int n, double *list)
     fgets(line,MAXLINE,fptr);
     ptr = strtok(line," \t\n\r\f");
     list[i++] = atof(ptr);
-    while (ptr = strtok(NULL," \t\n\r\f")) list[i++] = atof(ptr);
+    while ((ptr = strtok(NULL," \t\n\r\f"))) list[i++] = atof(ptr);
   }
 }
 
@@ -805,7 +828,8 @@ double PairEAM::single(int i, int j, int itype, int jtype,
 
 /* ---------------------------------------------------------------------- */
 
-int PairEAM::pack_comm(int n, int *list, double *buf, int pbc_flag, int *pbc)
+int PairEAM::pack_forward_comm(int n, int *list, double *buf,
+                               int pbc_flag, int *pbc)
 {
   int i,j,m;
 
@@ -814,12 +838,12 @@ int PairEAM::pack_comm(int n, int *list, double *buf, int pbc_flag, int *pbc)
     j = list[i];
     buf[m++] = fp[j];
   }
-  return 1;
+  return m;
 }
 
 /* ---------------------------------------------------------------------- */
 
-void PairEAM::unpack_comm(int n, int first, double *buf)
+void PairEAM::unpack_forward_comm(int n, int first, double *buf)
 {
   int i,m,last;
 
@@ -837,7 +861,7 @@ int PairEAM::pack_reverse_comm(int n, int first, double *buf)
   m = 0;
   last = first + n;
   for (i = first; i < last; i++) buf[m++] = rho[i];
-  return 1;
+  return m;
 }
 
 /* ---------------------------------------------------------------------- */
@@ -874,4 +898,13 @@ void PairEAM::swap_eam(double *fp_caller, double **fp_caller_hold)
   double *tmp = fp;
   fp = fp_caller;
   *fp_caller_hold = tmp;
+}
+
+/* ---------------------------------------------------------------------- */
+
+void *PairEAM::extract(const char *str, int &dim)
+{
+  dim = 2;
+  if (strcmp(str,"scale") == 0) return (void *) scale;
+  return NULL;
 }

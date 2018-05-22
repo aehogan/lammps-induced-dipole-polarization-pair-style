@@ -12,7 +12,7 @@
    Contributing author: Axel Kohlmeyer (Temple U)
 ------------------------------------------------------------------------- */
 
-#include "math.h"
+#include <math.h>
 #include "pair_colloid_omp.h"
 #include "atom.h"
 #include "comm.h"
@@ -20,9 +20,11 @@
 #include "force.h"
 #include "neighbor.h"
 #include "neigh_list.h"
+#include "math_special.h"
 
 #include "suffix.h"
 using namespace LAMMPS_NS;
+using namespace MathSpecial;
 
 /* ---------------------------------------------------------------------- */
 
@@ -53,6 +55,7 @@ void PairColloidOMP::compute(int eflag, int vflag)
 
     loop_setup_thr(ifrom, ito, tid, inum, nthreads);
     ThrData *thr = fix->get_thr(tid);
+    thr->timer(Timer::START);
     ev_setup_thr(eflag, vflag, nall, eatom, vatom, thr);
 
     if (evflag) {
@@ -68,6 +71,7 @@ void PairColloidOMP::compute(int eflag, int vflag)
       else eval<0,0,0>(ifrom, ito, thr);
     }
 
+    thr->timer(Timer::PAIR);
     reduce_thr(this, eflag, vflag, thr);
   } // end of omp parallel region
 }
@@ -83,12 +87,12 @@ void PairColloidOMP::eval(int iifrom, int iito, ThrData * const thr)
 
   evdwl = 0.0;
 
-  const double * const * const x = atom->x;
-  double * const * const f = thr->get_f();
-  const int * const type = atom->type;
+  const dbl3_t * _noalias const x = (dbl3_t *) atom->x[0];
+  dbl3_t * _noalias const f = (dbl3_t *) thr->get_f()[0];
+  const int * _noalias const type = atom->type;
   const int nlocal = atom->nlocal;
   const int tid = thr->get_tid();
-  const double * const special_lj = force->special_lj;
+  const double * _noalias const special_lj = force->special_lj;
   double fxtmp,fytmp,fztmp;
 
   ilist = list->ilist;
@@ -100,9 +104,9 @@ void PairColloidOMP::eval(int iifrom, int iito, ThrData * const thr)
   for (ii = iifrom; ii < iito; ++ii) {
 
     i = ilist[ii];
-    xtmp = x[i][0];
-    ytmp = x[i][1];
-    ztmp = x[i][2];
+    xtmp = x[i].x;
+    ytmp = x[i].y;
+    ztmp = x[i].z;
     itype = type[i];
     jlist = firstneigh[i];
     jnum = numneigh[i];
@@ -113,9 +117,9 @@ void PairColloidOMP::eval(int iifrom, int iito, ThrData * const thr)
       factor_lj = special_lj[sbmask(j)];
       j &= NEIGHMASK;
 
-      delx = xtmp - x[j][0];
-      dely = ytmp - x[j][1];
-      delz = ztmp - x[j][2];
+      delx = xtmp - x[j].x;
+      dely = ytmp - x[j].y;
+      delz = ztmp - x[j].z;
       rsq = delx*delx + dely*dely + delz*delz;
       jtype = type[j];
 
@@ -169,10 +173,10 @@ void PairColloidOMP::eval(int iifrom, int iito, ThrData * const thr)
         K[6] = K[2]-r;
         K[7] = 1.0/(K[3]*K[4]);
         K[8] = 1.0/(K[5]*K[6]);
-        g[0] = pow(K[3],-7.0);
-        g[1] = pow(K[4],-7.0);
-        g[2] = pow(K[5],-7.0);
-        g[3] = pow(K[6],-7.0);
+        g[0] = powint(K[3],-7);
+        g[1] = powint(K[4],-7);
+        g[2] = powint(K[5],-7);
+        g[3] = powint(K[6],-7);
         h[0] = ((K[3]+5.0*K[1])*K[3]+30.0*K[0])*g[0];
         h[1] = ((K[4]+5.0*K[1])*K[4]+30.0*K[0])*g[1];
         h[2] = ((K[5]+5.0*K[2])*K[5]-30.0*K[0])*g[2];
@@ -201,17 +205,17 @@ void PairColloidOMP::eval(int iifrom, int iito, ThrData * const thr)
       fytmp += dely*fpair;
       fztmp += delz*fpair;
       if (NEWTON_PAIR || j < nlocal) {
-        f[j][0] -= delx*fpair;
-        f[j][1] -= dely*fpair;
-        f[j][2] -= delz*fpair;
+        f[j].x -= delx*fpair;
+        f[j].y -= dely*fpair;
+        f[j].z -= delz*fpair;
       }
 
       if (EVFLAG) ev_tally_thr(this, i,j,nlocal,NEWTON_PAIR,
                                evdwl,0.0,fpair,delx,dely,delz,thr);
     }
-    f[i][0] += fxtmp;
-    f[i][1] += fytmp;
-    f[i][2] += fztmp;
+    f[i].x += fxtmp;
+    f[i].y += fytmp;
+    f[i].z += fztmp;
   }
 }
 

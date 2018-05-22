@@ -20,11 +20,11 @@
      and Ardi Van Duin's original ReaxFF code
 ------------------------------------------------------------------------- */
 
-#include "mpi.h"
-#include "math.h"
-#include "stdio.h"
-#include "stdlib.h"
-#include "string.h"
+#include <mpi.h>
+#include <math.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
 #include "pair_reax.h"
 #include "pair_reax_fortran.h"
 #include "atom.h"
@@ -45,9 +45,14 @@ using namespace LAMMPS_NS;
 
 PairREAX::PairREAX(LAMMPS *lmp) : Pair(lmp)
 {
+  if (comm->me == 0)
+    error->warning(FLERR,"The pair_style reax command is unsupported. "
+                   "Please switch to pair_style reax/c instead");
+
   single_enable = 0;
   restartinfo = 0;
   one_coeff = 1;
+  manybody_flag = 1;
   no_virial_fdotr_compute = 1;
 
   nextra = 14;
@@ -166,10 +171,6 @@ void PairREAX::compute(int eflag, int vflag)
   // determine whether this bond is owned by the processor or not
 
   FORTRAN(srtbon1, SRTBON1)(&iprune, &ihb, &hbcut, &ihbnew, &itripstaball);
-
-  // communicate with other processors for the atomic bond order calculations
-
-  FORTRAN(cbkabo, CBKABO).abo;
 
   // communicate local atomic bond order to ghost atomic bond order
 
@@ -486,10 +487,10 @@ void PairREAX::settings(int narg, char **arg)
   if (narg != 0 && narg !=4) error->all(FLERR,"Illegal pair_style command");
 
   if (narg == 4) {
-    hbcut = force->numeric(arg[0]);
-    ihbnew = static_cast<int> (force->numeric(arg[1]));
-    itripstaball = static_cast<int> (force->numeric(arg[2]));
-    precision = force->numeric(arg[3]);
+    hbcut = force->numeric(FLERR,arg[0]);
+    ihbnew = static_cast<int> (force->numeric(FLERR,arg[1]));
+    itripstaball = static_cast<int> (force->numeric(FLERR,arg[2]));
+    precision = force->numeric(FLERR,arg[3]);
 
     if (hbcut <= 0.0 ||
         (ihbnew != 0 && ihbnew != 1) ||
@@ -523,7 +524,7 @@ void PairREAX::coeff(int narg, char **arg)
   // read args that map atom types to elements in potential file
   // map[i] = which element the Ith atom type is, -1 if NULL
   // NOTE: for now throw an error if NULL is used to disallow use with hybrid
-  //       qEq atrix solver needs to be modified to exclude atoms
+  //       qEq matrix solver needs to be modified to exclude atoms
 
   for (int i = 3; i < narg; i++) {
     if (strcmp(arg[i],"NULL") == 0) {
@@ -531,7 +532,7 @@ void PairREAX::coeff(int narg, char **arg)
       error->all(FLERR,"Cannot currently use pair reax with pair hybrid");
       continue;
     }
-    map[i-2] = force->inumeric(arg[i]);
+    map[i-2] = force->inumeric(FLERR,arg[i]);
   }
 
   int n = atom->ntypes;
@@ -556,10 +557,12 @@ void PairREAX::init_style()
     error->all(FLERR,"Pair style reax requires atom IDs");
   if (force->newton_pair == 0)
     error->all(FLERR,"Pair style reax requires newton pair on");
+  if (!atom->q_flag)
+    error->all(FLERR,"Pair style reax requires atom attribute q");
   if (strcmp(update->unit_style,"real") != 0 && comm->me == 0)
     error->warning(FLERR,"Not using real units with pair reax");
 
-  int irequest = neighbor->request(this);
+  int irequest = neighbor->request(this,instance_me);
   neighbor->requests[irequest]->newton = 2;
 
   FORTRAN(readc, READC)();
@@ -620,7 +623,8 @@ double PairREAX::init_one(int i, int j)
 
 /* ---------------------------------------------------------------------- */
 
-int PairREAX::pack_comm(int n, int *list, double *buf, int pbc_flag, int *pbc)
+int PairREAX::pack_forward_comm(int n, int *list, double *buf,
+                                int pbc_flag, int *pbc)
 {
   int i,j,m;
 
@@ -639,12 +643,12 @@ int PairREAX::pack_comm(int n, int *list, double *buf, int pbc_flag, int *pbc)
     }
   }
 
-  return 1;
+  return m;
 }
 
 /* ---------------------------------------------------------------------- */
 
-void PairREAX::unpack_comm(int n, int first, double *buf)
+void PairREAX::unpack_forward_comm(int n, int first, double *buf)
 {
   int i,m,last;
 
@@ -672,7 +676,7 @@ int PairREAX::pack_reverse_comm(int n, int first, double *buf)
   for (i = first; i < last; i++)
     buf[m++] = wcg[i];
 
-  return 1;
+  return m;
 }
 
 /* ---------------------------------------------------------------------- */
@@ -712,7 +716,7 @@ void PairREAX::taper_setup()
   swc3= 140.0e0*(swa3*swb+3.0e0*swa2*swb2+swa*swb3)/d7;
   swc2=-210.0e0*(swa3*swb2+swa2*swb3)/d7;
   swc1= 140.0e0*swa3*swb3/d7;
-  swc0=(-35.0e0*swa3*swb2*swb2+21.0e0*swa2*swb3*swb2+
+  swc0=(-35.0e0*swa3*swb2*swb2+21.0e0*swa2*swb3*swb2-
         7.0e0*swa*swb3*swb3+swb3*swb3*swb)/d7;
 }
 
@@ -935,7 +939,7 @@ void PairREAX::cg_solve(const int & nlocal, const int & nghost,
                         double aval[], int acol_ind[], int arow_ptr[],
                         double x[], double b[])
 {
-  double one, zero, rho, rho_old, alpha, beta, gamma;
+  double one, rho, rho_old, alpha, beta, gamma;
   int iter, maxiter;
   int n;
   double sumtmp;
@@ -955,7 +959,6 @@ void PairREAX::cg_solve(const int & nlocal, const int & nghost,
   n = nlocal+nghost+1;
 
   one = 1.0;
-  zero = 0.0;
   maxiter = 100;
 
   for (int i = 0; i < n; i++) w[i] = 0;

@@ -1,5 +1,39 @@
+## Collective variables module (Colvars)
+
+A software module for molecular simulation and analysis that provides a
+high-performance implementation of sampling algorithms defined on a reduced
+space of continuously differentiable functions (aka collective variables).
+
+The module itself implements a variety of functions and algorithms, including
+free-energy estimators based on thermodynamic forces, non-equilibrium work and
+probability distributions.
+
+For a brief description see:
+  http://colvars.github.io/
+  https://github.com/colvars/colvars/
+
+
+## How to build
+
 This directory has source files to build a library that LAMMPS
 links against when using the USER-COLVARS package.
+
+This library must be built with a C++ compiler, *before* LAMMPS is built and
+*after* packages are configured, so that LAMMPS can link against it.
+You can use the provided Makefile.* files or create your own, specific to your
+compiler and system.  For example:
+
+  cd src
+  make yes-user-colvars
+  cd ../lib/colvars
+  make -f Makefile.g++
+
+where Makefile.g++ uses the GNU C++ compiler and is a good template to start.
+
+**Optional**: if you use the Install.py script provided in this folder, you
+can give the machine name as the '-m' argument.  This can be the suffix of one
+of the files from either this folder, or from src/MAKE/MACHINES.
+*This is only supported by the Install.py within the lib/colvars folder*.
 
 When you are done building this library, two files should
 exist in this directory:
@@ -7,44 +41,46 @@ exist in this directory:
 libcolvars.a		the library LAMMPS will link against
 Makefile.lammps		settings the LAMMPS Makefile will import
 
-The latter file will have settings like this (can be omitted if blank):
+IMPORTANT: You must examine the final Makefile.lammps to insure it is
+correct for your system, else the LAMMPS build will likely fail.
 
-colvars_SYSINC =
-colvars_SYSLIB =
-colvars_SYSPATH =
+If you want to set a debug flag recognized by the library, the
+settings in Makefile.common should work.
 
-SYSINC is for settings needed to compile LAMMPS source files
-SYSLIB is for additional system libraries needed by this package
-SYSPATH is the path(s) to where those libraries are
+Note: some Colvars functions use the Lepton mathematical expression parser,
+which is here included (no additional steps required).  For more details, see:
+  https://simtk.org/projects/lepton
 
-You must insure these settings are correct for your system, else
-the LAMMPS build will likely fail.
 
--------------------------------------------------------------------------
+## Documentation
 
-The following publication describes the principles of
-the implementation of this library:
+For the reference manual see:
+  http://colvars.github.io/colvars-refman-lammps
 
-  Exploring Multidimensional Free Energy Landscapes Using 
-  Time-Dependent Biases on Collective Variables, 
-   J. Hénin, G. Fiorin, C. Chipot, and M. L. Klein, 
-   J. Chem. Theory Comput., 6, 35-47 (2010).
+A copy of the reference manual is also in:
+  doc/PDF/colvars-refman-lammps.pdf
 
-This library is the portable "colvars" module, originally interfaced
-with the NAMD MD code, to provide an extensible software framework,
-that allows enhanced sampling in molecular dynamics simulations.
-The module is written to maximize performance, portability,
-flexibility of usage for the user, and extensibility for the developer.
+Also available is a Doxygen-based developer documentation:
+  http://colvars.github.io/doxygen/html/
 
-This library must be built with a C++ compiler, before LAMMPS is
-built, so LAMMPS can link against it.
+The reference article is:
+  G. Fiorin, M. L. Klein, and J. Henin,
+  Molecular Physics 111, 3345 (2013).
+  http://dx.doi.org/10.1080/00268976.2013.813594
 
---------------
 
-Build the library using one of the provided Makefiles or creating your
-own, specific to your compiler and system.  For example:
+## Updating to the latest version
 
-make -f Makefile.g++
+To recompile LAMMPS with the most recent version of this module, the `master`
+branch of this repository from GitHub, or clone it via git:
 
-If the build is successful, you should end up with a libcolvars.a file.
+  git clone https://github.com/colvars/colvars.git
+
+and run the provided `update-colvars-code.sh` script against the unpacked
+LAMMPS source tree:
+
+  ./update-colvars-code.sh /path/to/lammps/folder
+
+Please report bugs and request new features at:
+https://github.com/colvars/colvars/issues
 

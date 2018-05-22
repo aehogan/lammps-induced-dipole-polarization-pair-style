@@ -1,4 +1,4 @@
-/* ----------------------------------------------------------------------
+/* -*- c++ -*- ----------------------------------------------------------
    LAMMPS - Large-scale Atomic/Molecular Massively Parallel Simulator
    http://lammps.sandia.gov, Sandia National Laboratories
    Steve Plimpton, sjplimp@sandia.gov
@@ -37,8 +37,8 @@ class ComputeImproperLocal : public Compute {
   int ncount;
 
   int nmax;
-  double *vector;
-  double **array;
+  double *vlocal;
+  double **alocal;
 
   int compute_impropers(int);
   void reallocate(int);

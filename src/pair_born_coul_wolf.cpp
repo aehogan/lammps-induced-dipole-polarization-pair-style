@@ -15,10 +15,10 @@
    Contributing author: Yongfeng Zhang (INL), yongfeng.zhang@inl.gov
 ------------------------------------------------------------------------- */
 
-#include "math.h"
-#include "stdio.h"
-#include "stdlib.h"
-#include "string.h"
+#include <math.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
 #include "pair_born_coul_wolf.h"
 #include "atom.h"
 #include "comm.h"
@@ -34,7 +34,11 @@ using namespace MathConst;
 
 /* ---------------------------------------------------------------------- */
 
-PairBornCoulWolf::PairBornCoulWolf(LAMMPS *lmp) : Pair(lmp) {}
+PairBornCoulWolf::PairBornCoulWolf(LAMMPS *lmp) : Pair(lmp)
+{
+  writedata = 1;
+  single_enable = 0;
+}
 
 /* ---------------------------------------------------------------------- */
 
@@ -80,7 +84,6 @@ void PairBornCoulWolf::compute(int eflag, int vflag)
   double *q = atom->q;
   int *type = atom->type;
   int nlocal = atom->nlocal;
-  int nall = nlocal + atom->nghost;
   double *special_coul = force->special_coul;
   double *special_lj = force->special_lj;
   int newton_pair = force->newton_pair;
@@ -112,7 +115,7 @@ void PairBornCoulWolf::compute(int eflag, int vflag)
 
     qisq = qtmp*qtmp;
     e_self = -(e_shift/2.0 + alf/MY_PIS) * qisq*qqrd2e;
-    if (evflag) ev_tally(i,i,nlocal,0,0.0,e_self,0.0,0.0,0.0,0.0);
+    if (eflag) ev_tally(i,i,nlocal,0,0.0,e_self,0.0,0.0,0.0,0.0);
 
     for (jj = 0; jj < jnum; jj++) {
       j = jlist[jj];
@@ -218,15 +221,15 @@ void PairBornCoulWolf::settings(int narg, char **arg)
 {
   if (narg < 2 || narg > 3) error->all(FLERR,"Illegal pair_style command");
 
-  alf = force->numeric(arg[0]);
-  cut_lj_global = force->numeric(arg[1]);
+  alf = force->numeric(FLERR,arg[0]);
+  cut_lj_global = force->numeric(FLERR,arg[1]);
   if (narg == 2) cut_coul = cut_lj_global;
-  else cut_coul = force->numeric(arg[2]);
+  else cut_coul = force->numeric(FLERR,arg[2]);
 
   if (allocated) {
     int i,j;
     for (i = 1; i <= atom->ntypes; i++)
-      for (j = i+1; j <= atom->ntypes; j++)
+      for (j = i; j <= atom->ntypes; j++)
         if (setflag[i][j]) cut_lj[i][j] = cut_lj_global;
   }
 }
@@ -242,18 +245,18 @@ void PairBornCoulWolf::coeff(int narg, char **arg)
   if (!allocated) allocate();
 
   int ilo,ihi,jlo,jhi;
-  force->bounds(arg[0],atom->ntypes,ilo,ihi);
-  force->bounds(arg[1],atom->ntypes,jlo,jhi);
+  force->bounds(FLERR,arg[0],atom->ntypes,ilo,ihi);
+  force->bounds(FLERR,arg[1],atom->ntypes,jlo,jhi);
 
-  double a_one = force->numeric(arg[2]);
-  double rho_one = force->numeric(arg[3]);
-  double sigma_one = force->numeric(arg[4]);
+  double a_one = force->numeric(FLERR,arg[2]);
+  double rho_one = force->numeric(FLERR,arg[3]);
+  double sigma_one = force->numeric(FLERR,arg[4]);
   if (rho_one <= 0) error->all(FLERR,"Incorrect args for pair coefficients");
-  double c_one = force->numeric(arg[5]);
-  double d_one = force->numeric(arg[6]);
+  double c_one = force->numeric(FLERR,arg[5]);
+  double d_one = force->numeric(FLERR,arg[6]);
 
   double cut_lj_one = cut_lj_global;
-  if (narg == 8) cut_lj_one = force->numeric(arg[7]);
+  if (narg == 8) cut_lj_one = force->numeric(FLERR,arg[7]);
 
   int count = 0;
   for (int i = ilo; i <= ihi; i++) {
@@ -281,7 +284,7 @@ void PairBornCoulWolf::init_style()
   if (!atom->q_flag)
     error->all(FLERR,"Pair style born/coul/wolf requires atom attribute q");
 
-  int irequest = neighbor->request(this);
+  neighbor->request(this,instance_me);
 
   cut_coulsq = cut_coul * cut_coul;
 }
@@ -302,7 +305,7 @@ double PairBornCoulWolf::init_one(int i, int j)
   born2[i][j] = 6.0*c[i][j];
   born3[i][j] = 8.0*d[i][j];
 
-  if (offset_flag) {
+  if (offset_flag && (cut_lj[i][j] > 0.0)) {
     double rexp = exp((sigma[i][j]-cut_lj[i][j])*rhoinv[i][j]);
     offset[i][j] = a[i][j]*rexp - c[i][j]/pow(cut_lj[i][j],6.0)
       + d[i][j]/pow(cut_lj[i][j],8.0);
@@ -411,6 +414,29 @@ void PairBornCoulWolf::read_restart_settings(FILE *fp)
   MPI_Bcast(&cut_coul,1,MPI_DOUBLE,0,world);
   MPI_Bcast(&offset_flag,1,MPI_INT,0,world);
   MPI_Bcast(&mix_flag,1,MPI_INT,0,world);
+}
+
+/* ----------------------------------------------------------------------
+   proc 0 writes to data file
+------------------------------------------------------------------------- */
+
+void PairBornCoulWolf::write_data(FILE *fp)
+{
+  for (int i = 1; i <= atom->ntypes; i++)
+    fprintf(fp,"%d %g %g %g %g %g\n",i,
+            a[i][i],rho[i][i],sigma[i][i],c[i][i],d[i][i]);
+}
+
+/* ----------------------------------------------------------------------
+   proc 0 writes all pairs to data file
+------------------------------------------------------------------------- */
+
+void PairBornCoulWolf::write_data_all(FILE *fp)
+{
+  for (int i = 1; i <= atom->ntypes; i++)
+    for (int j = i; j <= atom->ntypes; j++)
+      fprintf(fp,"%d %d %g %g %g %g %g %g\n",i,j,
+              a[i][j],rho[i][j],sigma[i][j],c[i][j],d[i][j],cut_lj[i][j]);
 }
 
 /* ----------------------------------------------------------------------

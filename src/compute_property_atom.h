@@ -1,4 +1,4 @@
-/* ----------------------------------------------------------------------
+/* -*- c++ -*- ----------------------------------------------------------
    LAMMPS - Large-scale Atomic/Molecular Massively Parallel Simulator
    http://lammps.sandia.gov, Sandia National Laboratories
    Steve Plimpton, sjplimp@sandia.gov
@@ -35,8 +35,7 @@ class ComputePropertyAtom : public Compute {
  private:
   int nvalues;
   int nmax;
-  double *vector;
-  double **array;
+  int *index;
   double *buf;
   class AtomVecEllipsoid *avec_ellipsoid;
   class AtomVecLine *avec_line;
@@ -48,6 +47,7 @@ class ComputePropertyAtom : public Compute {
 
   void pack_id(int);
   void pack_molecule(int);
+  void pack_proc(int);
   void pack_type(int);
   void pack_mass(int);
 
@@ -100,10 +100,6 @@ class ComputePropertyAtom : public Compute {
   void pack_tqx(int);
   void pack_tqy(int);
   void pack_tqz(int);
-  void pack_spin(int);
-  void pack_eradius(int);
-  void pack_ervel(int);
-  void pack_erforce(int);
   void pack_end1x(int);
   void pack_end1y(int);
   void pack_end1z(int);
@@ -119,6 +115,13 @@ class ComputePropertyAtom : public Compute {
   void pack_corner3x(int);
   void pack_corner3y(int);
   void pack_corner3z(int);
+
+  void pack_nbonds(int);
+
+  void pack_iname(int);
+  void pack_dname(int);
+
+  void pack_property_atom(int);
 };
 
 }
@@ -137,6 +140,16 @@ command-line option when running LAMMPS to see the offending line.
 E: Compute property/atom for atom property that isn't allocated
 
 Self-explanatory.
+
+E: Compute property/atom integer vector does not exist
+
+The command is accessing a vector added by the fix property/atom
+command, that does not exist.
+
+E: Compute property/atom floating point vector does not exist
+
+The command is accessing a vector added by the fix property/atom
+command, that does not exist.
 
 E: Invalid keyword in compute property/atom command
 

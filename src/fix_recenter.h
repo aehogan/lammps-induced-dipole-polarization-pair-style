@@ -1,4 +1,4 @@
-/* ----------------------------------------------------------------------
+/* -*- c++ -*- ----------------------------------------------------------
    LAMMPS - Large-scale Atomic/Molecular Massively Parallel Simulator
    http://lammps.sandia.gov, Sandia National Laboratories
    Steve Plimpton, sjplimp@sandia.gov
@@ -30,12 +30,16 @@ class FixRecenter : public Fix {
   int setmask();
   void init();
   void initial_integrate(int);
+  void initial_integrate_respa(int, int, int);
+  double compute_scalar();
+  double compute_vector(int);
 
  private:
   int group2bit,scaleflag;
   int xflag,yflag,zflag;
   int xinitflag,yinitflag,zinitflag;
-  double xcom,ycom,zcom,xinit,yinit,zinit,masstotal;
+  int nlevels_respa;
+  double xcom,ycom,zcom,xinit,yinit,zinit,masstotal,distance,shift[3];
 };
 
 }
@@ -54,11 +58,6 @@ command-line option when running LAMMPS to see the offending line.
 E: Could not find fix recenter group ID
 
 A group ID used in the fix recenter command does not exist.
-
-E: Use of fix recenter with undefined lattice
-
-Must use lattice command with fix recenter command if units option is
-set to lattice.
 
 E: Fix recenter group has no atoms
 

@@ -1,4 +1,4 @@
-/* ----------------------------------------------------------------------
+/* -*- c++ -*- ----------------------------------------------------------
    LAMMPS - Large-scale Atomic/Molecular Massively Parallel Simulator
    http://lammps.sandia.gov, Sandia National Laboratories
    Steve Plimpton, sjplimp@sandia.gov
@@ -36,14 +36,16 @@ class PairLineLJ : public Pair {
 
  protected:
   double cut_global;
+  double *subsize;
+  double **epsilon,**sigma,**cutsub,**cutsubsq;
   double **cut;
-  double **epsilon,**sigma;
-  double **lj1,**lj2,**lj3,**lj4;
+  double **lj1,**lj2,**lj3,**lj4;     // for sphere/sphere interactions
   class AtomVecLine *avec;
+
+  double *size;     // per-type size of sub-particles to tile line segment
 
   struct Discrete {
     double dx,dy;
-    double sigma;
   };
   Discrete *discrete;           // list of all discretes for all lines
   int ndiscrete;                // number of discretes in list
@@ -63,10 +65,6 @@ class PairLineLJ : public Pair {
 
 /* ERROR/WARNING messages:
 
-E: Pair line/lj requires atom style line
-
-Self-explanatory.
-
 E: Illegal ... command
 
 Self-explanatory.  Check the input script syntax and compare to the
@@ -76,5 +74,14 @@ command-line option when running LAMMPS to see the offending line.
 E: Incorrect args for pair coefficients
 
 Self-explanatory.  Check the input script or data file.
+
+E: Pair line/lj requires atom style line
+
+Self-explanatory.
+
+E: All pair coeffs are not set
+
+All pair coefficients must be set in the data file or by the
+pair_coeff command before running a simulation.
 
 */

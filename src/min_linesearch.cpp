@@ -21,7 +21,7 @@
             JR Shewchuk, http://www-2.cs.cmu.edu/~jrs/jrspapers.html#cg
 ------------------------------------------------------------------------- */
 
-#include "math.h"
+#include <math.h>
 #include "min_linesearch.h"
 #include "atom.h"
 #include "update.h"
@@ -48,12 +48,9 @@ using namespace LAMMPS_NS;
 #define ALPHA_REDUCE 0.5
 #define BACKTRACK_SLOPE 0.4
 #define QUADRATIC_TOL 0.1
+//#define EMACH 1.0e-8
 #define EMACH 1.0e-8
 #define EPS_QUAD 1.0e-28
-
-// same as in other min classes
-
-enum{MAXITER,MAXEVAL,ETOL,FTOL,DOWNHILL,ZEROALPHA,ZEROFORCE,ZEROQUAD};
 
 /* ---------------------------------------------------------------------- */
 
@@ -247,9 +244,9 @@ int MinLineSearch::linemin_backtrack(double eoriginal, double &alpha)
     }
   if (nextra_global) modify->min_store();
 
-  // important diagnostic: test the gradient against energy
+  // // important diagnostic: test the gradient against energy
   // double etmp;
-  // double alphatmp = alphamax*1.0e-4;
+  // double alphatmp = alpha*1.0e-4;
   // etmp = alpha_step(alphatmp,1);
   // printf("alpha = %g dele = %g dele_force = %g err = %g\n",
   //        alphatmp,etmp-eoriginal,-alphatmp*fdothall,
@@ -277,12 +274,15 @@ int MinLineSearch::linemin_backtrack(double eoriginal, double &alpha)
 
     alpha *= ALPHA_REDUCE;
 
-    // backtracked all the way to 0.0
-    // reset to starting point, exit with error
+    // backtracked too much
+    // reset to starting point
+    // if de is positive, exit with error
+    // if de is negative, exit with ETOL
 
     if (alpha <= 0.0 || de_ideal >= -EMACH) {
       ecurrent = alpha_step(0.0,0);
-      return ZEROALPHA;
+      if (de < 0.0) return ETOL;
+      else return ZEROALPHA;
     }
   }
 }
@@ -405,7 +405,7 @@ int MinLineSearch::linemin_quadratic(double eoriginal, double &alpha)
   engprev = eoriginal;
   alphaprev = 0.0;
 
-  // important diagnostic: test the gradient against energy
+  // // important diagnostic: test the gradient against energy
   // double etmp;
   // double alphatmp = alphamax*1.0e-4;
   // etmp = alpha_step(alphatmp,1);
@@ -586,7 +586,7 @@ int MinLineSearch::linemin_forcezero(double eoriginal, double &alpha)
 {
   int i,m,n;
   double fdothall,fdothme,hme,hmax,hmaxall;
-  double de_ideal,de;
+  double de;
   double *xatom,*x0atom,*fatom,*hatom;
 
   double alpha_max, alpha_init, alpha_del;
@@ -884,7 +884,7 @@ double MinLineSearch::alpha_step(double alpha, int resetflag)
 double MinLineSearch::compute_dir_deriv(double &ff)
 {
    int i,m,n;
-   double *xatom,*hatom, *fatom;
+   double *hatom, *fatom;
    double dot[2],dotall[2];
    double fh;
 

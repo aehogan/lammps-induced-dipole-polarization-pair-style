@@ -16,11 +16,11 @@
      based on pair_airebo by Ase Henry (MIT)
 ------------------------------------------------------------------------- */
 
-#include "math.h"
-#include "stdio.h"
-#include "stdlib.h"
-#include "string.h"
-#include "mpi.h"
+#include <math.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <mpi.h>
 #include "pair_lcbop.h"
 #include "atom.h"
 #include "neighbor.h"
@@ -30,6 +30,7 @@
 #include "neighbor.h"
 #include "neigh_list.h"
 #include "neigh_request.h"
+#include "my_page.h"
 #include "math_const.h"
 #include "memory.h"
 #include "error.h"
@@ -43,16 +44,20 @@ using namespace MathConst;
 
 /* ---------------------------------------------------------------------- */
 
-PairLCBOP::PairLCBOP(LAMMPS *lmp) : Pair(lmp) {
+PairLCBOP::PairLCBOP(LAMMPS *lmp) : Pair(lmp)
+{
   single_enable = 0;
+  restartinfo = 0;
   one_coeff = 1;
+  manybody_flag = 1;
   ghostneigh = 1;
 
   maxlocal = 0;
   SR_numneigh = NULL;
   SR_firstneigh = NULL;
-  maxpage = 0;
-  pages = NULL;
+  ipage = NULL;
+  pgsize = oneatom = 0;
+
   N = NULL;
   M = NULL;
 }
@@ -61,11 +66,11 @@ PairLCBOP::PairLCBOP(LAMMPS *lmp) : Pair(lmp) {
    check if allocated, since class can be destructed when incomplete
 ------------------------------------------------------------------------- */
 
-PairLCBOP::~PairLCBOP() {
+PairLCBOP::~PairLCBOP()
+{
   memory->destroy(SR_numneigh);
   memory->sfree(SR_firstneigh);
-  for (int i = 0; i < maxpage; i++) memory->destroy(pages[i]);
-  memory->sfree(pages);
+  delete [] ipage;
   memory->destroy(N);
   memory->destroy(M);
 
@@ -185,16 +190,29 @@ void PairLCBOP::init_style()
 
   // need a full neighbor list, including neighbors of ghosts
 
-  int irequest = neighbor->request(this);
+  int irequest = neighbor->request(this,instance_me);
   neighbor->requests[irequest]->half = 0;
   neighbor->requests[irequest]->full = 1;
   neighbor->requests[irequest]->ghost = 1;
 
-  // local SR neighbor list memory
+  // local SR neighbor list
+  // create pages if first time or if neighbor pgsize/oneatom has changed
 
-  pgsize = neighbor->pgsize;
-  oneatom = neighbor->oneatom;
-  if (maxpage == 0) add_pages();
+  int create = 0;
+  if (ipage == NULL) create = 1;
+  if (pgsize != neighbor->pgsize) create = 1;
+  if (oneatom != neighbor->oneatom) create = 1;
+
+  if (create) {
+    delete [] ipage;
+    pgsize = neighbor->pgsize;
+    oneatom = neighbor->oneatom;
+
+    int nmypage = comm->nthreads;
+    ipage = new MyPage<int>[nmypage];
+    for (int i = 0; i < nmypage; i++)
+      ipage[i].init(oneatom,pgsize,PGDELTA);
+  }
 }
 
 /* ----------------------------------------------------------------------
@@ -237,16 +255,12 @@ double PairLCBOP::init_one(int i, int j)
 
 void PairLCBOP::SR_neigh()
 {
-  int i,j,ii,jj,n,
-    allnum,           // number of atoms(both local and ghost) neighbors are stored for
-    jnum;
+  int i,j,ii,jj,n,allnum,jnum;
   double xtmp,ytmp,ztmp,delx,dely,delz,rsq,dS;
   int *ilist,*jlist,*numneigh,**firstneigh;
   int *neighptr;
 
   double **x = atom->x;
-  int nlocal = atom->nlocal;
-  int nall = nlocal + atom->nghost;
 
   if (atom->nmax > maxlocal) {  // ensure ther is enough space
     maxlocal = atom->nmax;      // for atoms and ghosts allocated
@@ -269,19 +283,13 @@ void PairLCBOP::SR_neigh()
   // store all SR neighs of owned and ghost atoms
   // scan full neighbor list of I
 
-  int npage = 0;
-  int npnt = 0; // position in current page
+  ipage->reset();
 
   for (ii = 0; ii < allnum; ii++) {
     i = ilist[ii];
 
-    if (pgsize - npnt < oneatom) { // ensure at least oneatom space free at current page
-      npnt = 0;
-      npage++;
-      if (npage == maxpage) add_pages();
-    }
-    neighptr = &pages[npage][npnt];
     n = 0;
+    neighptr = ipage->vget();
 
     xtmp = x[i][0];
     ytmp = x[i][1];
@@ -306,14 +314,13 @@ void PairLCBOP::SR_neigh()
 
     SR_firstneigh[i] = neighptr;
     SR_numneigh[i] = n;
-    npnt += n;
-    if( npnt >= pgsize )
-      error->one(FLERR,
-                 "Neighbor list overflow, boost neigh_modify one or page");
+    ipage->vgot(n);
+    if (ipage->status())
+      error->one(FLERR,"Neighbor list overflow, boost neigh_modify one");
   }
 
-
   // calculate M_i
+
   for (ii = 0; ii < allnum; ii++) {
     i = ilist[ii];
 
@@ -348,16 +355,17 @@ void PairLCBOP::SR_neigh()
 
 void PairLCBOP::FSR(int eflag, int vflag)
 {
-  int i,j,jj,ii,inum,itag,jtag;
+  int i,j,jj,ii,inum;
+  tagint itag,jtag;
   double delx,dely,delz,fpair,xtmp,ytmp,ztmp;
   double r_sq,rijmag,f_c_ij,df_c_ij;
   double VR,dVRdi,VA,Bij,dVAdi,dVA;
-  double d_f_c_ij,del[3];
+  double del[3];
   int *ilist,*SR_neighs;
 
   double **x = atom->x;
   double **f = atom->f;
-  int *tag = atom->tag;
+  tagint *tag = atom->tag;
   int nlocal = atom->nlocal;
   int newton_pair = force->newton_pair;
 
@@ -443,18 +451,17 @@ void PairLCBOP::FSR(int eflag, int vflag)
 
 void PairLCBOP::FLR(int eflag, int vflag)
 {
-
-  int i,j,jj,m,ii,itag,jtag;
+  int i,j,jj,ii;
+  tagint itag,jtag;
   double delx,dely,delz,fpair,xtmp,ytmp,ztmp;
   double r_sq,rijmag,f_c_ij,df_c_ij;
   double V,dVdi;
 
   double **x = atom->x;
   double **f = atom->f;
-  int *tag = atom->tag;
+  tagint *tag = atom->tag;
   int nlocal = atom->nlocal;
   int newton_pair = force->newton_pair;
-
 
   int inum = list->inum;
   int *ilist = list->ilist;
@@ -549,7 +556,7 @@ void PairLCBOP::FNij( int i, int j, double factor, double **f, int vflag_atom ) 
       if( riksq > r_1*r_1 ) { // &&  riksq < r_2*r_2, if second condition not fulfilled neighbor would not be in the list
         double rikmag = sqrt(riksq);
         double df_c_ik;
-        double f_c_ik = f_c( rikmag, r_1, r_2, &df_c_ik );
+        f_c( rikmag, r_1, r_2, &df_c_ik );
 
         // F = factor*df_c_ik*(-grad rikmag)
         // grad_i rikmag =  \vec{rik} /rikmag
@@ -861,21 +868,6 @@ double PairLCBOP::b(int i, int j, double rij[3],
 }
 
 /* ----------------------------------------------------------------------
-   add pages to SR neighbor list
-------------------------------------------------------------------------- */
-
-void PairLCBOP::add_pages(int howmany)
-{
-  int toppage = maxpage;
-  maxpage += howmany*PGDELTA;
-
-  pages = (int **)
-    memory->srealloc(pages,maxpage*sizeof(int *),"LCBOP:pages");
-  for (int i = toppage; i < maxpage; i++)
-    memory->create(pages[i],pgsize,"LCBOP:pages[i]");
-}
-
-/* ----------------------------------------------------------------------
    spline interpolation for G
 ------------------------------------------------------------------------- */
 
@@ -975,7 +967,7 @@ double PairLCBOP::F_conj( double N_ij, double N_ji, double N_conj_ij, double *dF
 
 void PairLCBOP::read_file(char *filename)
 {
-  int i,j,k,l,limit;
+  int i,k,l;
   char s[MAXLINE];
 
   MPI_Comm_rank(world,&me);
@@ -983,7 +975,7 @@ void PairLCBOP::read_file(char *filename)
   // read file on proc 0
 
   if (me == 0) {
-    FILE *fp = fopen(filename,"r");
+    FILE *fp = force->open_potential(filename);
     if (fp == NULL) {
       char str[128];
       sprintf(str,"Cannot open LCBOP potential file %s",filename);
@@ -1286,11 +1278,15 @@ void PairLCBOP::spline_init() {
    memory usage of local atom-based arrays
 ------------------------------------------------------------------------- */
 
-double PairLCBOP::memory_usage() {
+double PairLCBOP::memory_usage()
+{
   double bytes = 0.0;
   bytes += maxlocal * sizeof(int);
   bytes += maxlocal * sizeof(int *);
-  bytes += maxpage * neighbor->pgsize * sizeof(int);
-  bytes += 3 * maxlocal * sizeof(double);
+
+  for (int i = 0; i < comm->nthreads; i++)
+    bytes += ipage[i].size();
+
+  bytes += 3*maxlocal * sizeof(double);
   return bytes;
 }

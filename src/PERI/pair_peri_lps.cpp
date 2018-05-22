@@ -15,9 +15,9 @@
    Contributing author: Mike Parks (SNL)
 ------------------------------------------------------------------------- */
 
-#include "math.h"
-#include "stdlib.h"
-#include "string.h"
+#include <math.h>
+#include <stdlib.h>
+#include <string.h>
 #include "pair_peri_lps.h"
 #include "atom.h"
 #include "domain.h"
@@ -33,6 +33,7 @@
 #include "memory.h"
 #include "error.h"
 #include "update.h"
+#include "math_const.h"
 
 using namespace LAMMPS_NS;
 
@@ -42,6 +43,7 @@ PairPeriLPS::PairPeriLPS(LAMMPS *lmp) : Pair(lmp)
 {
   for (int i = 0; i < 6; i++) virial[i] = 0.0;
   no_virial_fdotr_compute = 1;
+  single_enable = 0;
 
   ifix_peri = -1;
 
@@ -103,7 +105,7 @@ void PairPeriLPS::compute(int eflag, int vflag)
   double *s0 = atom->s0;
   double **x0 = atom->x0;
   double **r0   = ((FixPeriNeigh *) modify->fix[ifix_peri])->r0;
-  int **partner = ((FixPeriNeigh *) modify->fix[ifix_peri])->partner;
+  tagint **partner = ((FixPeriNeigh *) modify->fix[ifix_peri])->partner;
   int *npartner = ((FixPeriNeigh *) modify->fix[ifix_peri])->npartner;
   double *wvolume = ((FixPeriNeigh *) modify->fix[ifix_peri])->wvolume;
 
@@ -173,7 +175,7 @@ void PairPeriLPS::compute(int eflag, int vflag)
         // of the bond-based theory used in PMB model
 
         double kshort = (15.0 * 18.0 * bulkmodulus[itype][itype]) /
-          (3.141592653589793 * cutsq[itype][jtype] * cutsq[itype][jtype]);
+          (MathConst::MY_PI * cutsq[itype][jtype] * cutsq[itype][jtype]);
         rk = (kshort * vfrac[j]) * (dr / cut[itype][jtype]);
 
         if (r > 0.0) fpair = -(rk/r);
@@ -284,12 +286,14 @@ void PairPeriLPS::compute(int eflag, int vflag)
 
       omega_plus  = influence_function(-1.0*delx0,-1.0*dely0,-1.0*delz0);
       omega_minus = influence_function(delx0,dely0,delz0);
-      rk = ( (3.0 * bulkmodulus[itype][itype]) -
-             (5.0 * shearmodulus[itype][itype]) ) * vfrac[j] * vfrac_scale *
-        ( (omega_plus * theta[i] / wvolume[i]) +
-          ( omega_minus * theta[j] / wvolume[j] ) ) * r0[i][jj];
-      rk +=  15.0 * ( shearmodulus[itype][itype] * vfrac[j] * vfrac_scale ) *
-        ( (omega_plus / wvolume[i]) + (omega_minus / wvolume[j]) ) * dr;
+      if ((wvolume[i] > 0.0) && (wvolume[j] > 0.0)) {
+        rk = ( (3.0 * bulkmodulus[itype][itype]) -
+               (5.0 * shearmodulus[itype][itype]) ) * vfrac[j] * vfrac_scale *
+          ( (omega_plus * theta[i] / wvolume[i]) +
+            ( omega_minus * theta[j] / wvolume[j] ) ) * r0[i][jj];
+        rk +=  15.0 * ( shearmodulus[itype][itype] * vfrac[j] * vfrac_scale ) *
+          ( (omega_plus / wvolume[i]) + (omega_minus / wvolume[j]) ) * dr;
+      } else rk = 0.0;
 
       if (r > 0.0) fbond = -(rk/r);
       else fbond = 0.0;
@@ -301,9 +305,13 @@ void PairPeriLPS::compute(int eflag, int vflag)
       // since I-J is double counted, set newton off & use 1/2 factor and I,I
 
       double deviatoric_extension = dr - (theta[i]* r0[i][jj] / 3.0);
-      if (eflag) evdwl = 0.5 * 15 * (shearmodulus[itype][itype]/wvolume[i]) *
+
+
+      if (eflag && (wvolume[i] > 0.0))
+        evdwl = 0.5 * 15 * (shearmodulus[itype][itype]/wvolume[i]) *
                    omega_plus*(deviatoric_extension * deviatoric_extension) *
                    vfrac[j] * vfrac_scale;
+      else evdwl = 0.0;
       if (evflag) ev_tally(i,i,nlocal,0,0.5*evdwl,0.0,
                            0.5*fbond*vfrac[i],delx,dely,delz);
 
@@ -371,14 +379,14 @@ void PairPeriLPS::coeff(int narg, char **arg)
   if (!allocated) allocate();
 
   int ilo,ihi,jlo,jhi;
-  force->bounds(arg[0],atom->ntypes,ilo,ihi);
-  force->bounds(arg[1],atom->ntypes,jlo,jhi);
+  force->bounds(FLERR,arg[0],atom->ntypes,ilo,ihi);
+  force->bounds(FLERR,arg[1],atom->ntypes,jlo,jhi);
 
-  double bulkmodulus_one = atof(arg[2]);
-  double shearmodulus_one = atof(arg[3]);
-  double cut_one = atof(arg[4]);
-  double s00_one = atof(arg[5]);
-  double alpha_one = atof(arg[6]);
+  double bulkmodulus_one = force->numeric(FLERR,arg[2]);
+  double shearmodulus_one = force->numeric(FLERR,arg[3]);
+  double cut_one = force->numeric(FLERR,arg[4]);
+  double s00_one = force->numeric(FLERR,arg[5]);
+  double alpha_one = force->numeric(FLERR,arg[6]);
 
   int count = 0;
   for (int i = ilo; i <= ihi; i++) {
@@ -421,12 +429,11 @@ void PairPeriLPS::init_style()
 {
   // error checks
 
-  if (!atom->peri_flag)  error->all(FLERR,"Pair style peri requires atom style peri");
+  if (!atom->peri_flag)
+    error->all(FLERR,"Pair style peri requires atom style peri");
   if (atom->map_style == 0)
     error->all(FLERR,"Pair peri requires an atom map, see atom_modify");
 
-  if (domain->lattice == NULL)
-    error->all(FLERR,"Pair peri requires a lattice be defined");
   if (domain->lattice->xlattice != domain->lattice->ylattice ||
       domain->lattice->xlattice != domain->lattice->zlattice ||
       domain->lattice->ylattice != domain->lattice->zlattice)
@@ -450,7 +457,7 @@ void PairPeriLPS::init_style()
     if (strcmp(modify->fix[i]->style,"PERI_NEIGH") == 0) ifix_peri = i;
   if (ifix_peri == -1) error->all(FLERR,"Fix peri neigh does not exist");
 
-  neighbor->request(this);
+  neighbor->request(this,instance_me);
 }
 
 /* ----------------------------------------------------------------------
@@ -504,102 +511,6 @@ void PairPeriLPS::read_restart(FILE *fp)
     }
 }
 
-/* ---------------------------------------------------------------------- */
-
-double PairPeriLPS::single(int i, int j, int itype, int jtype,
-                           double rsq, double factor_coul, double factor_lj,
-                           double &fforce)
-{
-  double delx0,dely0,delz0,rsq0;
-  double d_ij,r,dr,rk,vfrac_scale;
-
-  double *vfrac = atom->vfrac;
-  double **x0 = atom->x0;
-  double **r0   = ((FixPeriNeigh *) modify->fix[ifix_peri])->r0;
-  int **partner = ((FixPeriNeigh *) modify->fix[ifix_peri])->partner;
-  int *npartner = ((FixPeriNeigh *) modify->fix[ifix_peri])->npartner;
-  double *wvolume = ((FixPeriNeigh *) modify->fix[ifix_peri])->wvolume;
-
-  double lc = domain->lattice->xlattice;
-  double half_lc = 0.5*lc;
-
-  double kshort;
-
-  delx0 = x0[i][0] - x0[j][0];
-  dely0 = x0[i][1] - x0[j][1];
-  delz0 = x0[i][2] - x0[j][2];
-  int periodic = domain->xperiodic || domain->yperiodic || domain->zperiodic;
-  if (periodic) domain->minimum_image(delx0,dely0,delz0);
-  rsq0 = delx0*delx0 + dely0*dely0 + delz0*delz0;
-
-  d_ij = MIN(0.9*sqrt(rsq0),1.35*lc);
-  r = sqrt(rsq);
-
-  double energy = 0.0;
-  fforce = 0.0;
-
-  if (r < d_ij) {
-    dr = r - d_ij;
-    // kshort resembles short-range force constant of bond-based theory in 3d
-    kshort = (15.0 * 18.0 * bulkmodulus[itype][itype]) /
-             ( 3.141592653589793 * cutsq[itype][jtype] * cutsq[itype][jtype]);
-    rk = ( kshort * vfrac[j]) * (dr / sqrt(cutsq[itype][jtype]));
-    if (r > 0.0) fforce += -(rk/r);
-    energy += 0.5*rk*dr;
-  }
-
-   if (atom->nmax > nmax) {
-    memory->destroy(theta);
-    nmax = atom->nmax;
-    memory->create(theta,nmax,"pair:theta");
-  }
-
-  // Compute the dilatation on each particle
-  compute_dilatation();
-
-  // communicate dilatation (theta) of each particle
-  comm->forward_comm_pair(this);
-  // communicate wighted volume (wvolume) upon every reneighbor
-  if (neighbor->ago == 0)
-    comm->forward_comm_fix(modify->fix[ifix_peri]);
-
-  double omega_plus, omega_minus;
-
-  int jnum = npartner[i];
-  for (int jj = 0; jj < jnum; jj++) {
-    if (partner[i][jj] == 0) continue;
-    if (j < 0) continue;
-    if (j == atom->map(partner[i][jj])) {
-      dr = r - r0[i][jj];
-      if (fabs(dr) < 2.2204e-016) dr = 0.0;
-
-      // scale vfrac[j] if particle j near the horizon
-
-      if ( (fabs(r0[i][jj] - sqrt(cutsq[itype][jtype]))) <= half_lc)
-        vfrac_scale = (-1.0/(2*half_lc))*(r0[i][jj]) +
-          (1.0 + ((sqrt(cutsq[itype][jtype]) - half_lc)/(2*half_lc)));
-      else vfrac_scale = 1.0;
-
-      omega_plus  = influence_function(-1.0*delx0,-1.0*dely0,-1.0*delz0);
-      omega_minus = influence_function(delx0,dely0,delz0);
-      rk = (3.0* bulkmodulus[itype][itype] -5.0 * shearmodulus[itype][itype]) *
-        vfrac[j] * vfrac_scale  * ( (omega_plus * theta[i] / wvolume[i]) +
-                                    (omega_minus * theta[j] / wvolume[j])) *
-        r0[i][jj];
-      rk +=  15.0 * ( shearmodulus[itype][itype] * vfrac[j] * vfrac_scale ) *
-        ( (omega_plus / wvolume[i]) + (omega_minus / wvolume[j]) ) * dr;
-
-      if (r > 0.0) fforce += -(rk/r);
-        energy += 0.5 * 15 * (shearmodulus[itype][itype]/wvolume[i]) *
-          omega_plus * (  dr - theta[i]* r0[i][jj] / 3.0 ) *
-          (  dr - theta[i]* r0[i][jj] / 3.0 ) * vfrac[j] * vfrac_scale;
-
-     }
-  }
-
-  return energy;
-}
-
 /* ----------------------------------------------------------------------
    memory usage of local atom-based arrays
 ------------------------------------------------------------------------- */
@@ -646,7 +557,7 @@ void PairPeriLPS::compute_dilatation()
   double half_lc = 0.5*lc;
 
   double **r0   = ((FixPeriNeigh *) modify->fix[ifix_peri])->r0;
-  int **partner = ((FixPeriNeigh *) modify->fix[ifix_peri])->partner;
+  tagint **partner = ((FixPeriNeigh *) modify->fix[ifix_peri])->partner;
   int *npartner = ((FixPeriNeigh *) modify->fix[ifix_peri])->npartner;
   double *wvolume = ((FixPeriNeigh *) modify->fix[ifix_peri])->wvolume;
 
@@ -714,14 +625,14 @@ void PairPeriLPS::compute_dilatation()
   }
 }
 
+
 /* ----------------------------------------------------------------------
    communication routines
-   ---------------------------------------------------------------------- */
+ ---------------------------------------------------------------------- */
 
-int PairPeriLPS::pack_comm(int n, int *list, double *buf,
-                           int pbc_flag, int *pbc)
+int PairPeriLPS::pack_forward_comm(int n, int *list, double *buf,
+                                   int pbc_flag, int *pbc)
 {
-
   int i,j,m;
 
   m = 0;
@@ -729,12 +640,12 @@ int PairPeriLPS::pack_comm(int n, int *list, double *buf,
     j = list[i];
     buf[m++] = theta[j];
   }
-  return 1;
+  return m;
 }
 
 /* ---------------------------------------------------------------------- */
 
-void PairPeriLPS::unpack_comm(int n, int first, double *buf)
+void PairPeriLPS::unpack_forward_comm(int n, int first, double *buf)
 {
   int i,m,last;
 

@@ -1,4 +1,4 @@
-/* ----------------------------------------------------------------------
+/* -*- c++ -*- ----------------------------------------------------------
    LAMMPS - Large-scale Atomic/Molecular Massively Parallel Simulator
    http://lammps.sandia.gov, Sandia National Laboratories
    Steve Plimpton, sjplimp@sandia.gov
@@ -131,6 +131,7 @@ class FixSRD : public Fix {
     double xctr[3];      // center point of bin, only used for triclinic
     double vsum[3];      // sum of v components for SRD particles in bin
     double random;       // random value if I am owner
+    double value[12];    // extra per-bin values
   };
 
   struct BinComm {
@@ -188,6 +189,10 @@ class FixSRD : public Fix {
   void vbin_comm(int);
   void vbin_pack(BinAve *, int, int *, double *);
   void vbin_unpack(double *, BinAve *, int, int *);
+
+  void xbin_comm(int, int);
+  void xbin_pack(BinAve *, int, int *, double *, int);
+  void xbin_unpack(double *, BinAve *, int, int *, int);
 
   void collisions_single();
   void collisions_multi();
@@ -271,9 +276,9 @@ Self-explanatory.
 
 E: Fix srd requires ghost atoms store velocity
 
-Use the communicate vel yes command to enable this.
+Use the comm_modify vel yes command to enable this.
 
-E: Fix SRD no-slip requires atom attribute torque
+E: Fix srd no-slip requires atom attribute torque
 
 This is because the SRD collisions will impart torque to the solute
 particles.
@@ -282,6 +287,10 @@ E: Cannot change timestep once fix srd is setup
 
 This is because various SRD properties depend on the timestep
 size.
+
+E: Fix srd can only currently be used with comm_style brick
+
+This is a current restriction in LAMMPS.
 
 E: Cannot use fix wall/srd more than once
 
@@ -340,13 +349,23 @@ W: SRD particle %d started inside big particle %d on step %ld bounce %d
 See the inside keyword if you want this message to be an error vs
 warning.
 
+E: SRD particle %d started inside wall %d on step %ld bounce %d
+
+See the inside keyword if you want this message to be an error vs
+warning.
+
+W: SRD particle %d started inside wall %d on step %ld bounce %d
+
+See the inside keyword if you want this message to be an error vs
+warning.
+
 E: Bad quadratic solve for particle/line collision
 
-This is an internal error.  It should nornally not occur.
+This is an internal error.  It should normally not occur.
 
 E: Bad quadratic solve for particle/tri collision
 
-This is an internal error.  It should nornally not occur.
+This is an internal error.  It should normally not occur.
 
 W: Fix srd particle moved outside valid domain
 
@@ -358,7 +377,7 @@ Big particles must be extended spheriods or ellipsoids.
 
 E: Cannot use lines with fix srd unless overlap is set
 
-This is because line segements are connected to each other.
+This is because line segments are connected to each other.
 
 E: Cannot use tris with fix srd unless overlap is set
 

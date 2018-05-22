@@ -15,9 +15,9 @@
    Contributing author: Mike Brown (SNL)
 ------------------------------------------------------------------------- */
 
-#include "math.h"
-#include "stdio.h"
-#include "stdlib.h"
+#include <math.h>
+#include <stdio.h>
+#include <stdlib.h>
 #include "pair_lj_cut_coul_long_gpu.h"
 #include "atom.h"
 #include "atom_vec.h"
@@ -32,7 +32,7 @@
 #include "universe.h"
 #include "update.h"
 #include "domain.h"
-#include "string.h"
+#include <string.h>
 #include "kspace.h"
 #include "gpu_extra.h"
 
@@ -44,6 +44,8 @@
 #define A4       -1.453152027
 #define A5        1.061405429
 
+using namespace LAMMPS_NS;
+
 // External functions from cuda library for atom decomposition
 
 int ljcl_gpu_init(const int ntypes, double **cutsq, double **host_lj1,
@@ -54,11 +56,14 @@ int ljcl_gpu_init(const int ntypes, double **cutsq, double **host_lj1,
                   double **host_cut_ljsq, double host_cut_coulsq,
                   double *host_special_coul, const double qqrd2e,
                   const double g_ewald);
+void ljcl_gpu_reinit(const int ntypes, double **cutsq, double **host_lj1,
+                    double **host_lj2, double **host_lj3, double **host_lj4,
+                    double **offset, double **host_lj_cutsq);
 void ljcl_gpu_clear();
 int ** ljcl_gpu_compute_n(const int ago, const int inum,
                           const int nall, double **host_x, int *host_type,
-                          double *sublo, double *subhi, int *tag,
-                          int **nspecial, int **special, const bool eflag,
+                          double *sublo, double *subhi, tagint *tag,
+                          int **nspecial, tagint **special, const bool eflag,
                           const bool vflag, const bool eatom, const bool vatom,
                           int &host_start, int **ilist, int **jnum,
                           const double cpu_time, bool &success, double *host_q,
@@ -70,8 +75,6 @@ void ljcl_gpu_compute(const int ago, const int inum, const int nall,
                       const double cpu_time, bool &success, double *host_q,
                       const int nlocal, double *boxlo, double *prd);
 double ljcl_gpu_bytes();
-
-using namespace LAMMPS_NS;
 
 /* ---------------------------------------------------------------------- */
 
@@ -168,7 +171,7 @@ void PairLJCutCoulLongGPU::init_style()
   // insure use of KSpace long-range solver, set g_ewald
 
   if (force->kspace == NULL)
-    error->all(FLERR,"Pair style is incompatible with KSpace style");
+    error->all(FLERR,"Pair style requires a KSpace style");
   g_ewald = force->kspace->g_ewald;
 
   // setup force tables
@@ -186,10 +189,19 @@ void PairLJCutCoulLongGPU::init_style()
   GPU_EXTRA::check_flag(success,error,world);
 
   if (gpu_mode == GPU_FORCE) {
-    int irequest = neighbor->request(this);
+    int irequest = neighbor->request(this,instance_me);
     neighbor->requests[irequest]->half = 0;
     neighbor->requests[irequest]->full = 1;
   }
+}
+
+/* ---------------------------------------------------------------------- */
+
+void PairLJCutCoulLongGPU::reinit()
+{
+  Pair::reinit();
+
+  ljcl_gpu_reinit(atom->ntypes+1, cutsq, lj1, lj2, lj3, lj4, offset, cut_ljsq);
 }
 
 /* ---------------------------------------------------------------------- */

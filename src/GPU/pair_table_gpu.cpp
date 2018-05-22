@@ -15,9 +15,9 @@
    Contributing authors: Trung Dac Nguyen (ORNL)
 ------------------------------------------------------------------------- */
 
-#include "math.h"
-#include "stdio.h"
-#include "stdlib.h"
+#include <math.h>
+#include <stdio.h>
+#include <stdlib.h>
 #include "pair_table_gpu.h"
 #include "atom.h"
 #include "atom_vec.h"
@@ -32,13 +32,15 @@
 #include "universe.h"
 #include "update.h"
 #include "domain.h"
-#include "string.h"
+#include <string.h>
 #include "gpu_extra.h"
 
 #define LOOKUP 0
 #define LINEAR 1
 #define SPLINE 2
 #define BITMAP 3
+
+using namespace LAMMPS_NS;
 
 // External functions from cuda library for atom decomposition
 
@@ -51,8 +53,8 @@ int table_gpu_init(const int ntypes, double **cutsq,
 void table_gpu_clear();
 int ** table_gpu_compute_n(const int ago, const int inum, const int nall,
                            double **host_x, int *host_type, double *sublo,
-                           double *subhi, int *tag, int **nspecial,
-                           int **special, const bool eflag, const bool vflag,
+                           double *subhi, tagint *tag, int **nspecial,
+                           tagint **special, const bool eflag, const bool vflag,
                            const bool eatom, const bool vatom, int &host_start,
                            int **ilist, int **jnum, const double cpu_time,
                            bool &success);
@@ -63,14 +65,13 @@ void table_gpu_compute(const int ago, const int inum, const int nall,
                        const double cpu_time, bool &success);
 double table_gpu_bytes();
 
-using namespace LAMMPS_NS;
-
 /* ---------------------------------------------------------------------- */
 
 PairTableGPU::PairTableGPU(LAMMPS *lmp) : PairTable(lmp),
                                           gpu_mode(GPU_FORCE)
 {
   respa_enable = 0;
+  reinitflag = 0;
   cpu_time = 0.0;
   GPU_EXTRA::gpu_ready(lmp->modify, lmp->error);
 }
@@ -226,7 +227,7 @@ void PairTableGPU::init_style()
   GPU_EXTRA::check_flag(success,error,world);
 
   if (gpu_mode == GPU_FORCE) {
-    int irequest = neighbor->request(this);
+    int irequest = neighbor->request(this,instance_me);
     neighbor->requests[irequest]->half = 0;
     neighbor->requests[irequest]->full = 1;
   }

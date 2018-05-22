@@ -15,9 +15,9 @@
    Contributing authors: Leo Silbert (SNL), Gary Grest (SNL)
 ------------------------------------------------------------------------- */
 
-#include "math.h"
-#include "stdio.h"
-#include "string.h"
+#include <math.h>
+#include <stdio.h>
+#include <string.h>
 #include "pair_gran_hooke.h"
 #include "atom.h"
 #include "force.h"
@@ -25,6 +25,7 @@
 #include "neighbor.h"
 #include "neigh_list.h"
 #include "comm.h"
+#include "memory.h"
 
 using namespace LAMMPS_NS;
 
@@ -40,7 +41,7 @@ PairGranHooke::PairGranHooke(LAMMPS *lmp) : PairGranHookeHistory(lmp)
 
 void PairGranHooke::compute(int eflag, int vflag)
 {
-  int i,j,ii,jj,inum,jnum,itype,jtype;
+  int i,j,ii,jj,inum,jnum;
   double xtmp,ytmp,ztmp,delx,dely,delz,fx,fy,fz;
   double radi,radj,radsum,rsq,r,rinv,rsqinv;
   double vr1,vr2,vr3,vnnr,vn1,vn2,vn3,vt1,vt2,vt3;
@@ -53,12 +54,23 @@ void PairGranHooke::compute(int eflag, int vflag)
   if (eflag || vflag) ev_setup(eflag,vflag);
   else evflag = vflag_fdotr = 0;
 
-  // update rigid body ptrs and values for ghost atoms if using FixRigid masses
+  // update rigid body info for owned & ghost atoms if using FixRigid masses
+  // body[i] = which body atom I is in, -1 if none
+  // mass_body = mass of each rigid body
 
   if (fix_rigid && neighbor->ago == 0) {
     int tmp;
-    body = (int *) fix_rigid->extract("body",tmp);
-    mass_rigid = (double *) fix_rigid->extract("masstotal",tmp);
+    int *body = (int *) fix_rigid->extract("body",tmp);
+    double *mass_body = (double *) fix_rigid->extract("masstotal",tmp);
+    if (atom->nmax > nmax) {
+      memory->destroy(mass_rigid);
+      nmax = atom->nmax;
+      memory->create(mass_rigid,nmax,"pair:mass_rigid");
+    }
+    int nlocal = atom->nlocal;
+    for (i = 0; i < nlocal; i++)
+      if (body[i] >= 0) mass_rigid[i] = mass_body[body[i]];
+      else mass_rigid[i] = 0.0;
     comm->forward_comm_pair(this);
   }
 
@@ -69,8 +81,6 @@ void PairGranHooke::compute(int eflag, int vflag)
   double **torque = atom->torque;
   double *radius = atom->radius;
   double *rmass = atom->rmass;
-  double *mass = atom->mass;
-  int *type = atom->type;
   int *mask = atom->mask;
   int nlocal = atom->nlocal;
   int newton_pair = force->newton_pair;
@@ -136,16 +146,11 @@ void PairGranHooke::compute(int eflag, int vflag)
         // if I or J part of rigid body, use body mass
         // if I or J is frozen, meff is other particle
 
-        if (rmass) {
-          mi = rmass[i];
-          mj = rmass[j];
-        } else {
-          mi = mass[type[i]];
-          mj = mass[type[j]];
-        }
+        mi = rmass[i];
+        mj = rmass[j];
         if (fix_rigid) {
-          if (body[i] >= 0) mi = mass_rigid[body[i]];
-          if (body[j] >= 0) mj = mass_rigid[body[j]];
+          if (mass_rigid[i] > 0.0) mi = mass_rigid[i];
+          if (mass_rigid[j] > 0.0) mj = mass_rigid[j];
         }
 
         meff = mi*mj / (mi+mj);
@@ -223,7 +228,7 @@ double PairGranHooke::single(int i, int j, int itype, int jtype, double rsq,
   double vr1,vr2,vr3,vnnr,vn1,vn2,vn3,vt1,vt2,vt3,wr1,wr2,wr3;
   double vtr1,vtr2,vtr3,vrel;
   double mi,mj,meff,damp,ccel;
-  double fn,fs,ft,fs1,fs2,fs3;
+  double fn,fs,ft;
 
   double *radius = atom->radius;
   radi = radius[i];
@@ -234,7 +239,7 @@ double PairGranHooke::single(int i, int j, int itype, int jtype, double rsq,
 
   if (rsq >= radsum*radsum) {
     fforce = 0.0;
-    svector[0] = svector[1] = svector[2] = svector[3] = 0.0;
+    for (int m = 0; m < single_extra; m++) svector[m] = 0.0;
     return 0.0;
   }
 
@@ -279,25 +284,14 @@ double PairGranHooke::single(int i, int j, int itype, int jtype, double rsq,
   // if I or J is frozen, meff is other particle
 
   double *rmass = atom->rmass;
-  double *mass = atom->mass;
-  int *type = atom->type;
   int *mask = atom->mask;
 
-  if (rmass) {
-    mi = rmass[i];
-    mj = rmass[j];
-  } else {
-    mi = mass[type[i]];
-    mj = mass[type[j]];
-  }
+  mi = rmass[i];
+  mj = rmass[j];
   if (fix_rigid) {
-    // NOTE: need to make sure ghost atoms have updated body?
-    // depends on where single() is called from
-    int tmp;
-    body = (int *) fix_rigid->extract("body",tmp);
-    mass_rigid = (double *) fix_rigid->extract("masstotal",tmp);
-    if (body[i] >= 0) mi = mass_rigid[body[i]];
-    if (body[j] >= 0) mj = mass_rigid[body[j]];
+    // NOTE: insure mass_rigid is current for owned+ghost atoms?
+    if (mass_rigid[i] > 0.0) mi = mass_rigid[i];
+    if (mass_rigid[j] > 0.0) mj = mass_rigid[j];
   }
 
   meff = mi*mj / (mi+mj);
@@ -324,14 +318,25 @@ double PairGranHooke::single(int i, int j, int itype, int jtype, double rsq,
   if (vrel != 0.0) ft = MIN(fn,fs) / vrel;
   else ft = 0.0;
 
-  // set all forces and return no energy
+  // set force and return no energy
 
   fforce = ccel;
+
+
+  // set single_extra quantities
+
   svector[0] = -ft*vtr1;
   svector[1] = -ft*vtr2;
   svector[2] = -ft*vtr3;
   svector[3] = sqrt(svector[0]*svector[0] +
                     svector[1]*svector[1] +
                     svector[2]*svector[2]);
+  svector[4] = vn1;
+  svector[5] = vn2;
+  svector[6] = vn3;
+  svector[7] = vt1;
+  svector[8] = vt2;
+  svector[9] = vt3;
+
   return 0.0;
 }

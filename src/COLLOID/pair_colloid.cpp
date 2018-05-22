@@ -15,24 +15,29 @@
    Contributing author: Pieter in 't Veld (SNL)
 ------------------------------------------------------------------------- */
 
-#include "math.h"
-#include "stdio.h"
-#include "stdlib.h"
-#include "string.h"
+#include <math.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
 #include "pair_colloid.h"
 #include "atom.h"
 #include "comm.h"
 #include "force.h"
 #include "neighbor.h"
 #include "neigh_list.h"
+#include "math_special.h"
 #include "memory.h"
 #include "error.h"
 
 using namespace LAMMPS_NS;
+using namespace MathSpecial;
 
 /* ---------------------------------------------------------------------- */
 
-PairColloid::PairColloid(LAMMPS *lmp) : Pair(lmp) {}
+PairColloid::PairColloid(LAMMPS *lmp) : Pair(lmp)
+{
+  writedata = 1;
+}
 
 /* ---------------------------------------------------------------------- */
 
@@ -139,7 +144,8 @@ void PairColloid::compute(int eflag, int vflag)
           evdwl = 2.0/9.0*fR *
             (1.0-(K[1]*(K[1]*(K[1]/3.0+3.0*K[2])+4.2*K[4])+K[2]*K[4]) *
              sigma6[itype][jtype]/K[6]) - offset[itype][jtype];
-        if (rsq <= K[1]) error->one(FLERR,"Overlapping small/large in pair colloid");
+        if (rsq <= K[1])
+          error->one(FLERR,"Overlapping small/large in pair colloid");
         break;
 
       case LARGE_LARGE:
@@ -155,10 +161,10 @@ void PairColloid::compute(int eflag, int vflag)
         K[6] = K[2]-r;
         K[7] = 1.0/(K[3]*K[4]);
         K[8] = 1.0/(K[5]*K[6]);
-        g[0] = pow(K[3],-7.0);
-        g[1] = pow(K[4],-7.0);
-        g[2] = pow(K[5],-7.0);
-        g[3] = pow(K[6],-7.0);
+        g[0] = powint(K[3],-7);
+        g[1] = powint(K[4],-7);
+        g[2] = powint(K[5],-7);
+        g[3] = powint(K[6],-7);
         h[0] = ((K[3]+5.0*K[1])*K[3]+30.0*K[0])*g[0];
         h[1] = ((K[4]+5.0*K[1])*K[4]+30.0*K[0])*g[1];
         h[2] = ((K[5]+5.0*K[2])*K[5]-30.0*K[0])*g[2];
@@ -177,7 +183,8 @@ void PairColloid::compute(int eflag, int vflag)
         if (eflag)
           evdwl += a12[itype][jtype]/6.0 *
             (2.0*K[0]*(K[7]+K[8])-log(K[8]/K[7])) - offset[itype][jtype];
-        if (r <= K[1]) error->one(FLERR,"Overlapping large/large in pair colloid");
+        if (r <= K[1])
+          error->one(FLERR,"Overlapping large/large in pair colloid");
         break;
       }
 
@@ -242,14 +249,14 @@ void PairColloid::settings(int narg, char **arg)
 {
   if (narg != 1) error->all(FLERR,"Illegal pair_style command");
 
-  cut_global = force->numeric(arg[0]);
+  cut_global = force->numeric(FLERR,arg[0]);
 
   // reset cutoffs that have been explicitly set
 
   if (allocated) {
     int i,j;
     for (i = 1; i <= atom->ntypes; i++)
-      for (j = i+1; j <= atom->ntypes; j++)
+      for (j = i; j <= atom->ntypes; j++)
         if (setflag[i][j]) cut[i][j] = cut_global;
   }
 }
@@ -265,16 +272,16 @@ void PairColloid::coeff(int narg, char **arg)
   if (!allocated) allocate();
 
   int ilo,ihi,jlo,jhi;
-  force->bounds(arg[0],atom->ntypes,ilo,ihi);
-  force->bounds(arg[1],atom->ntypes,jlo,jhi);
+  force->bounds(FLERR,arg[0],atom->ntypes,ilo,ihi);
+  force->bounds(FLERR,arg[1],atom->ntypes,jlo,jhi);
 
-  double a12_one = force->numeric(arg[2]);
-  double sigma_one = force->numeric(arg[3]);
-  double d1_one = force->numeric(arg[4]);
-  double d2_one = force->numeric(arg[5]);
+  double a12_one = force->numeric(FLERR,arg[2]);
+  double sigma_one = force->numeric(FLERR,arg[3]);
+  double d1_one = force->numeric(FLERR,arg[4]);
+  double d2_one = force->numeric(FLERR,arg[5]);
 
   double cut_one = cut_global;
-  if (narg == 7) cut_one = force->numeric(arg[6]);
+  if (narg == 7) cut_one = force->numeric(FLERR,arg[6]);
 
   if (d1_one < 0.0 || d2_one < 0.0)
     error->all(FLERR,"Invalid d1 or d2 value for pair colloid coeff");
@@ -347,7 +354,7 @@ double PairColloid::init_one(int i, int j)
   lj4[j][i] = lj4[i][j] = 4.0 * epsilon * sigma6[i][j];
 
   offset[j][i] = offset[i][j] = 0.0;
-  if (offset_flag) {
+  if (offset_flag && (cut[i][j] > 0.0)) {
     double tmp;
     offset[j][i] = offset[i][j] =
       single(0,0,i,j,cut[i][j]*cut[i][j],0.0,1.0,tmp);
@@ -438,6 +445,28 @@ void PairColloid::read_restart_settings(FILE *fp)
   MPI_Bcast(&mix_flag,1,MPI_INT,0,world);
 }
 
+/* ----------------------------------------------------------------------
+   proc 0 writes to data file
+------------------------------------------------------------------------- */
+
+void PairColloid::write_data(FILE *fp)
+{
+  for (int i = 1; i <= atom->ntypes; i++)
+    fprintf(fp,"%d %g %g %g %g\n",i,a12[i][i],sigma[i][i],d1[i][i],d2[i][i]);
+}
+
+/* ----------------------------------------------------------------------
+   proc 0 writes all pairs to data file
+------------------------------------------------------------------------- */
+
+void PairColloid::write_data_all(FILE *fp)
+{
+  for (int i = 1; i <= atom->ntypes; i++)
+    for (int j = i; j <= atom->ntypes; j++)
+      fprintf(fp,"%d %g %g %g %g %g\n",i,
+              a12[i][j],sigma[i][j],d1[i][j],d2[i][j],cut[i][j]);
+}
+
 /* ---------------------------------------------------------------------- */
 
 double PairColloid::single(int i, int j, int itype, int jtype, double rsq,
@@ -488,10 +517,10 @@ double PairColloid::single(int i, int j, int itype, int jtype, double rsq,
     K[6] = K[2]-r;
     K[7] = 1.0/(K[3]*K[4]);
     K[8] = 1.0/(K[5]*K[6]);
-    g[0] = pow(K[3],-7.0);
-    g[1] = pow(K[4],-7.0);
-    g[2] = pow(K[5],-7.0);
-    g[3] = pow(K[6],-7.0);
+    g[0] = powint(K[3],-7);
+    g[1] = powint(K[4],-7);
+    g[2] = powint(K[5],-7);
+    g[3] = powint(K[6],-7);
     h[0] = ((K[3]+5.0*K[1])*K[3]+30.0*K[0])*g[0];
     h[1] = ((K[4]+5.0*K[1])*K[4]+30.0*K[0])*g[1];
     h[2] = ((K[5]+5.0*K[2])*K[5]-30.0*K[0])*g[2];

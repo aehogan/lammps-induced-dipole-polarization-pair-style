@@ -15,10 +15,10 @@
    Contributing author: Stan Moore (SNL), Paul Crozier (SNL)
 ------------------------------------------------------------------------- */
 
-#include "math.h"
-#include "stdio.h"
-#include "stdlib.h"
-#include "string.h"
+#include <math.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
 #include "pair_born_coul_msm.h"
 #include "atom.h"
 #include "comm.h"
@@ -39,6 +39,15 @@ PairBornCoulMSM::PairBornCoulMSM(LAMMPS *lmp) : PairBornCoulLong(lmp)
 {
   ewaldflag = pppmflag = 0;
   msmflag = 1;
+  nmax = 0;
+  ftmp = NULL;
+}
+
+/* ---------------------------------------------------------------------- */
+
+PairBornCoulMSM::~PairBornCoulMSM()
+{
+  if (ftmp) memory->destroy(ftmp);
 }
 
 /* ---------------------------------------------------------------------- */
@@ -46,11 +55,31 @@ PairBornCoulMSM::PairBornCoulMSM(LAMMPS *lmp) : PairBornCoulLong(lmp)
 void PairBornCoulMSM::compute(int eflag, int vflag)
 {
   int i,j,ii,jj,inum,jnum,itype,jtype;
-  double qtmp,xtmp,ytmp,ztmp,delx,dely,delz,evdwl,ecoul,fpair;
+  double qtmp,xtmp,ytmp,ztmp,delx,dely,delz,evdwl,ecoul,fpair,fcoul;
   double rsq,r2inv,r6inv,forcecoul,forceborn,factor_coul,factor_lj;
   double egamma,fgamma,prefactor;
   double r,rexp;
   int *ilist,*jlist,*numneigh,**firstneigh;
+  int eflag_old = eflag;
+
+  if (force->kspace->scalar_pressure_flag && vflag) {
+    if (vflag > 2)
+      error->all(FLERR,"Must use 'kspace_modify pressure/scalar no' to "
+        "obtain per-atom virial with kspace_style MSM");
+
+    if (atom->nmax > nmax) {
+      if (ftmp) memory->destroy(ftmp);
+      nmax = atom->nmax;
+      memory->create(ftmp,nmax,3,"pair:ftmp");
+    }
+    memset(&ftmp[0][0],0,nmax*3*sizeof(double));
+
+    // must switch on global energy computation if not already on
+
+    if (eflag == 0 || eflag == 2) {
+      eflag++;
+    }
+  }
 
   evdwl = ecoul = 0.0;
   if (eflag || vflag) ev_setup(eflag,vflag);
@@ -97,9 +126,9 @@ void PairBornCoulMSM::compute(int eflag, int vflag)
 
       if (rsq < cutsq[itype][jtype]) {
         r2inv = 1.0/rsq;
+        r = sqrt(rsq);
 
         if (rsq < cut_coulsq) {
-          r = sqrt(rsq);
           prefactor = qqrd2e * qtmp*q[j]/r;
           egamma = 1.0 - (r/cut_coul)*force->kspace->gamma(r/cut_coul);
           fgamma = 1.0 + (rsq/cut_coulsq)*force->kspace->dgamma(r/cut_coul);
@@ -114,15 +143,41 @@ void PairBornCoulMSM::compute(int eflag, int vflag)
             + born3[itype][jtype]*r2inv*r6inv;
         } else forceborn = 0.0;
 
-        fpair = (forcecoul + factor_lj*forceborn) * r2inv;
+        if (!(force->kspace->scalar_pressure_flag && vflag)) {
+          fpair = (forcecoul + factor_lj*forceborn) * r2inv;
 
-        f[i][0] += delx*fpair;
-        f[i][1] += dely*fpair;
-        f[i][2] += delz*fpair;
-        if (newton_pair || j < nlocal) {
-          f[j][0] -= delx*fpair;
-          f[j][1] -= dely*fpair;
-          f[j][2] -= delz*fpair;
+          f[i][0] += delx*fpair;
+          f[i][1] += dely*fpair;
+          f[i][2] += delz*fpair;
+          if (newton_pair || j < nlocal) {
+            f[j][0] -= delx*fpair;
+            f[j][1] -= dely*fpair;
+            f[j][2] -= delz*fpair;
+          }
+        } else {
+          // separate Born and Coulombic forces
+
+          fpair = (factor_lj*forceborn) * r2inv;
+
+          f[i][0] += delx*fpair;
+          f[i][1] += dely*fpair;
+          f[i][2] += delz*fpair;
+          if (newton_pair || j < nlocal) {
+            f[j][0] -= delx*fpair;
+            f[j][1] -= dely*fpair;
+            f[j][2] -= delz*fpair;
+          }
+
+          fcoul = (forcecoul) * r2inv;
+
+          ftmp[i][0] += delx*fcoul;
+          ftmp[i][1] += dely*fcoul;
+          ftmp[i][2] += delz*fcoul;
+          if (newton_pair || j < nlocal) {
+            ftmp[j][0] -= delx*fcoul;
+            ftmp[j][1] -= dely*fcoul;
+            ftmp[j][2] -= delz*fcoul;
+          }
         }
 
         if (eflag) {
@@ -130,7 +185,7 @@ void PairBornCoulMSM::compute(int eflag, int vflag)
             ecoul = prefactor*egamma;
             if (factor_coul < 1.0) ecoul -= (1.0-factor_coul)*prefactor;
           } else ecoul = 0.0;
-          if (rsq < cut_ljsq[itype][jtype]) {
+          if (eflag_old && rsq < cut_ljsq[itype][jtype]) {
             evdwl = a[itype][jtype]*rexp - c[itype][jtype]*r6inv
               + d[itype][jtype]*r6inv*r2inv - offset[itype][jtype];
             evdwl *= factor_lj;
@@ -144,6 +199,15 @@ void PairBornCoulMSM::compute(int eflag, int vflag)
   }
 
   if (vflag_fdotr) virial_fdotr_compute();
+
+  if (force->kspace->scalar_pressure_flag && vflag) {
+    for (i = 0; i < 3; i++) virial[i] += force->pair->eng_coul/3.0;
+    for (int i = 0; i < nmax; i++) {
+      f[i][0] += ftmp[i][0];
+      f[i][1] += ftmp[i][1];
+      f[i][2] += ftmp[i][2];
+    }
+  }
 }
 
 /* ---------------------------------------------------------------------- */
@@ -193,6 +257,6 @@ double PairBornCoulMSM::single(int i, int j, int itype, int jtype,
 void *PairBornCoulMSM::extract(const char *str, int &dim)
 {
   dim = 0;
-  if (strcmp(str,"cut_msm") == 0) return (void *) &cut_coul;
+  if (strcmp(str,"cut_coul") == 0) return (void *) &cut_coul;
   return NULL;
 }

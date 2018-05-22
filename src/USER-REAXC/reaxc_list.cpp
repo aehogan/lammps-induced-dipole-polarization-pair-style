@@ -24,15 +24,9 @@
   <http://www.gnu.org/licenses/>.
   ----------------------------------------------------------------------*/
 
-#include "pair_reax_c.h"
-#if defined(PURE_REAX)
-#include "list.h"
-#include "tool_box.h"
-#elif defined(LAMMPS_REAX)
+#include "pair_reaxc.h"
 #include "reaxc_list.h"
 #include "reaxc_tool_box.h"
-#endif
-
 
 /************* allocate list space ******************/
 int Make_List(int n, int num_intrs, int type, reax_list *l, MPI_Comm comm)
@@ -42,46 +36,52 @@ int Make_List(int n, int num_intrs, int type, reax_list *l, MPI_Comm comm)
   l->n = n;
   l->num_intrs = num_intrs;
 
+  if (l->index) sfree(l->index, "list:index");
+  if (l->end_index) sfree(l->end_index, "list:end_index");
   l->index = (int*) smalloc( n * sizeof(int), "list:index", comm );
   l->end_index = (int*) smalloc( n * sizeof(int), "list:end_index", comm );
 
   l->type = type;
-#if defined(DEBUG_FOCUS)
-  fprintf( stderr, "list: n=%d num_intrs=%d type=%d\n", n, num_intrs, type );
-#endif
 
   switch(l->type) {
   case TYP_VOID:
+    if (l->select.v) sfree(l->select.v, "list:v");
     l->select.v = (void*) smalloc(l->num_intrs * sizeof(void*), "list:v", comm);
     break;
 
   case TYP_THREE_BODY:
+    if (l->select.three_body_list) sfree(l->select.three_body_list,"list:three_bodies");
     l->select.three_body_list = (three_body_interaction_data*)
       smalloc( l->num_intrs * sizeof(three_body_interaction_data),
                "list:three_bodies", comm );
     break;
 
   case TYP_BOND:
+    if (l->select.bond_list) sfree(l->select.bond_list,"list:bonds");
     l->select.bond_list = (bond_data*)
       smalloc( l->num_intrs * sizeof(bond_data), "list:bonds", comm );
     break;
 
   case TYP_DBO:
+    if (l->select.dbo_list) sfree(l->select.dbo_list,"list:dbonds");
     l->select.dbo_list = (dbond_data*)
       smalloc( l->num_intrs * sizeof(dbond_data), "list:dbonds", comm );
     break;
 
   case TYP_DDELTA:
+    if (l->select.dDelta_list) sfree(l->select.dDelta_list,"list:dDeltas");
     l->select.dDelta_list = (dDelta_data*)
       smalloc( l->num_intrs * sizeof(dDelta_data), "list:dDeltas", comm );
     break;
 
   case TYP_FAR_NEIGHBOR:
+    if (l->select.far_nbr_list) sfree(l->select.far_nbr_list,"list:far_nbrs");
     l->select.far_nbr_list = (far_neighbor_data*)
       smalloc(l->num_intrs * sizeof(far_neighbor_data), "list:far_nbrs", comm);
     break;
 
   case TYP_HBOND:
+    if (l->select.hbond_list) sfree(l->select.hbond_list,"list:hbonds");
     l->select.hbond_list = (hbond_data*)
       smalloc( l->num_intrs * sizeof(hbond_data), "list:hbonds", comm );
     break;
@@ -103,28 +103,37 @@ void Delete_List( reax_list *l, MPI_Comm comm )
 
   sfree( l->index, "list:index" );
   sfree( l->end_index, "list:end_index" );
+  l->index = NULL;
+  l->end_index = NULL;
 
   switch(l->type) {
   case TYP_VOID:
     sfree( l->select.v, "list:v" );
+    l->select.v = NULL;
     break;
   case TYP_HBOND:
     sfree( l->select.hbond_list, "list:hbonds" );
+    l->select.hbond_list = NULL;
     break;
   case TYP_FAR_NEIGHBOR:
     sfree( l->select.far_nbr_list, "list:far_nbrs" );
+    l->select.far_nbr_list = NULL;
     break;
   case TYP_BOND:
     sfree( l->select.bond_list, "list:bonds" );
+    l->select.bond_list = NULL;
     break;
   case TYP_DBO:
     sfree( l->select.dbo_list, "list:dbos" );
+    l->select.dbo_list = NULL;
     break;
   case TYP_DDELTA:
     sfree( l->select.dDelta_list, "list:dDeltas" );
+    l->select.dDelta_list = NULL;
     break;
   case TYP_THREE_BODY:
     sfree( l->select.three_body_list, "list:three_bodies" );
+    l->select.three_body_list = NULL;
     break;
 
   default:
@@ -133,30 +142,3 @@ void Delete_List( reax_list *l, MPI_Comm comm )
   }
 }
 
-
-#if defined(PURE_REAX)
-inline int Num_Entries( int i, reax_list *l )
-{
-  return l->end_index[i] - l->index[i];
-}
-
-inline int Start_Index( int i, reax_list *l )
-{
-  return l->index[i];
-}
-
-inline int End_Index( int i, reax_list *l )
-{
-  return l->end_index[i];
-}
-
-inline void Set_Start_Index( int i, int val, reax_list *l )
-{
-  l->index[i] = val;
-}
-
-inline void Set_End_Index( int i, int val, reax_list *l )
-{
-  l->end_index[i] = val;
-}
-#endif

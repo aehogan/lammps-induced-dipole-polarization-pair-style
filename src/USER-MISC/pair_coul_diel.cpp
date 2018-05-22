@@ -14,10 +14,10 @@
    Contributiong authors: Arben Jusufi, Axel Kohlmeyer (Temple U.)
 ------------------------------------------------------------------------- */
 
-#include "math.h"
-#include "stdio.h"
-#include "stdlib.h"
-#include "string.h"
+#include <math.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
 #include "pair_coul_diel.h"
 #include "atom.h"
 #include "comm.h"
@@ -161,14 +161,14 @@ void PairCoulDiel::settings(int narg, char **arg)
 {
   if (narg != 1) error->all(FLERR,"Illegal pair_style command");
 
-  cut_global = force->numeric(arg[0]);
+  cut_global = force->numeric(FLERR,arg[0]);
 
   // reset cutoffs that have been explicitly set
 
   if (allocated) {
     int i,j;
     for (i = 1; i <= atom->ntypes; i++)
-      for (j = i+1; j <= atom->ntypes; j++)
+      for (j = i; j <= atom->ntypes; j++)
         if (setflag[i][j]) cut[i][j] = cut_global;
   }
 }
@@ -183,15 +183,15 @@ void PairCoulDiel::coeff(int narg, char **arg)
   if (!allocated) allocate();
 
   int ilo,ihi,jlo,jhi;
-  force->bounds(arg[0],atom->ntypes,ilo,ihi);
-  force->bounds(arg[1],atom->ntypes,jlo,jhi);
+  force->bounds(FLERR,arg[0],atom->ntypes,ilo,ihi);
+  force->bounds(FLERR,arg[1],atom->ntypes,jlo,jhi);
 
-  eps_s = force->numeric(arg[2]);
-  double rme_one =force->numeric(arg[3]);
-  double sigmae_one = force->numeric(arg[4]);
+  eps_s = force->numeric(FLERR,arg[2]);
+  double rme_one =force->numeric(FLERR,arg[3]);
+  double sigmae_one = force->numeric(FLERR,arg[4]);
 
   double cut_one = cut_global;
-  if (narg == 6) cut_one = force->numeric(arg[5]);
+  if (narg == 6) cut_one = force->numeric(FLERR,arg[5]);
 
   int count = 0;
   for (int i = ilo; i <= ihi; i++) {
@@ -219,7 +219,7 @@ void PairCoulDiel::init_style()
   if (!atom->q_flag)
     error->all(FLERR,"Pair style coul/diel requires atom attribute q");
 
-  int irequest = neighbor->request(this);
+  neighbor->request(this,instance_me);
 }
 
 /* ----------------------------------------------------------------------
@@ -235,7 +235,7 @@ double PairCoulDiel::init_one(int i, int j)
   double *q = atom->q;
   double qqrd2e = force->qqrd2e;
 
-  if (offset_flag) {
+  if (offset_flag && (cut[i][j] > 0.0)) {
     double rarg = (cut[i][j]-rme[i][j])/sigmae[i][j];
     double epsr=a_eps+b_eps*tanh(rarg);
     offset[i][j] = qqrd2e*q[i]*q[j]*((eps_s/epsr) -1.)/cut[i][j];

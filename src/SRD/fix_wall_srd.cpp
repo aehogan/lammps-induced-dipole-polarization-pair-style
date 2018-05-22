@@ -11,8 +11,8 @@
    See the README file in the top-level LAMMPS directory.
 ------------------------------------------------------------------------- */
 
-#include "stdlib.h"
-#include "string.h"
+#include <stdlib.h>
+#include <string.h>
 #include "fix_wall_srd.h"
 #include "atom.h"
 #include "modify.h"
@@ -25,6 +25,7 @@
 #include "variable.h"
 #include "memory.h"
 #include "error.h"
+#include "force.h"
 
 using namespace LAMMPS_NS;
 using namespace FixConst;
@@ -35,7 +36,7 @@ enum{NONE,EDGE,CONSTANT,VARIABLE};
 /* ---------------------------------------------------------------------- */
 
 FixWallSRD::FixWallSRD(LAMMPS *lmp, int narg, char **arg) :
-  Fix(lmp, narg, arg)
+  Fix(lmp, narg, arg), nwall(0), fwall(NULL), fwall_all(NULL)
 {
   if (narg < 4) error->all(FLERR,"Illegal fix wall/srd command");
 
@@ -59,7 +60,7 @@ FixWallSRD::FixWallSRD(LAMMPS *lmp, int narg, char **arg) :
       else if (strcmp(arg[iarg],"zlo") == 0) newwall = ZLO;
       else if (strcmp(arg[iarg],"zhi") == 0) newwall = ZHI;
 
-      for (int m = 0; m < nwall; m++)
+      for (int m = 0; (m < nwall) && (m < 6); m++)
         if (newwall == wallwhich[m])
           error->all(FLERR,"Wall defined twice in fix wall/srd command");
 
@@ -77,7 +78,7 @@ FixWallSRD::FixWallSRD(LAMMPS *lmp, int narg, char **arg) :
         strcpy(varstr[nwall],&arg[iarg+1][2]);
       } else {
         wallstyle[nwall] = CONSTANT;
-        coord0[nwall] = atof(arg[iarg+1]);
+        coord0[nwall] = force->numeric(FLERR,arg[iarg+1]);
       }
 
       nwall++;
@@ -127,9 +128,6 @@ FixWallSRD::FixWallSRD(LAMMPS *lmp, int narg, char **arg) :
     if (wallstyle[m] == CONSTANT) flag = 1;
 
   if (flag) {
-    if (scaleflag && domain->lattice == NULL)
-      error->all(FLERR,"Use of fix wall with undefined lattice");
-
     double xscale,yscale,zscale;
     if (scaleflag) {
       xscale = domain->lattice->xlattice;

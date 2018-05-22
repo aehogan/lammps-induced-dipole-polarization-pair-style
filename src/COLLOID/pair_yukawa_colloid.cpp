@@ -15,8 +15,8 @@
    Contributing authors: Randy Schunk (Sandia)
 ------------------------------------------------------------------------- */
 
-#include "math.h"
-#include "stdlib.h"
+#include <math.h>
+#include <stdlib.h>
 #include "pair_yukawa_colloid.h"
 #include "atom.h"
 #include "atom_vec.h"
@@ -31,7 +31,10 @@ using namespace LAMMPS_NS;
 
 /* ---------------------------------------------------------------------- */
 
-PairYukawaColloid::PairYukawaColloid(LAMMPS *lmp) : PairYukawa(lmp) {}
+PairYukawaColloid::PairYukawaColloid(LAMMPS *lmp) : PairYukawa(lmp)
+{
+  writedata = 1;
+}
 
 /* ---------------------------------------------------------------------- */
 
@@ -39,7 +42,7 @@ void PairYukawaColloid::compute(int eflag, int vflag)
 {
   int i,j,ii,jj,inum,jnum,itype,jtype;
   double xtmp,ytmp,ztmp,delx,dely,delz,evdwl,fpair,radi,radj;
-  double rsq,r2inv,r,rinv,screening,forceyukawa,factor;
+  double rsq,r,rinv,screening,forceyukawa,factor;
   int *ilist,*jlist,*numneigh,**firstneigh;
 
   evdwl = 0.0;
@@ -84,7 +87,6 @@ void PairYukawaColloid::compute(int eflag, int vflag)
       radj = radius[j];
 
       if (rsq < cutsq[itype][jtype]) {
-        r2inv = 1.0/rsq;
         r = sqrt(rsq);
         rinv = 1.0/r;
         screening = exp(-kappa*(r-(radi+radj)));
@@ -124,7 +126,7 @@ void PairYukawaColloid::init_style()
   if (!atom->sphere_flag)
     error->all(FLERR,"Pair yukawa/colloid requires atom style sphere");
 
-  neighbor->request(this);
+  neighbor->request(this,instance_me);
 
   // require that atom radii are identical within each type
 
@@ -145,7 +147,7 @@ double PairYukawaColloid::init_one(int i, int j)
     cut[i][j] = mix_distance(cut[i][i],cut[j][j]);
   }
 
-  if (offset_flag) {
+  if (offset_flag && (kappa != 0.0)) {
     double screening = exp(-kappa * (cut[i][j] - (rad[i]+rad[j])));
     offset[i][j] = a[i][j]/kappa * screening;
   } else offset[i][j] = 0.0;
@@ -163,9 +165,8 @@ double PairYukawaColloid::single(int i, int j, int itype, int jtype,
                                  double factor_coul, double factor_lj,
                                  double &fforce)
 {
-  double r2inv,r,rinv,screening,forceyukawa,phi;
+  double r,rinv,screening,forceyukawa,phi;
 
-  r2inv = 1.0/rsq;
   r = sqrt(rsq);
   rinv = 1.0/r;
   screening = exp(-kappa*(r-(rad[itype]+rad[jtype])));

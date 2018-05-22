@@ -15,9 +15,9 @@
    Contributing author: Axel Kohlmeyer (Temple)
 ------------------------------------------------------------------------- */
 
-#include "math.h"
-#include "stdio.h"
-#include "stdlib.h"
+#include <math.h>
+#include <stdio.h>
+#include <stdlib.h>
 #include "pair_coul_long_gpu.h"
 #include "atom.h"
 #include "atom_vec.h"
@@ -32,7 +32,7 @@
 #include "universe.h"
 #include "update.h"
 #include "domain.h"
-#include "string.h"
+#include <string.h>
 #include "kspace.h"
 #include "gpu_extra.h"
 
@@ -44,17 +44,21 @@
 #define A4       -1.453152027
 #define A5        1.061405429
 
+using namespace LAMMPS_NS;
+
 // External functions from cuda library for atom decomposition
 
-int cl_gpu_init(const int nlocal, const int nall, const int max_nbors,
+int cl_gpu_init(const int ntypes, double **scale,
+                const int nlocal, const int nall, const int max_nbors,
                 const int maxspecial, const double cell_size, int &gpu_mode,
                 FILE *screen, double host_cut_coulsq, double *host_special_coul,
                 const double qqrd2e, const double g_ewald);
+void cl_gpu_reinit(const int ntypes, double **scale);
 void cl_gpu_clear();
 int ** cl_gpu_compute_n(const int ago, const int inum,
                         const int nall, double **host_x, int *host_type,
-                        double *sublo, double *subhi, int *tag,
-                        int **nspecial, int **special, const bool eflag,
+                        double *sublo, double *subhi, tagint *tag,
+                        int **nspecial, tagint **special, const bool eflag,
                         const bool vflag, const bool eatom, const bool vatom,
                         int &host_start, int **ilist, int **jnum,
                         const double cpu_time, bool &success, double *host_q,
@@ -66,8 +70,6 @@ void cl_gpu_compute(const int ago, const int inum, const int nall,
                     const double cpu_time, bool &success, double *host_q,
                     const int nlocal, double *boxlo, double *prd);
 double cl_gpu_bytes();
-
-using namespace LAMMPS_NS;
 
 /* ---------------------------------------------------------------------- */
 
@@ -142,15 +144,22 @@ void PairCoulLongGPU::init_style()
   if (force->newton_pair)
     error->all(FLERR,"Cannot use newton pair with coul/long/gpu pair style");
 
-  // Repeat cutsq calculation because done after call to init_style
-  double cell_size = sqrt(cut_coul) + neighbor->skin;
+  // Call init_one calculation make sure scale is correct
+  for (int i = 1; i <= atom->ntypes; i++) {
+    for (int j = i; j <= atom->ntypes; j++) {
+      if (setflag[i][j] != 0 || (setflag[i][i] != 0 && setflag[j][j] != 0)) {
+        double cut = init_one(i,j);
+      }
+    }
+  }
+  double cell_size = cut_coul + neighbor->skin;
 
   cut_coulsq = cut_coul * cut_coul;
 
   // insure use of KSpace long-range solver, set g_ewald
 
   if (force->kspace == NULL)
-    error->all(FLERR,"Pair style is incompatible with KSpace style");
+    error->all(FLERR,"Pair style requires a KSpace style");
   g_ewald = force->kspace->g_ewald;
 
   // setup force tables
@@ -160,17 +169,27 @@ void PairCoulLongGPU::init_style()
   int maxspecial=0;
   if (atom->molecular)
     maxspecial=atom->maxspecial;
-  int success = cl_gpu_init(atom->nlocal, atom->nlocal+atom->nghost, 300,
+  int success = cl_gpu_init(atom->ntypes+1, scale,
+                            atom->nlocal, atom->nlocal+atom->nghost, 300,
                             maxspecial, cell_size, gpu_mode, screen, cut_coulsq,
                             force->special_coul, force->qqrd2e, g_ewald);
 
   GPU_EXTRA::check_flag(success,error,world);
 
   if (gpu_mode == GPU_FORCE) {
-    int irequest = neighbor->request(this);
+    int irequest = neighbor->request(this,instance_me);
     neighbor->requests[irequest]->half = 0;
     neighbor->requests[irequest]->full = 1;
   }
+}
+
+/* ---------------------------------------------------------------------- */
+
+void PairCoulLongGPU::reinit()
+{
+  Pair::reinit();
+
+  cl_gpu_reinit(atom->ntypes+1, scale);
 }
 
 /* ---------------------------------------------------------------------- */
@@ -187,20 +206,19 @@ void PairCoulLongGPU::cpu_compute(int start, int inum, int eflag,
                                   int vflag, int *ilist, int *numneigh,
                                   int **firstneigh)
 {
-  int i,j,ii,jj,jnum,itype,jtype,itable;
-  double qtmp,xtmp,ytmp,ztmp,delx,dely,delz,evdwl,ecoul,fpair;
+  int i,j,ii,jj,jnum,itable;
+  double qtmp,xtmp,ytmp,ztmp,delx,dely,delz,ecoul,fpair;
   double fraction,table;
-  double r,r2inv,r6inv,forcecoul,forcelj,factor_coul,factor_lj;
+  double r,r2inv,forcecoul,factor_coul;
   double grij,expm2,prefactor,t,erfc;
   int *jlist;
   double rsq;
 
-  evdwl = ecoul = 0.0;
+  ecoul = 0.0;
 
   double **x = atom->x;
   double **f = atom->f;
   double *q = atom->q;
-  int *type = atom->type;
   double *special_coul = force->special_coul;
   double qqrd2e = force->qqrd2e;
 
@@ -212,7 +230,6 @@ void PairCoulLongGPU::cpu_compute(int start, int inum, int eflag,
     xtmp = x[i][0];
     ytmp = x[i][1];
     ztmp = x[i][2];
-    itype = type[i];
     jlist = firstneigh[i];
     jnum = numneigh[i];
 
@@ -225,7 +242,6 @@ void PairCoulLongGPU::cpu_compute(int start, int inum, int eflag,
       dely = ytmp - x[j][1];
       delz = ztmp - x[j][2];
       rsq = delx*delx + dely*dely + delz*delz;
-      jtype = type[j];
 
       r2inv = 1.0/rsq;
 

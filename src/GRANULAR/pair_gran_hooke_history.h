@@ -1,4 +1,4 @@
-/* ----------------------------------------------------------------------
+/* -*- c++ -*- ----------------------------------------------------------
    LAMMPS - Large-scale Atomic/Molecular Massively Parallel Simulator
    http://lammps.sandia.gov, Sandia National Laboratories
    Steve Plimpton, sjplimp@sandia.gov
@@ -26,15 +26,12 @@ namespace LAMMPS_NS {
 
 class PairGranHookeHistory : public Pair {
  public:
-  int computeflag;
-
   PairGranHookeHistory(class LAMMPS *);
   virtual ~PairGranHookeHistory();
   virtual void compute(int, int);
   virtual void settings(int, char **);
   void coeff(int, char **);
   void init_style();
-  void init_list(int, class NeighList *);
   double init_one(int, int);
   void write_restart(FILE *);
   void read_restart(FILE *);
@@ -42,9 +39,9 @@ class PairGranHookeHistory : public Pair {
   void read_restart_settings(FILE *);
   void reset_dt();
   virtual double single(int, int, int, int, double, double, double, double &);
-  int pack_comm(int, int *, double *, int, int *);
-  void unpack_comm(int, int, double *);
-  void *extract(const char *, int &);
+  int pack_forward_comm(int, int *, double *, int, int *);
+  void unpack_forward_comm(int, int, double *);
+  double memory_usage();
 
  protected:
   double kn,kt,gamman,gammat,xmu;
@@ -53,15 +50,17 @@ class PairGranHookeHistory : public Pair {
   int freeze_group_bit;
   int history;
 
-  char *suffix;
   int neighprev;
   double *onerad_dynamic,*onerad_frozen;
   double *maxrad_dynamic,*maxrad_frozen;
 
-  class FixShearHistory *fix_history;
-  class Fix *fix_rigid;
-  int *body;
-  double *mass_rigid;
+  class FixNeighHistory *fix_history;
+
+  // storage of rigid body masses for use in granular interactions
+
+  class Fix *fix_rigid;    // ptr to rigid body fix, NULL if none
+  double *mass_rigid;      // rigid mass for owned+ghost atoms
+  int nmax;                // allocated size of mass_rigid
 
   void allocate();
 };
@@ -83,17 +82,22 @@ E: Incorrect args for pair coefficients
 
 Self-explanatory.  Check the input script or data file.
 
-E: Pair granular requires atom style sphere
+E: Pair granular requires atom attributes radius, rmass
 
-Self-explanatory.
+The atom style defined does not have these attributes.
 
 E: Pair granular requires ghost atoms store velocity
 
-Use the communicate vel yes command to enable this.
+Use the comm_modify vel yes command to enable this.
 
 E: Pair granular with shear history requires newton pair off
 
 This is a current restriction of the implementation of pair
 granular styles with history.
+
+E: Could not find pair fix ID
+
+A fix is created internally by the pair style to store shear
+history information.  You cannot delete it.
 
 */

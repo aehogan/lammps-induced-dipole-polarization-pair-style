@@ -11,9 +11,9 @@
    See the README file in the top-level LAMMPS directory.
 ------------------------------------------------------------------------- */
 
-#include "math.h"
-#include "string.h"
-#include "stdlib.h"
+#include <math.h>
+#include <string.h>
+#include <stdlib.h>
 #include "fix_wall_piston.h"
 #include "atom.h"
 #include "modify.h"
@@ -33,15 +33,15 @@ using namespace MathConst;
 /* ---------------------------------------------------------------------- */
 
 FixWallPiston::FixWallPiston(LAMMPS *lmp, int narg, char **arg) :
-  Fix(lmp, narg, arg)
+  Fix(lmp, narg, arg), randomt(NULL), gfactor1(NULL), gfactor2(NULL)
 {
   force_reneighbor = 1;
   next_reneighbor = -1;
-  box_change = 1;
 
   if (narg < 4) error->all(FLERR,"Illegal fix wall/piston command");
 
   randomt = NULL;
+  gfactor1 = gfactor2 = NULL;
   tempflag = 0;
   scaleflag = 1;
   roughflag = 0;
@@ -51,7 +51,7 @@ FixWallPiston::FixWallPiston(LAMMPS *lmp, int narg, char **arg) :
   rampNL3flag = 0;
   rampNL4flag = 0;
   rampNL5flag = 0;
-  x0 = y0 = z0 = vx = vy = vz = 0.0;
+  t_target = z0 = vx = vy = vz = 0.0;
   xloflag = xhiflag = yloflag = yhiflag = zloflag = zhiflag = 0;
 
   int iarg = 3;
@@ -72,24 +72,20 @@ FixWallPiston::FixWallPiston(LAMMPS *lmp, int narg, char **arg) :
     else if (strcmp(arg[iarg],"zhi") == 0)
       error->all(FLERR,"Fix wall/piston command only available at zlo");
     else if (strcmp(arg[iarg],"vel") == 0) {
-      if (iarg+4 > narg) error->all(FLERR,"Illegal fix wall/piston command");
-      vx = atof(arg[iarg+1]);
-      vy = atof(arg[iarg+2]);
-      vz = atof(arg[iarg+3]);
-      iarg += 4;
+      if (iarg+2 > narg) error->all(FLERR,"Illegal fix wall/piston command");
+      vz = force->numeric(FLERR,arg[iarg+1]);
+      iarg += 2;
     } else if (strcmp(arg[iarg],"pos") == 0) {
-      if (iarg+4 > narg) error->all(FLERR,"Illegal fix wall/piston command");
-      x0 = atof(arg[iarg+1]);
-      y0 = atof(arg[iarg+2]);
-      z0 = atof(arg[iarg+3]);
-      iarg += 4;
+      if (iarg+2 > narg) error->all(FLERR,"Illegal fix wall/piston command");
+      z0 = force->numeric(FLERR,arg[iarg+1]);
+      iarg += 2;
     } else if (strcmp(arg[iarg],"temp") == 0) {
       if (iarg+5 > narg) error->all(FLERR,"Illegal fix wall/piston command");
       tempflag = 1;
-      t_target = atof(arg[iarg+1]);
-      t_period = atof(arg[iarg+2]);
-      tseed    = atoi(arg[iarg+3]);
-      t_extent = atof(arg[iarg+4]);
+      t_target = force->numeric(FLERR,arg[iarg+1]);
+      t_period = force->numeric(FLERR,arg[iarg+2]);
+      tseed    = force->inumeric(FLERR,arg[iarg+3]);
+      t_extent = force->numeric(FLERR,arg[iarg+4]);
       if (t_target <= 0) error->all(FLERR,"Illegal fix wall/piston command");
       if (t_period <= 0) error->all(FLERR,"Illegal fix wall/piston command");
       if (t_extent <= 0) error->all(FLERR,"Illegal fix wall/piston command");
@@ -100,7 +96,7 @@ FixWallPiston::FixWallPiston(LAMMPS *lmp, int narg, char **arg) :
       iarg += 5;
     } else if (strcmp(arg[iarg],"rough") == 0) {
       roughflag = 1;
-      roughdist = atof(arg[iarg+1]);
+      roughdist = force->numeric(FLERR,arg[iarg+1]);
       iarg += 2;
     } else if (strcmp(arg[iarg],"ramp") == 0) {
       rampflag = 1;
@@ -140,22 +136,8 @@ FixWallPiston::FixWallPiston(LAMMPS *lmp, int narg, char **arg) :
 
   // setup scaling
 
-  if (scaleflag && domain->lattice == NULL)
-    error->all(FLERR,"Use of fix wall/piston with undefined lattice");
-
-  double xscale,yscale,zscale;
-  if (scaleflag) {
-    xscale = domain->lattice->xlattice;
-    yscale = domain->lattice->ylattice;
-    zscale = domain->lattice->zlattice;
-  }
-  else xscale = yscale = zscale = 1.0;
-
-  vx *= xscale;
-  vy *= yscale;
+  const double zscale = (scaleflag) ? domain->lattice->zlattice : 1.0;
   vz *= zscale;
-  x0 *= xscale;
-  y0 *= yscale;
   z0 *= zscale;
   roughdist *= zscale;
 
@@ -165,6 +147,15 @@ FixWallPiston::FixWallPiston(LAMMPS *lmp, int narg, char **arg) :
     maxvy = vy;
     maxvz = vz;
   }
+}
+
+/* ---------------------------------------------------------------------- */
+
+FixWallPiston::~FixWallPiston()
+{
+  delete[] gfactor2;
+  delete[] gfactor1;
+  delete randomt;
 }
 
 /* ---------------------------------------------------------------------- */
@@ -189,7 +180,7 @@ void FixWallPiston::initial_integrate(int vflag)
 
 void FixWallPiston::post_integrate()
 {
-  double xlo, xhi, ylo, yhi, zlo, zhi;
+  double zlo;
 
   double **x = atom->x;
   double **v = atom->v;

@@ -14,11 +14,11 @@ read_data       data.${sname}
 pair_style      eff/cut 11.049221 limit/eradius pressure/evirials
 pair_coeff      * *
 
-communicate	single vel yes
+comm_modify	vel yes
 
 neigh_modify	one 2000 page 20000
 
-compute         peratom all stress/atom
+compute         peratom all stress/atom NULL
 compute         p all reduce sum c_peratom[1] c_peratom[2] c_peratom[3]
 variable        press equal -(c_p[1]+c_p[2]+c_p[3])/(3*vol)
 
@@ -51,7 +51,8 @@ unfix		0
 unfix		1
 
 fix		1 all nvt/eff temp 3000.0 3000.0 100.0
-dump            1 all custom 1000 ${sname}.nvt.lammpstrj id type q spin eradius x y z vx vy vz ervel
+compute         1 all property/atom spin eradius ervel
+dump            1 all custom 1000 ${sname}.nvt.lammpstrj id type q c_1[1] c_1[2] x y z vx vy vz c_1[3]
 
 run 		100000
 

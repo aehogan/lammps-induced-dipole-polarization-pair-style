@@ -1,4 +1,4 @@
-/* ----------------------------------------------------------------------
+/* -*- c++ -*- ----------------------------------------------------------
    LAMMPS - Large-scale Atomic/Molecular Massively Parallel Simulator
    http://lammps.sandia.gov, Sandia National Laboratories
    Steve Plimpton, sjplimp@sandia.gov
@@ -20,7 +20,7 @@ BondStyle(fene/expand,BondFENEExpand)
 #ifndef LMP_BOND_FENE_EXPAND_H
 #define LMP_BOND_FENE_EXPAND_H
 
-#include "stdio.h"
+#include <stdio.h>
 #include "bond.h"
 
 namespace LAMMPS_NS {
@@ -35,7 +35,8 @@ class BondFENEExpand : public Bond {
   double equilibrium_distance(int);
   void write_restart(FILE *);
   void read_restart(FILE *);
-  double single(int, double, int, int);
+  void write_data(FILE *);
+  double single(int, double, int, int, double &);
 
  protected:
   double TWO_1_3;

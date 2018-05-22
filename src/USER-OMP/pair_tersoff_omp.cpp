@@ -12,11 +12,12 @@
    Contributing author: Axel Kohlmeyer (Temple U)
 ------------------------------------------------------------------------- */
 
-#include "math.h"
+#include <math.h>
 #include "pair_tersoff_omp.h"
 #include "atom.h"
 #include "comm.h"
 #include "force.h"
+#include "memory.h"
 #include "neighbor.h"
 #include "neigh_list.h"
 
@@ -52,6 +53,7 @@ void PairTersoffOMP::compute(int eflag, int vflag)
 
     loop_setup_thr(ifrom, ito, tid, inum, nthreads);
     ThrData *thr = fix->get_thr(tid);
+    thr->timer(Timer::START);
     ev_setup_thr(eflag, vflag, nall, eatom, vatom, thr);
 
     if (evflag) {
@@ -64,6 +66,7 @@ void PairTersoffOMP::compute(int eflag, int vflag)
       }
     } else eval<0,0,0>(ifrom, ito, thr);
 
+    thr->timer(Timer::PAIR);
     reduce_thr(this, eflag, vflag, thr);
   } // end of omp parallel region
 }
@@ -71,25 +74,29 @@ void PairTersoffOMP::compute(int eflag, int vflag)
 template <int EVFLAG, int EFLAG, int VFLAG_ATOM>
 void PairTersoffOMP::eval(int iifrom, int iito, ThrData * const thr)
 {
-  int i,j,k,ii,jj,kk,jnum;
-  int itag,jtag,itype,jtype,ktype,iparam_ij,iparam_ijk;
+  int i,j,k,ii,jj,kk,jnum,maxshort_thr;
+  tagint itag,jtag;
+  int itype,jtype,ktype,iparam_ij,iparam_ijk;
   double xtmp,ytmp,ztmp,delx,dely,delz,evdwl,fpair;
   double rsq,rsq1,rsq2;
   double delr1[3],delr2[3],fi[3],fj[3],fk[3];
   double zeta_ij,prefactor;
-  int *ilist,*jlist,*numneigh,**firstneigh;
+  int *ilist,*jlist,*numneigh,**firstneigh,*neighshort_thr;
 
   evdwl = 0.0;
 
-  const double * const * const x = atom->x;
-  double * const * const f = thr->get_f();
-  const int * const tag = atom->tag;
-  const int * const type = atom->type;
+  const dbl3_t * _noalias const x = (dbl3_t *) atom->x[0];
+  dbl3_t * _noalias const f = (dbl3_t *) thr->get_f()[0];
+  const tagint * _noalias const tag = atom->tag;
+  const int * _noalias const type = atom->type;
   const int nlocal = atom->nlocal;
+  const double cutshortsq = cutmax*cutmax;
 
   ilist = list->ilist;
   numneigh = list->numneigh;
   firstneigh = list->firstneigh;
+  maxshort_thr = maxshort;
+  memory->create(neighshort_thr,maxshort_thr,"pair_thr:neighshort_thr");
 
   double fxtmp,fytmp,fztmp;
 
@@ -100,49 +107,57 @@ void PairTersoffOMP::eval(int iifrom, int iito, ThrData * const thr)
     i = ilist[ii];
     itag = tag[i];
     itype = map[type[i]];
-    xtmp = x[i][0];
-    ytmp = x[i][1];
-    ztmp = x[i][2];
+    xtmp = x[i].x;
+    ytmp = x[i].y;
+    ztmp = x[i].z;
     fxtmp = fytmp = fztmp = 0.0;
 
     // two-body interactions, skip half of them
 
     jlist = firstneigh[i];
     jnum = numneigh[i];
+    int numshort = 0;
 
     for (jj = 0; jj < jnum; jj++) {
       j = jlist[jj];
       j &= NEIGHMASK;
-      jtag = tag[j];
 
+      delx = xtmp - x[j].x;
+      dely = ytmp - x[j].y;
+      delz = ztmp - x[j].z;
+      rsq = delx*delx + dely*dely + delz*delz;
+
+      if (rsq < cutshortsq) {
+        neighshort_thr[numshort++] = j;
+        if (numshort >= maxshort_thr) {
+          maxshort_thr += maxshort_thr/2;
+          memory->grow(neighshort_thr,maxshort_thr,"pair_thr:neighshort_thr");
+        }
+      }
+
+      jtag = tag[j];
       if (itag > jtag) {
         if ((itag+jtag) % 2 == 0) continue;
       } else if (itag < jtag) {
         if ((itag+jtag) % 2 == 1) continue;
       } else {
-        if (x[j][2] < ztmp) continue;
-        if (x[j][2] == ztmp && x[j][1] < ytmp) continue;
-        if (x[j][2] == ztmp && x[j][1] == ytmp && x[j][0] < xtmp) continue;
+        if (x[j].z < ztmp) continue;
+        if (x[j].z == ztmp && x[j].y < ytmp) continue;
+        if (x[j].z == ztmp && x[j].y == ytmp && x[j].x < xtmp) continue;
       }
 
       jtype = map[type[j]];
-
-      delx = xtmp - x[j][0];
-      dely = ytmp - x[j][1];
-      delz = ztmp - x[j][2];
-      rsq = delx*delx + dely*dely + delz*delz;
-
       iparam_ij = elem2param[itype][jtype][jtype];
-      if (rsq > params[iparam_ij].cutsq) continue;
+      if (rsq >= params[iparam_ij].cutsq) continue;
 
       repulsive(&params[iparam_ij],rsq,fpair,EFLAG,evdwl);
 
       fxtmp += delx*fpair;
       fytmp += dely*fpair;
       fztmp += delz*fpair;
-      f[j][0] -= delx*fpair;
-      f[j][1] -= dely*fpair;
-      f[j][2] -= delz*fpair;
+      f[j].x -= delx*fpair;
+      f[j].y -= dely*fpair;
+      f[j].z -= delz*fpair;
 
       if (EVFLAG) ev_tally_thr(this,i,j,nlocal,/* newton_pair */ 1,
                                evdwl,0.0,fpair,delx,dely,delz,thr);
@@ -152,35 +167,33 @@ void PairTersoffOMP::eval(int iifrom, int iito, ThrData * const thr)
     // skip immediately if I-J is not within cutoff
     double fjxtmp,fjytmp,fjztmp;
 
-    for (jj = 0; jj < jnum; jj++) {
-      j = jlist[jj];
-      j &= NEIGHMASK;
+    for (jj = 0; jj < numshort; jj++) {
+      j = neighshort_thr[jj];
       jtype = map[type[j]];
       iparam_ij = elem2param[itype][jtype][jtype];
 
-      delr1[0] = x[j][0] - xtmp;
-      delr1[1] = x[j][1] - ytmp;
-      delr1[2] = x[j][2] - ztmp;
+      delr1[0] = x[j].x - xtmp;
+      delr1[1] = x[j].y - ytmp;
+      delr1[2] = x[j].z - ztmp;
       rsq1 = delr1[0]*delr1[0] + delr1[1]*delr1[1] + delr1[2]*delr1[2];
-      if (rsq1 > params[iparam_ij].cutsq) continue;
+      if (rsq1 >= params[iparam_ij].cutsq) continue;
 
       // accumulate bondorder zeta for each i-j interaction via loop over k
 
       fjxtmp = fjytmp = fjztmp = 0.0;
       zeta_ij = 0.0;
 
-      for (kk = 0; kk < jnum; kk++) {
+      for (kk = 0; kk < numshort; kk++) {
         if (jj == kk) continue;
-        k = jlist[kk];
-        k &= NEIGHMASK;
+        k = neighshort_thr[kk];
         ktype = map[type[k]];
         iparam_ijk = elem2param[itype][jtype][ktype];
 
-        delr2[0] = x[k][0] - xtmp;
-        delr2[1] = x[k][1] - ytmp;
-        delr2[2] = x[k][2] - ztmp;
+        delr2[0] = x[k].x - xtmp;
+        delr2[1] = x[k].y - ytmp;
+        delr2[2] = x[k].z - ztmp;
         rsq2 = delr2[0]*delr2[0] + delr2[1]*delr2[1] + delr2[2]*delr2[2];
-        if (rsq2 > params[iparam_ijk].cutsq) continue;
+        if (rsq2 >= params[iparam_ijk].cutsq) continue;
 
         zeta_ij += zeta(&params[iparam_ijk],rsq1,rsq2,delr1,delr2);
       }
@@ -201,18 +214,17 @@ void PairTersoffOMP::eval(int iifrom, int iito, ThrData * const thr)
 
       // attractive term via loop over k
 
-      for (kk = 0; kk < jnum; kk++) {
+      for (kk = 0; kk < numshort; kk++) {
         if (jj == kk) continue;
-        k = jlist[kk];
-        k &= NEIGHMASK;
+        k = neighshort_thr[kk];
         ktype = map[type[k]];
         iparam_ijk = elem2param[itype][jtype][ktype];
 
-        delr2[0] = x[k][0] - xtmp;
-        delr2[1] = x[k][1] - ytmp;
-        delr2[2] = x[k][2] - ztmp;
+        delr2[0] = x[k].x - xtmp;
+        delr2[1] = x[k].y - ytmp;
+        delr2[2] = x[k].z - ztmp;
         rsq2 = delr2[0]*delr2[0] + delr2[1]*delr2[1] + delr2[2]*delr2[2];
-        if (rsq2 > params[iparam_ijk].cutsq) continue;
+        if (rsq2 >= params[iparam_ijk].cutsq) continue;
 
         attractive(&params[iparam_ijk],prefactor,
                    rsq1,rsq2,delr1,delr2,fi,fj,fk);
@@ -223,20 +235,21 @@ void PairTersoffOMP::eval(int iifrom, int iito, ThrData * const thr)
         fjxtmp += fj[0];
         fjytmp += fj[1];
         fjztmp += fj[2];
-        f[k][0] += fk[0];
-        f[k][1] += fk[1];
-        f[k][2] += fk[2];
+        f[k].x += fk[0];
+        f[k].y += fk[1];
+        f[k].z += fk[2];
 
         if (VFLAG_ATOM) v_tally3_thr(i,j,k,fj,fk,delr1,delr2,thr);
       }
-      f[j][0] += fjxtmp;
-      f[j][1] += fjytmp;
-      f[j][2] += fjztmp;
+      f[j].x += fjxtmp;
+      f[j].y += fjytmp;
+      f[j].z += fjztmp;
     }
-    f[i][0] += fxtmp;
-    f[i][1] += fytmp;
-    f[i][2] += fztmp;
+    f[i].x += fxtmp;
+    f[i].y += fytmp;
+    f[i].z += fztmp;
   }
+  memory->destroy(neighshort_thr);
 }
 
 /* ---------------------------------------------------------------------- */

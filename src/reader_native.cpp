@@ -11,8 +11,8 @@
    See the README file in the top-level LAMMPS directory.
 ------------------------------------------------------------------------- */
 
-#include "string.h"
-#include "stdlib.h"
+#include <string.h>
+#include <stdlib.h>
 #include "reader_native.h"
 #include "atom.h"
 #include "memory.h"
@@ -22,8 +22,10 @@ using namespace LAMMPS_NS;
 
 #define MAXLINE 1024        // max line length in dump file
 
-enum{ID,TYPE,X,Y,Z,VX,VY,VZ,IX,IY,IZ};
-enum{UNSET,UNSCALED,SCALED};
+// also in read_dump.cpp
+
+enum{ID,TYPE,X,Y,Z,VX,VY,VZ,Q,IX,IY,IZ,FX,FY,FZ};
+enum{UNSET,NOSCALE_NOWRAP,NOSCALE_WRAP,SCALE_NOWRAP,SCALE_WRAP};
 
 /* ---------------------------------------------------------------------- */
 
@@ -90,20 +92,21 @@ void ReaderNative::skip()
    read remaining header info:
      return natoms
      box bounds, triclinic (inferred), fieldflag (1 if any fields not found),
-     xyz flag = UNSET (not a requested field), SCALED, UNSCALED
+     xyz flags = UNSET (not a requested field), SCALE/WRAP as in enum
    if fieldflag set:
      match Nfield fields to per-atom column labels
      allocate and set fieldindex = which column each field maps to
      fieldtype = X,VX,IZ etc
      fieldlabel = user-specified label or NULL if use fieldtype default
-   xyz flag = scaledflag if has fieldlabel name, else set by x,xs,xu,xsu
+   xyz flags = scaleflag+wrapflag if has fieldlabel name,
+     else set by x,xs,xu,xsu
    only called by proc 0
 ------------------------------------------------------------------------- */
 
 bigint ReaderNative::read_header(double box[3][3], int &triclinic,
                                  int fieldinfo, int nfield,
                                  int *fieldtype, char **fieldlabel,
-                                 int scaledflag, int &fieldflag,
+                                 int scaleflag, int wrapflag, int &fieldflag,
                                  int &xflag, int &yflag, int &zflag)
 {
   bigint natoms;
@@ -138,16 +141,22 @@ bigint ReaderNative::read_header(double box[3][3], int &triclinic,
   nwords = atom->count_words(labelline);
   char **labels = new char*[nwords];
   labels[0] = strtok(labelline," \t\n\r\f");
-  if (labels[0] == NULL) return 1;
+  if (labels[0] == NULL) {
+    delete[] labels;
+    return 1;
+  }
   for (int m = 1; m < nwords; m++) {
     labels[m] = strtok(NULL," \t\n\r\f");
-    if (labels[m] == NULL) return 1;
+    if (labels[m] == NULL) {
+      delete[] labels;
+      return 1;
+    }
   }
 
   // match each field with a column of per-atom data
   // if fieldlabel set, match with explicit column
   // else infer one or more column matches from fieldtype
-  // xyz flag set by scaledflag (if fieldlabel set) or column label
+  // xyz flag set by scaleflag + wrapflag (if fieldlabel set) or column label
 
   memory->create(fieldindex,nfield,"read_dump:fieldindex");
 
@@ -159,9 +168,9 @@ bigint ReaderNative::read_header(double box[3][3], int &triclinic,
   for (int i = 0; i < nfield; i++) {
     if (fieldlabel[i]) {
       fieldindex[i] = find_label(fieldlabel[i],nwords,labels);
-      if (fieldtype[i] == X) xflag = scaledflag;
-      else if (fieldtype[i] == Y) yflag = scaledflag;
-      else if (fieldtype[i] == Z) zflag = scaledflag;
+      if (fieldtype[i] == X) xflag = 2*scaleflag + wrapflag + 1;
+      else if (fieldtype[i] == Y) yflag = 2*scaleflag + wrapflag + 1;
+      else if (fieldtype[i] == Z) zflag = 2*scaleflag + wrapflag + 1;
     }
 
     else if (fieldtype[i] == ID)
@@ -171,7 +180,7 @@ bigint ReaderNative::read_header(double box[3][3], int &triclinic,
 
     else if (fieldtype[i] == X) {
       fieldindex[i] = find_label("x",nwords,labels);
-      xflag = UNSCALED;
+      xflag = NOSCALE_WRAP;
       if (fieldindex[i] < 0) {
         fieldindex[i] = nwords;
         s_index = find_label("xs",nwords,labels);
@@ -179,22 +188,22 @@ bigint ReaderNative::read_header(double box[3][3], int &triclinic,
         su_index = find_label("xsu",nwords,labels);
         if (s_index >= 0 && s_index < fieldindex[i]) {
           fieldindex[i] = s_index;
-          xflag = SCALED;
+          xflag = SCALE_WRAP;
         }
         if (u_index >= 0 && u_index < fieldindex[i]) {
           fieldindex[i] = u_index;
-          xflag = UNSCALED;
+          xflag = NOSCALE_NOWRAP;
         }
         if (su_index >= 0 && su_index < fieldindex[i]) {
           fieldindex[i] = su_index;
-          xflag = SCALED;
+          xflag = SCALE_NOWRAP;
         }
       }
       if (fieldindex[i] == nwords) fieldindex[i] = -1;
 
     } else if (fieldtype[i] == Y) {
       fieldindex[i] = find_label("y",nwords,labels);
-      yflag = UNSCALED;
+      yflag = NOSCALE_WRAP;
       if (fieldindex[i] < 0) {
         fieldindex[i] = nwords;
         s_index = find_label("ys",nwords,labels);
@@ -202,22 +211,22 @@ bigint ReaderNative::read_header(double box[3][3], int &triclinic,
         su_index = find_label("ysu",nwords,labels);
         if (s_index >= 0 && s_index < fieldindex[i]) {
           fieldindex[i] = s_index;
-          yflag = SCALED;
+          yflag = SCALE_WRAP;
         }
         if (u_index >= 0 && u_index < fieldindex[i]) {
           fieldindex[i] = u_index;
-          yflag = UNSCALED;
+          yflag = NOSCALE_NOWRAP;
         }
         if (su_index >= 0 && su_index < fieldindex[i]) {
           fieldindex[i] = su_index;
-          yflag = SCALED;
+          yflag = SCALE_NOWRAP;
         }
       }
       if (fieldindex[i] == nwords) fieldindex[i] = -1;
 
     } else if (fieldtype[i] == Z) {
       fieldindex[i] = find_label("z",nwords,labels);
-      zflag = UNSCALED;
+      zflag = NOSCALE_WRAP;
       if (fieldindex[i] < 0) {
         fieldindex[i] = nwords;
         s_index = find_label("zs",nwords,labels);
@@ -225,15 +234,15 @@ bigint ReaderNative::read_header(double box[3][3], int &triclinic,
         su_index = find_label("zsu",nwords,labels);
         if (s_index >= 0 && s_index < fieldindex[i]) {
           fieldindex[i] = s_index;
-          zflag = SCALED;
+          zflag = SCALE_WRAP;
         }
         if (u_index >= 0 && u_index < fieldindex[i]) {
           fieldindex[i] = u_index;
-          zflag = UNSCALED;
+          zflag = NOSCALE_NOWRAP;
         }
         if (su_index >= 0 && su_index < fieldindex[i]) {
           fieldindex[i] = su_index;
-          zflag = SCALED;
+          zflag = SCALE_NOWRAP;
         }
       }
       if (fieldindex[i] == nwords) fieldindex[i] = -1;
@@ -244,6 +253,17 @@ bigint ReaderNative::read_header(double box[3][3], int &triclinic,
       fieldindex[i] = find_label("vy",nwords,labels);
     else if (fieldtype[i] == VZ)
       fieldindex[i] = find_label("vz",nwords,labels);
+
+    else if (fieldtype[i] == FX)
+      fieldindex[i] = find_label("fx",nwords,labels);
+    else if (fieldtype[i] == FY)
+      fieldindex[i] = find_label("fy",nwords,labels);
+    else if (fieldtype[i] == FZ)
+      fieldindex[i] = find_label("fz",nwords,labels);
+
+    else if (fieldtype[i] == Q)
+      fieldindex[i] = find_label("q",nwords,labels);
+
     else if (fieldtype[i] == IX)
       fieldindex[i] = find_label("ix",nwords,labels);
     else if (fieldtype[i] == IY)
@@ -311,13 +331,13 @@ int ReaderNative::find_label(const char *label, int n, char **labels)
 /* ----------------------------------------------------------------------
    read N lines from dump file
    only last one is saved in line
-   return NULL if end-of-file error, else non-NULL
    only called by proc 0
 ------------------------------------------------------------------------- */
 
 void ReaderNative::read_lines(int n)
 {
-  char *eof;
+  char *eof = NULL;
+  if (n <= 0) return;
   for (int i = 0; i < n; i++) eof = fgets(line,MAXLINE,fp);
-  if (eof == NULL) error->all(FLERR,"Unexpected end of dump file");
+  if (eof == NULL) error->one(FLERR,"Unexpected end of dump file");
 }

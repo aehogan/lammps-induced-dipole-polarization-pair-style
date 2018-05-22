@@ -15,7 +15,7 @@
    Contributing authors: Yuxing Peng and Chris Knight (U Chicago)
 ------------------------------------------------------------------------- */
 
-#include "string.h"
+#include <string.h>
 #include "verlet_split.h"
 #include "universe.h"
 #include "neighbor.h"
@@ -43,7 +43,7 @@ using namespace LAMMPS_NS;
 /* ---------------------------------------------------------------------- */
 
 VerletSplit::VerletSplit(LAMMPS *lmp, int narg, char **arg) :
-  Verlet(lmp, narg, arg)
+  Verlet(lmp, narg, arg), qsize(NULL), qdisp(NULL), xsize(NULL), xdisp(NULL), f_kspace(NULL)
 {
   // error checks on partitions
 
@@ -52,6 +52,9 @@ VerletSplit::VerletSplit(LAMMPS *lmp, int narg, char **arg) :
   if (universe->procs_per_world[0] % universe->procs_per_world[1])
     error->universe_all(FLERR,"Verlet/split requires Rspace partition "
                         "size be multiple of Kspace partition size");
+  if (comm->style != 0)
+    error->universe_all(FLERR,"Verlet/split can only currently be used with "
+                        "comm_style brick");
 
   // master = 1 for Rspace procs, 0 for Kspace procs
 
@@ -214,11 +217,19 @@ VerletSplit::~VerletSplit()
 
 void VerletSplit::init()
 {
+  if (comm->style != 0)
+    error->universe_all(FLERR,"Verlet/split can only currently be used with "
+                        "comm_style brick");
   if (!force->kspace && comm->me == 0)
     error->warning(FLERR,"No Kspace calculation with verlet/split");
 
   if (force->kspace_match("tip4p",0)) tip4p_flag = 1;
   else tip4p_flag = 0;
+
+  // currently TIP4P does not work with verlet/split, so generate error
+  // see Axel email on this, also other TIP4P notes below
+
+  if (tip4p_flag) error->all(FLERR,"Verlet/split does not yet support TIP4P");
 
   Verlet::init();
 }
@@ -228,12 +239,13 @@ void VerletSplit::init()
    servant partition only sets up KSpace calculation
 ------------------------------------------------------------------------- */
 
-void VerletSplit::setup()
+void VerletSplit::setup(int flag)
 {
-  if (comm->me == 0 && screen) fprintf(screen,"Setting up run ...\n");
+  if (comm->me == 0 && screen)
+    fprintf(screen,"Setting up Verlet/split run ...\n");
 
   if (!master) force->kspace->setup();
-  else Verlet::setup();
+  else Verlet::setup(flag);
 }
 
 /* ----------------------------------------------------------------------
@@ -268,7 +280,7 @@ void VerletSplit::run(int n)
 
   MPI_Barrier(universe->uworld);
   timer->init();
-  timer->barrier_start(TIME_LOOP);
+  timer->barrier_start();
 
   // setup initial Rspace <-> Kspace comm params
 
@@ -287,6 +299,7 @@ void VerletSplit::run(int n)
   int n_pre_exchange = modify->n_pre_exchange;
   int n_pre_neighbor = modify->n_pre_neighbor;
   int n_pre_force = modify->n_pre_force;
+  int n_pre_reverse = modify->n_pre_reverse;
   int n_post_force = modify->n_post_force;
   int n_end_of_step = modify->n_end_of_step;
 
@@ -314,7 +327,7 @@ void VerletSplit::run(int n)
       if (nflag == 0) {
         timer->stamp();
         comm->forward_comm();
-        timer->stamp(TIME_COMM);
+        timer->stamp(Timer::COMM);
       } else {
         if (n_pre_exchange) modify->pre_exchange();
         if (triclinic) domain->x2lamda(atom->nlocal);
@@ -329,10 +342,10 @@ void VerletSplit::run(int n)
         if (sortflag && ntimestep >= atom->nextsort) atom->sort();
         comm->borders();
         if (triclinic) domain->lamda2x(atom->nlocal+atom->nghost);
-        timer->stamp(TIME_COMM);
+        timer->stamp(Timer::COMM);
         if (n_pre_neighbor) modify->pre_neighbor();
-        neighbor->build();
-        timer->stamp(TIME_NEIGHBOR);
+        neighbor->build(1);
+        timer->stamp(Timer::NEIGH);
       }
     }
 
@@ -352,7 +365,7 @@ void VerletSplit::run(int n)
       timer->stamp();
       if (force->pair) {
         force->pair->compute(eflag,vflag);
-        timer->stamp(TIME_PAIR);
+        timer->stamp(Timer::PAIR);
       }
 
       if (atom->molecular) {
@@ -360,12 +373,16 @@ void VerletSplit::run(int n)
         if (force->angle) force->angle->compute(eflag,vflag);
         if (force->dihedral) force->dihedral->compute(eflag,vflag);
         if (force->improper) force->improper->compute(eflag,vflag);
-        timer->stamp(TIME_BOND);
+        timer->stamp(Timer::BOND);
       }
 
+      if (n_pre_reverse) {
+        modify->pre_reverse(eflag,vflag);
+        timer->stamp(Timer::MODIFY);
+      }
       if (force->newton) {
         comm->reverse_comm();
-        timer->stamp(TIME_COMM);
+        timer->stamp(Timer::COMM);
       }
 
     } else {
@@ -377,14 +394,19 @@ void VerletSplit::run(int n)
       if (force->kspace) {
         timer->stamp();
         force->kspace->compute(eflag,vflag);
-        timer->stamp(TIME_KSPACE);
+        timer->stamp(Timer::KSPACE);
+      }
+
+      if (n_pre_reverse) {
+        modify->pre_reverse(eflag,vflag);
+        timer->stamp(Timer::MODIFY);
       }
 
       // TIP4P PPPM puts forces on ghost atoms, so must reverse_comm()
 
       if (tip4p_flag && force->newton) {
         comm->reverse_comm();
-        timer->stamp(TIME_COMM);
+        timer->stamp(Timer::COMM);
       }
     }
 
@@ -396,14 +418,16 @@ void VerletSplit::run(int n)
     // all output
 
     if (master) {
+      timer->stamp();
       if (n_post_force) modify->post_force(vflag);
       modify->final_integrate();
       if (n_end_of_step) modify->end_of_step();
+      timer->stamp(Timer::MODIFY);
 
       if (ntimestep == output->next) {
         timer->stamp();
         output->write(ntimestep);
-        timer->stamp(TIME_OUTPUT);
+        timer->stamp(Timer::OUTPUT);
       }
     }
   }
@@ -420,7 +444,7 @@ void VerletSplit::rk_setup()
   // grow f_kspace array on master procs if necessary
 
   if (master) {
-    if (atom->nlocal > maxatom) {
+    if (atom->nmax > maxatom) {
       memory->destroy(f_kspace);
       maxatom = atom->nmax;
       memory->create(f_kspace,maxatom,3,"verlet/split:f_kspace");
@@ -466,7 +490,8 @@ void VerletSplit::rk_setup()
   if (tip4p_flag) {
     //r2k_comm();
     MPI_Gatherv(atom->type,n,MPI_INT,atom->type,qsize,qdisp,MPI_INT,0,block);
-    MPI_Gatherv(atom->tag,n,MPI_INT,atom->tag,qsize,qdisp,MPI_INT,0,block);
+    MPI_Gatherv(atom->tag,n,MPI_LMP_TAGINT,
+                atom->tag,qsize,qdisp,MPI_LMP_TAGINT,0,block);
     if (!master) {
       if (triclinic) domain->x2lamda(atom->nlocal);
       if (domain->box_change) comm->setup();
@@ -474,7 +499,7 @@ void VerletSplit::rk_setup()
       atom->map_clear();
       comm->borders();
       if (triclinic) domain->lamda2x(atom->nlocal+atom->nghost);
-      timer->stamp(TIME_COMM);
+      timer->stamp(Timer::COMM);
     }
   }
 }
@@ -486,8 +511,6 @@ void VerletSplit::rk_setup()
 
 void VerletSplit::r2k_comm()
 {
-  MPI_Status status;
-
   int n = 0;
   if (master) n = atom->nlocal;
   MPI_Gatherv(atom->x[0],n*3,MPI_DOUBLE,atom->x[0],xsize,xdisp,
@@ -501,7 +524,7 @@ void VerletSplit::r2k_comm()
     MPI_Send(flags,2,MPI_INT,0,0,block);
   } else if (!master) {
     int flags[2];
-    MPI_Recv(flags,2,MPI_DOUBLE,1,0,block,&status);
+    MPI_Recv(flags,2,MPI_INT,1,0,block,MPI_STATUS_IGNORE);
     eflag = flags[0]; vflag = flags[1];
   }
 
@@ -512,8 +535,8 @@ void VerletSplit::r2k_comm()
       MPI_Send(domain->boxlo,3,MPI_DOUBLE,0,0,block);
       MPI_Send(domain->boxhi,3,MPI_DOUBLE,0,0,block);
     } else if (!master) {
-      MPI_Recv(domain->boxlo,3,MPI_DOUBLE,1,0,block,&status);
-      MPI_Recv(domain->boxhi,3,MPI_DOUBLE,1,0,block,&status);
+      MPI_Recv(domain->boxlo,3,MPI_DOUBLE,1,0,block,MPI_STATUS_IGNORE);
+      MPI_Recv(domain->boxhi,3,MPI_DOUBLE,1,0,block,MPI_STATUS_IGNORE);
       domain->set_global_box();
       domain->set_local_box();
       force->kspace->setup();
@@ -525,7 +548,7 @@ void VerletSplit::r2k_comm()
   if (tip4p_flag && !master) {
     timer->stamp();
     comm->forward_comm();
-    timer->stamp(TIME_COMM);
+    timer->stamp(Timer::COMM);
   }
 }
 

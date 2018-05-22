@@ -1,4 +1,4 @@
-/* ----------------------------------------------------------------------
+/* -*- c++ -*- ----------------------------------------------------------
    LAMMPS - Large-scale Atomic/Molecular Massively Parallel Simulator
    http://lammps.sandia.gov, Sandia National Laboratories
    Steve Plimpton, sjplimp@sandia.gov
@@ -30,15 +30,16 @@ class PairLJCharmmCoulLong : public Pair {
   virtual ~PairLJCharmmCoulLong();
 
   virtual void compute(int, int);
-  void settings(int, char **);
+  virtual void settings(int, char **);
   void coeff(int, char **);
-  void init_style();
-  void init_list(int, class NeighList *);
-  double init_one(int, int);
+  virtual void init_style();
+  virtual double init_one(int, int);
   void write_restart(FILE *);
   void read_restart(FILE *);
   void write_restart_settings(FILE *);
   void read_restart_settings(FILE *);
+  void write_data(FILE *);
+  void write_data_all(FILE *);
   virtual double single(int, int, int, int, double, double, double, double &);
 
   void compute_inner();
@@ -52,14 +53,18 @@ class PairLJCharmmCoulLong : public Pair {
   double cut_lj_innersq,cut_ljsq;
   double cut_coul,cut_coulsq;
   double cut_bothsq;
-  double denom_lj;
+  double cut_in_off, cut_in_on, cut_out_off, cut_out_on;
+  double cut_in_diff, cut_out_diff;
+  double cut_in_diff_inv, cut_out_diff_inv;
+  double cut_in_off_sq, cut_in_on_sq, cut_out_off_sq, cut_out_on_sq;
+  double denom_lj, denom_lj_inv;
   double **epsilon,**sigma,**eps14,**sigma14;
   double **lj1,**lj2,**lj3,**lj4,**offset;
   double **lj14_1,**lj14_2,**lj14_3,**lj14_4;
   double *cut_respa;
   double g_ewald;
 
-  void allocate();
+  virtual void allocate();
 };
 
 }
@@ -97,9 +102,8 @@ E: Pair inner cutoff < Respa interior cutoff
 One or more pairwise cutoffs are too short to use with the specified
 rRESPA cutoffs.
 
-E: Pair style is incompatible with KSpace style
+E: Pair style requires a KSpace style
 
-If a pair style with a long-range Coulombic component is selected,
-then a kspace style must also be used.
+No kspace style is defined.
 
 */

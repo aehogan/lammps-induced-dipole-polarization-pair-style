@@ -15,9 +15,9 @@
    Contributing author: Paul Crozier (SNL)
 ------------------------------------------------------------------------- */
 
-#include "math.h"
-#include "stdlib.h"
-#include "string.h"
+#include <math.h>
+#include <stdlib.h>
+#include <string.h>
 #include "fix_heat.h"
 #include "atom.h"
 #include "domain.h"
@@ -38,7 +38,8 @@ enum{CONSTANT,EQUAL,ATOM};
 
 /* ---------------------------------------------------------------------- */
 
-FixHeat::FixHeat(LAMMPS *lmp, int narg, char **arg) : Fix(lmp, narg, arg)
+FixHeat::FixHeat(LAMMPS *lmp, int narg, char **arg) : Fix(lmp, narg, arg),
+idregion(NULL), hstr(NULL), vheat(NULL), vscale(NULL)
 {
   if (narg < 4) error->all(FLERR,"Illegal fix heat command");
 
@@ -46,7 +47,7 @@ FixHeat::FixHeat(LAMMPS *lmp, int narg, char **arg) : Fix(lmp, narg, arg)
   global_freq = 1;
   extscalar = 0;
 
-  nevery = atoi(arg[3]);
+  nevery = force->inumeric(FLERR,arg[3]);
   if (nevery <= 0) error->all(FLERR,"Illegal fix heat command");
 
   hstr = NULL;
@@ -56,14 +57,13 @@ FixHeat::FixHeat(LAMMPS *lmp, int narg, char **arg) : Fix(lmp, narg, arg)
     hstr = new char[n];
     strcpy(hstr,&arg[4][2]);
   } else {
-    heat_input = atof(arg[4]);
+    heat_input = force->numeric(FLERR,arg[4]);
     hstyle = CONSTANT;
   }
 
   // optional args
 
   iregion = -1;
-  idregion = NULL;
 
   int iarg = 5;
   while (iarg < narg) {
@@ -82,8 +82,6 @@ FixHeat::FixHeat(LAMMPS *lmp, int narg, char **arg) : Fix(lmp, narg, arg)
   scale = 1.0;
 
   maxatom = 0;
-  vheat = NULL;
-  vscale = NULL;
 }
 
 /* ---------------------------------------------------------------------- */
@@ -121,18 +119,24 @@ void FixHeat::init()
 
   if (hstr) {
     hvar = input->variable->find(hstr);
-    if (hvar < 0) 
+    if (hvar < 0)
       error->all(FLERR,"Variable name for fix heat does not exist");
     if (input->variable->equalstyle(hvar)) hstyle = EQUAL;
-    else if (input->variable->equalstyle(hvar)) hstyle = ATOM;
+    else if (input->variable->atomstyle(hvar)) hstyle = ATOM;
     else error->all(FLERR,"Variable for fix heat is invalid style");
   }
+
+  // check for rigid bodies in region (done here for performance reasons)
+  if (iregion >= 0 && modify->check_rigid_region_overlap(groupbit,domain->regions[iregion]))
+    error->warning(FLERR,"Cannot apply fix heat to atoms in rigid bodies");
 
   // cannot have 0 atoms in group
 
   if (group->count(igroup) == 0)
     error->all(FLERR,"Fix heat group has no atoms");
   masstotal = group->mass(igroup);
+  if (masstotal <= 0.0)
+    error->all(FLERR,"Fix heat group has invalid mass");
 }
 
 /* ---------------------------------------------------------------------- */
@@ -142,7 +146,6 @@ void FixHeat::end_of_step()
   int i;
   double heat,ke,massone;
   double vsub[3],vcm[3];
-  Region *region;
 
   double **x = atom->x;
   double **v = atom->v;
@@ -154,7 +157,7 @@ void FixHeat::end_of_step()
 
   // reallocate per-atom arrays if necessary
 
-  if (hstyle == ATOM && atom->nlocal > maxatom) {
+  if (hstyle == ATOM && atom->nmax > maxatom) {
     maxatom = atom->nmax;
     memory->destroy(vheat);
     memory->destroy(vscale);
@@ -184,15 +187,20 @@ void FixHeat::end_of_step()
   }
   double vcmsq = vcm[0]*vcm[0] + vcm[1]*vcm[1] + vcm[2]*vcm[2];
 
-
   // add heat via scale factor on velocities for CONSTANT and EQUAL cases
   // scale = velocity scale factor to accomplish eflux change in energy
   // vsub = velocity subtracted from each atom to preserve momentum
   // overall KE cannot go negative
 
+  Region *region = NULL;
+  if (iregion >= 0) {
+    region = domain->regions[iregion];
+    region->prematch();
+  }
+
   if (hstyle != ATOM) {
     heat = heat_input*nevery*update->dt*force->ftm2v;
-    double escale = 
+    double escale =
       (ke + heat - 0.5*vcmsq*masstotal)/(ke - 0.5*vcmsq*masstotal);
     if (escale < 0.0) error->all(FLERR,"Fix heat kinetic energy went negative");
     scale = sqrt(escale);
@@ -208,7 +216,6 @@ void FixHeat::end_of_step()
           v[i][2] = scale*v[i][2] - vsub[2];
         }
     } else {
-      region = domain->regions[iregion];
       for (int i = 0; i < nlocal; i++)
         if (mask[i] & groupbit && region->match(x[i][0],x[i][1],x[i][2])) {
           v[i][0] = scale*v[i][0] - vsub[0];
@@ -228,9 +235,9 @@ void FixHeat::end_of_step()
       for (i = 0; i < nlocal; i++) {
         if (mask[i] & groupbit) {
           heat = vheat[i]*nevery*update->dt*force->ftm2v;
-          vscale[i] = 
+          vscale[i] =
             (ke + heat - 0.5*vcmsq*masstotal)/(ke - 0.5*vcmsq*masstotal);
-          if (vscale[i] < 0.0) 
+          if (vscale[i] < 0.0)
             error->all(FLERR,
                        "Fix heat kinetic energy of an atom went negative");
           scale = sqrt(vscale[i]);
@@ -255,13 +262,12 @@ void FixHeat::end_of_step()
         }
 
     } else {
-      region = domain->regions[iregion];
       for (i = 0; i < nlocal; i++) {
         if (mask[i] & groupbit && region->match(x[i][0],x[i][1],x[i][2])) {
           heat = vheat[i]*nevery*update->dt*force->ftm2v;
-          vscale[i] = 
+          vscale[i] =
             (ke + heat - 0.5*vcmsq*masstotal)/(ke - 0.5*vcmsq*masstotal);
-          if (vscale[i] < 0.0) 
+          if (vscale[i] < 0.0)
             error->all(FLERR,
                        "Fix heat kinetic energy of an atom went negative");
           scale = sqrt(vscale[i]);
@@ -293,7 +299,7 @@ void FixHeat::end_of_step()
 double FixHeat::compute_scalar()
 {
   double average_scale = scale;
-  if (hstyle == ATOM) {  
+  if (hstyle == ATOM) {
     double scale_sum = 0.0;
     int ncount = 0;
     int *mask = atom->mask;
@@ -307,8 +313,8 @@ double FixHeat::compute_scalar()
         }
       }
     } else {
-      Region *region;
-      region = domain->regions[iregion];
+      Region *region = domain->regions[iregion];
+      region->prematch();
       for (int i = 0; i < nlocal; i++) {
         if (mask[i] & groupbit && region->match(x[i][0],x[i][1],x[i][2])) {
           scale_sum += sqrt(vscale[i]);

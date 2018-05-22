@@ -42,7 +42,7 @@ negotiate an appropriate license for such distribution."
 ------------------------------------------------------------------------- */
 
 /* ----------------------------------------------------------------------
-   Contributing author:  Axel Kohlmeyer (TempleU)
+   Contributing author:  Axel Kohlmeyer (Temple U)
    IMD API, hash, and socket code written by: John E. Stone,
    Justin Gullingsrud, and James Phillips, (TCBG, Beckman Institute, UIUC)
 ------------------------------------------------------------------------- */
@@ -53,6 +53,7 @@ negotiate an appropriate license for such distribution."
 #include "update.h"
 #include "respa.h"
 #include "domain.h"
+#include "force.h"
 #include "error.h"
 #include "group.h"
 #include "memory.h"
@@ -62,7 +63,7 @@ negotiate an appropriate license for such distribution."
 #include <stdlib.h>
 #include <string.h>
 
-#if defined(_MSC_VER) || defined(__MINGW32_VERSION)
+#if defined(_MSC_VER) || defined(__MINGW32__)
 #include <winsock2.h>
 #else
 #include <arpa/inet.h>
@@ -78,48 +79,51 @@ negotiate an appropriate license for such distribution."
 
 #include <errno.h>
 
+using namespace LAMMPS_NS;
+using namespace FixConst;
+
 /* re-usable integer hash table code with static linkage. */
 
 /** hash table top level data structure */
-typedef struct inthash_t {
-  struct inthash_node_t **bucket;        /* array of hash nodes */
-  int size;                           /* size of the array */
-  int entries;                        /* number of entries in table */
-  int downshift;                      /* shift cound, used in hash function */
-  int mask;                           /* used to select bits for hashing */
-} inthash_t;
+typedef struct taginthash_t {
+  struct taginthash_node_t **bucket; /* array of hash nodes */
+  tagint size;                       /* size of the array */
+  tagint entries;                    /* number of entries in table */
+  tagint downshift;                  /* shift count, used in hash function */
+  tagint mask;                       /* used to select bits for hashing */
+} taginthash_t;
 
 /** hash table node data structure */
-typedef struct inthash_node_t {
-  int data;                           /* data in hash node */
-  int key;                            /* key for hash lookup */
-  struct inthash_node_t *next;        /* next node in hash chain */
-} inthash_node_t;
+typedef struct taginthash_node_t {
+  tagint data;                           /* data in hash node */
+  tagint key;                            /* key for hash lookup */
+  struct taginthash_node_t *next;        /* next node in hash chain */
+} taginthash_node_t;
 
 #define HASH_FAIL  -1
 #define HASH_LIMIT  0.5
 
 /* initialize new hash table  */
-static void inthash_init(inthash_t *tptr, int buckets);
+static void taginthash_init(taginthash_t *tptr, tagint buckets);
 /* lookup entry in hash table */
-static int inthash_lookup(const inthash_t *tptr, int key);
+static tagint taginthash_lookup(const taginthash_t *tptr, tagint key);
 /* generate list of keys for reverse lookups. */
-static int *inthash_keys(inthash_t *tptr);
-/* insert an entry into hash table. */
-static int inthash_insert(inthash_t *tptr, int key, int data);
+static tagint *taginthash_keys(taginthash_t *tptr);
+/* insert an entry taginto hash table. */
+static tagint taginthash_insert(taginthash_t *tptr, tagint key, tagint data);
 /* delete the hash table */
-static void inthash_destroy(inthash_t *tptr);
+static void taginthash_destroy(taginthash_t *tptr);
 /* adapted sort for in-place sorting of map indices. */
-static void id_sort(int *idmap, int left, int right);
+static void id_sort(tagint *idmap, tagint left, tagint right);
 
 /************************************************************************
  * integer hash code:
  ************************************************************************/
 
-/* inthash() - Hash function returns a hash number for a given key.
+/* taginthash() - Hash function returns a hash number for a given key.
  * tptr: Pointer to a hash table, key: The key to create a hash number for */
-static int inthash(const inthash_t *tptr, int key) {
-  int hashvalue;
+static tagint taginthash(const taginthash_t *tptr, tagint key) {
+  tagint hashvalue;
 
   hashvalue = (((key*1103515249)>>tptr->downshift) & tptr->mask);
   if (hashvalue < 0) {
@@ -130,25 +134,25 @@ static int inthash(const inthash_t *tptr, int key) {
 }
 
 /*
- *  rebuild_table_int() - Create new hash table when old one fills up.
+ *  rebuild_table_tagint() - Create new hash table when old one fills up.
  *
  *  tptr: Pointer to a hash table
  */
-static void rebuild_table_int(inthash_t *tptr) {
-  inthash_node_t **old_bucket, *old_hash, *tmp;
-  int old_size, h, i;
+static void rebuild_table_tagint(taginthash_t *tptr) {
+  taginthash_node_t **old_bucket, *old_hash, *tmp;
+  tagint old_size, h, i;
 
   old_bucket=tptr->bucket;
   old_size=tptr->size;
 
   /* create a new table and rehash old buckets */
-  inthash_init(tptr, old_size<<1);
+  taginthash_init(tptr, old_size<<1);
   for (i=0; i<old_size; i++) {
     old_hash=old_bucket[i];
     while(old_hash) {
       tmp=old_hash;
       old_hash=old_hash->next;
-      h=inthash(tptr, tmp->key);
+      h=taginthash(tptr, tmp->key);
       tmp->next=tptr->bucket[h];
       tptr->bucket[h]=tmp;
       tptr->entries++;
@@ -162,12 +166,12 @@ static void rebuild_table_int(inthash_t *tptr) {
 }
 
 /*
- *  inthash_init() - Initialize a new hash table.
+ *  taginthash_init() - Initialize a new hash table.
  *
  *  tptr: Pointer to the hash table to initialize
  *  buckets: The number of initial buckets to create
  */
-void inthash_init(inthash_t *tptr, int buckets) {
+void taginthash_init(taginthash_t *tptr, tagint buckets) {
 
   /* make sure we allocate something */
   if (buckets==0)
@@ -187,25 +191,25 @@ void inthash_init(inthash_t *tptr, int buckets) {
   } /* while */
 
   /* allocate memory for table */
-  tptr->bucket=(inthash_node_t **) calloc(tptr->size, sizeof(inthash_node_t *));
+  tptr->bucket=(taginthash_node_t **) calloc(tptr->size, sizeof(taginthash_node_t *));
 
   return;
 }
 
 /*
- *  inthash_lookup() - Lookup an entry in the hash table and return a pointer to
+ *  taginthash_lookup() - Lookup an entry in the hash table and return a pointer to
  *    it or HASH_FAIL if it wasn't found.
  *
  *  tptr: Pointer to the hash table
  *  key: The key to lookup
  */
-int inthash_lookup(const inthash_t *tptr, int key) {
-  int h;
-  inthash_node_t *node;
+tagint taginthash_lookup(const taginthash_t *tptr, tagint key) {
+  tagint h;
+  taginthash_node_t *node;
 
 
   /* find the entry in the hash table */
-  h=inthash(tptr, key);
+  h=taginthash(tptr, key);
   for (node=tptr->bucket[h]; node!=NULL; node=node->next) {
     if (node->key == key)
       break;
@@ -217,17 +221,17 @@ int inthash_lookup(const inthash_t *tptr, int key) {
 
 
 /*
- *  inthash_keys() - Return a list of keys.
+ *  taginthash_keys() - Return a list of keys.
  *  NOTE: the returned list must be freed with free(3).
  */
-int *inthash_keys(inthash_t *tptr) {
+tagint *taginthash_keys(taginthash_t *tptr) {
 
-  int *keys;
-  inthash_node_t *node;
+  tagint *keys;
+  taginthash_node_t *node;
 
-  keys = (int *)calloc(tptr->entries, sizeof(int));
+  keys = (tagint *)calloc(tptr->entries, sizeof(tagint));
 
-  for (int i=0; i < tptr->size; ++i) {
+  for (tagint i=0; i < tptr->size; ++i) {
     for (node=tptr->bucket[i]; node != NULL; node=node->next) {
       keys[node->data] = node->key;
     }
@@ -237,29 +241,29 @@ int *inthash_keys(inthash_t *tptr) {
 }
 
 /*
- *  inthash_insert() - Insert an entry into the hash table.  If the entry already
+ *  taginthash_insert() - Insert an entry into the hash table.  If the entry already
  *  exists return a pointer to it, otherwise return HASH_FAIL.
  *
  *  tptr: A pointer to the hash table
  *  key: The key to insert into the hash table
  *  data: A pointer to the data to insert into the hash table
  */
-int inthash_insert(inthash_t *tptr, int key, int data) {
-  int tmp;
-  inthash_node_t *node;
-  int h;
+tagint taginthash_insert(taginthash_t *tptr, tagint key, tagint data) {
+  tagint tmp;
+  taginthash_node_t *node;
+  tagint h;
 
   /* check to see if the entry exists */
-  if ((tmp=inthash_lookup(tptr, key)) != HASH_FAIL)
+  if ((tmp=taginthash_lookup(tptr, key)) != HASH_FAIL)
     return(tmp);
 
   /* expand the table if needed */
   while (tptr->entries>=HASH_LIMIT*tptr->size)
-    rebuild_table_int(tptr);
+    rebuild_table_tagint(tptr);
 
   /* insert the new entry */
-  h=inthash(tptr, key);
-  node=(struct inthash_node_t *) malloc(sizeof(inthash_node_t));
+  h=taginthash(tptr, key);
+  node=(struct taginthash_node_t *) malloc(sizeof(taginthash_node_t));
   node->data=data;
   node->key=key;
   node->next=tptr->bucket[h];
@@ -270,12 +274,12 @@ int inthash_insert(inthash_t *tptr, int key, int data) {
 }
 
 /*
- * inthash_destroy() - Delete the entire table, and all remaining entries.
+ * taginthash_destroy() - Delete the entire table, and all remaining entries.
  *
  */
-void inthash_destroy(inthash_t *tptr) {
-  inthash_node_t *node, *last;
-  int i;
+void taginthash_destroy(taginthash_t *tptr) {
+  taginthash_node_t *node, *last;
+  tagint i;
 
   for (i=0; i<tptr->size; i++) {
     node = tptr->bucket[i];
@@ -289,18 +293,18 @@ void inthash_destroy(inthash_t *tptr) {
   /* free the entire array of buckets */
   if (tptr->bucket != NULL) {
     free(tptr->bucket);
-    memset(tptr, 0, sizeof(inthash_t));
+    memset(tptr, 0, sizeof(taginthash_t));
   }
 }
 
 /************************************************************************
- * integer list sort code:
+ * taginteger list sort code:
  ************************************************************************/
 
-/* sort for integer map. initial call  id_sort(idmap, 0, natoms - 1); */
-static void id_sort(int *idmap, int left, int right)
+/* sort for taginteger map. initial call  id_sort(idmap, 0, natoms - 1); */
+static void id_sort(tagint *idmap, tagint left, tagint right)
 {
-  int pivot, l_hold, r_hold;
+  tagint pivot, l_hold, r_hold;
 
   l_hold = left;
   r_hold = right;
@@ -428,12 +432,9 @@ static void  imdsock_destroy(void *);
  * The implementation follows at the end of the file.          *
  ***************************************************************/
 
-using namespace LAMMPS_NS;
-using namespace FixConst;
-
 /* struct for packed data communication of coordinates and forces. */
 struct commdata {
-  int tag;
+  tagint tag;
   float x,y,z;
 };
 
@@ -447,7 +448,7 @@ FixIMD::FixIMD(LAMMPS *lmp, int narg, char **arg) :
   if (narg < 4)
     error->all(FLERR,"Illegal fix imd command");
 
-  imd_port = atoi(arg[3]);
+  imd_port = force->inumeric(FLERR,arg[3]);
   if (imd_port < 1024)
     error->all(FLERR,"Illegal fix imd parameter: port < 1024");
 
@@ -474,9 +475,9 @@ FixIMD::FixIMD(LAMMPS *lmp, int narg, char **arg) :
         nowait_flag = 0;
       }
     } else if (0 == strcmp(arg[argsdone], "fscale")) {
-      imd_fscale = atof(arg[argsdone+1]);
+      imd_fscale = force->numeric(FLERR,arg[argsdone+1]);
     } else if (0 == strcmp(arg[argsdone], "trate")) {
-      imd_trate = atoi(arg[argsdone+1]);
+      imd_trate = force->inumeric(FLERR,arg[argsdone+1]);
     } else {
       error->all(FLERR,"Unknown fix imd parameter");
     }
@@ -575,10 +576,10 @@ FixIMD::~FixIMD()
   }
 #endif
 
-  inthash_t *hashtable = (inthash_t *)idmap;
+  taginthash_t *hashtable = (taginthash_t *)idmap;
   memory->destroy(comm_buf);
   memory->destroy(force_buf);
-  inthash_destroy(hashtable);
+  taginthash_destroy(hashtable);
   delete hashtable;
   free(rev_idmap);
   // close sockets
@@ -621,12 +622,13 @@ int FixIMD::reconnect()
 
   if (me == 0) {
     if (clientsock) return 1;
-    if (screen && connect_msg)
-      if (nowait_flag)
+    if (screen && connect_msg) {
+      if (nowait_flag) {
         fprintf(screen,"Listening for IMD connection on port %d. Transfer rate %d.\n",imd_port, imd_trate);
-      else
+      } else {
         fprintf(screen,"Waiting for IMD connection on port %d. Transfer rate %d.\n",imd_port, imd_trate);
-
+      }
+    }
     connect_msg = 0;
     clientsock = NULL;
     if (nowait_flag) {
@@ -688,7 +690,7 @@ void FixIMD::setup(int)
   int i,j;
   int nmax,nme,nlocal;
   int *mask  = atom->mask;
-  int *tag  = atom->tag;
+  tagint *tag  = atom->tag;
   nlocal = atom->nlocal;
   nme=0;
   for (i=0; i < nlocal; ++i)
@@ -707,17 +709,17 @@ void FixIMD::setup(int)
     error->all(FLERR,"LAMMPS terminated on error in setting up IMD connection.");
 
   /* initialize and build hashtable. */
-  inthash_t *hashtable=new inthash_t;
-  inthash_init(hashtable, num_coords);
+  taginthash_t *hashtable=new taginthash_t;
+  taginthash_init(hashtable, num_coords);
   idmap = (void *)hashtable;
 
-  MPI_Status status;
-  MPI_Request request;
   int tmp, ndata;
   struct commdata *buf = static_cast<struct commdata *>(comm_buf);
 
   if (me == 0) {
-    int *taglist = new int[num_coords];
+    MPI_Status status;
+    MPI_Request request;
+    tagint *taglist = new tagint[num_coords];
     int numtag=0; /* counter to map atom tags to a 0-based consecutive index list */
 
     for (i=0; i < nlocal; ++i) {
@@ -745,13 +747,13 @@ void FixIMD::setup(int)
      * same list when running in parallel and build hash table. */
     id_sort(taglist, 0, num_coords-1);
     for (i=0; i < num_coords; ++i) {
-      inthash_insert(hashtable, taglist[i], i);
+      taginthash_insert(hashtable, taglist[i], i);
     }
     delete[] taglist;
 
     /* generate reverse index-to-tag map for communicating
      * IMD forces back to the proper atoms */
-    rev_idmap=inthash_keys(hashtable);
+    rev_idmap=taginthash_keys(hashtable);
   } else {
     nme=0;
     for (i=0; i < nlocal; ++i) {
@@ -761,7 +763,7 @@ void FixIMD::setup(int)
       }
     }
     /* blocking receive to wait until it is our turn to send data. */
-    MPI_Recv(&tmp, 0, MPI_INT, 0, 0, world, &status);
+    MPI_Recv(&tmp, 0, MPI_INT, 0, 0, world, MPI_STATUS_IGNORE);
     MPI_Rsend(comm_buf, nme*size_one, MPI_BYTE, 0, 0, world);
   }
 
@@ -822,9 +824,9 @@ void FixIMD::post_force(int vflag)
       return;     /* IMD client has detached and not yet come back. do nothing. */
   }
 
-  int *tag = atom->tag;
+  tagint *tag = atom->tag;
   double **x = atom->x;
-  tagint *image = atom->image;
+  imageint *image = atom->image;
   int nlocal = atom->nlocal;
   int *mask  = atom->mask;
   struct commdata *buf;
@@ -1010,12 +1012,12 @@ void FixIMD::post_force(int vflag)
     comm_buf = memory->smalloc(maxbuf,"imd:comm_buf");
   }
 
-  MPI_Status status;
-  MPI_Request request;
   int tmp, ndata;
   buf = static_cast<struct commdata *>(comm_buf);
 
   if (me == 0) {
+    MPI_Status status;
+    MPI_Request request;
     /* collect data into new array. we bypass the IMD API to save
      * us one extra copy of the data. */
     msglen = 3*sizeof(float)*num_coords+IMDHEADERSIZE;
@@ -1035,8 +1037,8 @@ void FixIMD::post_force(int vflag)
 
       for (i=0; i<nlocal; ++i) {
         if (mask[i] & groupbit) {
-          const int j = 3*inthash_lookup((inthash_t *)idmap, tag[i]);
-          if (j != HASH_FAIL) {
+          const tagint j = 3*taginthash_lookup((taginthash_t *)idmap, tag[i]);
+          if (j != 3*HASH_FAIL) {
             int ix = (image[i] & IMGMASK) - IMGMAX;
             int iy = (image[i] >> IMGBITS & IMGMASK) - IMGMAX;
             int iz = (image[i] >> IMG2BITS) - IMGMAX;
@@ -1056,8 +1058,8 @@ void FixIMD::post_force(int vflag)
     } else {
       for (i=0; i<nlocal; ++i) {
         if (mask[i] & groupbit) {
-          const int j = 3*inthash_lookup((inthash_t *)idmap, tag[i]);
-          if (j != HASH_FAIL) {
+          const tagint j = 3*taginthash_lookup((taginthash_t *)idmap, tag[i]);
+          if (j != 3*HASH_FAIL) {
             recvcoord[j]   = x[i][0];
             recvcoord[j+1] = x[i][1];
             recvcoord[j+2] = x[i][2];
@@ -1075,8 +1077,8 @@ void FixIMD::post_force(int vflag)
       ndata /= size_one;
 
       for (k=0; k<ndata; ++k) {
-        const int j = 3*inthash_lookup((inthash_t *)idmap, buf[k].tag);
-        if (j != HASH_FAIL) {
+        const tagint j = 3*taginthash_lookup((taginthash_t *)idmap, buf[k].tag);
+        if (j != 3*HASH_FAIL) {
           recvcoord[j]   = buf[k].x;
           recvcoord[j+1] = buf[k].y;
           recvcoord[j+2] = buf[k].z;
@@ -1143,7 +1145,7 @@ void FixIMD::post_force(int vflag)
       }
     }
     /* blocking receive to wait until it is our turn to send data. */
-    MPI_Recv(&tmp, 0, MPI_INT, 0, 0, world, &status);
+    MPI_Recv(&tmp, 0, MPI_INT, 0, 0, world, MPI_STATUS_IGNORE);
     MPI_Rsend(comm_buf, nme*size_one, MPI_BYTE, 0, 0, world);
   }
 
@@ -1179,7 +1181,7 @@ double FixIMD::memory_usage(void)
  ***************************************************************************/
 
 int imdsock_init(void) {
-#if defined(_MSC_VER) || defined(__MINGW32_VERSION)
+#if defined(_MSC_VER) || defined(__MINGW32__)
   int rc = 0;
   static int initialized=0;
 
@@ -1203,6 +1205,7 @@ void * imdsock_create(void) {
   s = (imdsocket *) malloc(sizeof(imdsocket));
   if (s != NULL)
     memset(s, 0, sizeof(imdsocket));
+  else return NULL;
 
   if ((s->sd = socket(PF_INET, SOCK_STREAM, 0)) == -1) {
     printf("Failed to open socket.");
@@ -1258,7 +1261,7 @@ void *imdsock_accept(void * v) {
 
 int  imdsock_write(void * v, const void *buf, int len) {
   imdsocket *s = (imdsocket *) v;
-#if defined(_MSC_VER) || defined(__MINGW32_VERSION)
+#if defined(_MSC_VER) || defined(__MINGW32__)
   return send(s->sd, (const char*) buf, len, 0);  /* windows lacks the write() call */
 #else
   return write(s->sd, buf, len);
@@ -1267,7 +1270,7 @@ int  imdsock_write(void * v, const void *buf, int len) {
 
 int  imdsock_read(void * v, void *buf, int len) {
   imdsocket *s = (imdsocket *) v;
-#if defined(_MSC_VER) || defined(__MINGW32_VERSION)
+#if defined(_MSC_VER) || defined(__MINGW32__)
   return recv(s->sd, (char*) buf, len, 0); /* windows lacks the read() call */
 #else
   return read(s->sd, buf, len);
@@ -1280,7 +1283,7 @@ void imdsock_shutdown(void *v) {
   if (s == NULL)
     return;
 
-#if defined(_MSC_VER) || defined(__MINGW32_VERSION)
+#if defined(_MSC_VER) || defined(__MINGW32__)
   shutdown(s->sd, SD_SEND);
 #else
   shutdown(s->sd, 1);  /* complete sends and send FIN */
@@ -1292,7 +1295,7 @@ void imdsock_destroy(void * v) {
   if (s == NULL)
     return;
 
-#if defined(_MSC_VER) || defined(__MINGW32_VERSION)
+#if defined(_MSC_VER) || defined(__MINGW32__)
   closesocket(s->sd);
 #else
   close(s->sd);
@@ -1342,19 +1345,6 @@ int imdsock_selwrite(void *v, int sec) {
 
 /*************************************************************************/
 /* start of imd API code. */
-/* Only works with aligned 4-byte quantities, will cause a bus error */
-/* on some platforms if used on unaligned data.                      */
-void swap4_aligned(void *v, long ndata) {
-  int *data = (int *) v;
-  long i;
-  int *N;
-  for (i=0; i<ndata; i++) {
-    N = data + i;
-    *N=(((*N>>24)&0xff) | ((*N&0xff)<<24) |
-        ((*N>>8)&0xff00) | ((*N&0xff00)<<8));
-  }
-}
-
 
 /** structure used to perform byte swapping operations */
 typedef union {
@@ -1427,12 +1417,6 @@ static int32 imd_writen(void *s, const char *ptr, int32 n) {
     ptr += nwritten;
   }
   return n;
-}
-
-int imd_disconnect(void *s) {
-  IMDheader header;
-  imd_fill_header(&header, IMD_DISCONNECT, 0);
-  return (imd_writen(s, (char *)&header, IMDHEADERSIZE) != IMDHEADERSIZE);
 }
 
 int imd_handshake(void *s) {

@@ -1,4 +1,4 @@
-/* ----------------------------------------------------------------------
+/* -*- c++ -*- ----------------------------------------------------------
    LAMMPS - Large-scale Atomic/Molecular Massively Parallel Simulator
    http://lammps.sandia.gov, Sandia National Laboratories
    Steve Plimpton, sjplimp@sandia.gov
@@ -22,7 +22,7 @@
 #define LMP_POINTERS_H
 
 #include "lmptype.h"
-#include "mpi.h"
+#include <mpi.h>
 #include "lammps.h"
 
 namespace LAMMPS_NS {
@@ -55,7 +55,10 @@ class Pointers {
     world(ptr->world),
     infile(ptr->infile),
     screen(ptr->screen),
-    logfile(ptr->logfile) {}
+    logfile(ptr->logfile),
+    atomKK(ptr->atomKK),
+    memoryKK(ptr->memoryKK),
+    python(ptr->python) {}
   virtual ~Pointers() {}
 
  protected:
@@ -80,6 +83,10 @@ class Pointers {
   FILE *&infile;
   FILE *&screen;
   FILE *&logfile;
+
+  class AtomKokkos *&atomKK;
+  class MemoryKokkos *&memoryKK;
+  class Python *&python;
 };
 
 }

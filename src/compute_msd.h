@@ -1,4 +1,4 @@
-/* ----------------------------------------------------------------------
+/* -*- c++ -*- ----------------------------------------------------------
    LAMMPS - Large-scale Atomic/Molecular Massively Parallel Simulator
    http://lammps.sandia.gov, Sandia National Laboratories
    Steve Plimpton, sjplimp@sandia.gov
@@ -27,15 +27,19 @@ namespace LAMMPS_NS {
 class ComputeMSD : public Compute {
  public:
   ComputeMSD(class LAMMPS *, int, char **);
-  ~ComputeMSD();
+  virtual ~ComputeMSD();
   void init();
-  void compute_vector();
+  virtual void compute_vector();
+  void set_arrays(int);
 
- private:
-  int comflag,nmsd;
+ protected:
+  int comflag;   // comflag = 1 if reference moves with center of mass
+  int avflag;    // avflag = 1 if using average position as reference
+  int naverage;  // number of samples for average position
+  bigint nmsd;
   double masstotal;
   char *id_fix;
-  class Fix *fix;
+  class FixStore *fix;
 };
 
 }

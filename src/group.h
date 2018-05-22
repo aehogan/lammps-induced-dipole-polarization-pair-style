@@ -1,4 +1,4 @@
-/* ----------------------------------------------------------------------
+/* -*- c++ -*- ----------------------------------------------------------
    LAMMPS - Large-scale Atomic/Molecular Massively Parallel Simulator
    http://lammps.sandia.gov, Sandia National Laboratories
    Steve Plimpton, sjplimp@sandia.gov
@@ -14,8 +14,9 @@
 #ifndef LMP_GROUP_H
 #define LMP_GROUP_H
 
-#include "stdio.h"
+#include <stdio.h>
 #include "pointers.h"
+#include <map>
 
 namespace LAMMPS_NS {
 
@@ -25,12 +26,14 @@ class Group : protected Pointers {
   char **names;                // name of each group
   int *bitmask;                // one-bit mask for each group
   int *inversemask;            // inverse mask for each group
+  int *dynamic;                // 1 if dynamic, 0 if not
 
   Group(class LAMMPS *);
   ~Group();
   void assign(int, char **);         // assign atoms to a group
   void create(char *, int *);        // add flagged atoms to a group
   int find(const char *);            // lookup name in list of groups
+  int find_or_create(const char *);  // lookup name or create new group
   void write_restart(FILE *);
   void read_restart(FILE *);
 
@@ -62,8 +65,15 @@ class Group : protected Pointers {
 
  private:
   int me;
+  std::map<tagint,int> *hash;
 
   int find_unused();
+  void add_molecules(int, int);
+
+  // callback functions for ring communication
+
+  static void molring(int, char *, void *);
+  int molbit;
 };
 
 }
@@ -107,6 +117,14 @@ E: Cannot delete group currently used by atom_modify first
 
 Self-explanatory.
 
+E: Could not find group clear group ID
+
+Self-explanatory.
+
+E: Cannot clear group all
+
+This operation is not allowed.
+
 E: Too many groups
 
 The maximum number of atom groups (including the "all" group) is
@@ -116,8 +134,44 @@ E: Group region ID does not exist
 
 A region ID used in the group command does not exist.
 
+E: Illegal range increment value
+
+The increment must be >= 1.
+
+E: Variable name for group does not exist
+
+Self-explanatory.
+
+E: Variable for group is invalid style
+
+Only atom-style variables can be used.
+
 E: Group ID does not exist
 
 A group ID used in the group command does not exist.
+
+E: Cannot subtract groups using a dynamic group
+
+This operation is not allowed.
+
+E: Cannot union groups using a dynamic group
+
+This operation is not allowed.
+
+E: Cannot intersect groups using a dynamic group
+
+This operation is not allowed.
+
+E: Group dynamic cannot reference itself
+
+Self-explanatory.
+
+E: Group dynamic parent group does not exist
+
+Self-explanatory.
+
+E: Group all cannot be made dynamic
+
+This operation is not allowed.
 
 */

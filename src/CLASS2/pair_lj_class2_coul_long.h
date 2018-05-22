@@ -1,4 +1,4 @@
-/* ----------------------------------------------------------------------
+/* -*- c++ -*- ----------------------------------------------------------
    LAMMPS - Large-scale Atomic/Molecular Massively Parallel Simulator
    http://lammps.sandia.gov, Sandia National Laboratories
    Steve Plimpton, sjplimp@sandia.gov
@@ -29,14 +29,16 @@ class PairLJClass2CoulLong : public Pair {
   PairLJClass2CoulLong(class LAMMPS *);
   virtual ~PairLJClass2CoulLong();
   virtual void compute(int, int);
-  void settings(int, char **);
+  virtual void settings(int, char **);
   void coeff(int, char **);
-  void init_style();
-  double init_one(int, int);
+  virtual void init_style();
+  virtual double init_one(int, int);
   void write_restart(FILE *);
   void read_restart(FILE *);
   void write_restart_settings(FILE *);
   void read_restart_settings(FILE *);
+  void write_data(FILE *);
+  void write_data_all(FILE *);
   double single(int, int, int, int, double, double, double, double &);
   void *extract(const char *, int &);
 
@@ -48,7 +50,7 @@ class PairLJClass2CoulLong : public Pair {
   double **lj1,**lj2,**lj3,**lj4,**offset;
   double g_ewald;
 
-  void allocate();
+  virtual void allocate();
 };
 
 }
@@ -72,9 +74,8 @@ E: Pair style lj/class2/coul/long requires atom attribute q
 
 The atom style defined does not have this attribute.
 
-E: Pair style is incompatible with KSpace style
+E: Pair style requires a KSpace style
 
-If a pair style with a long-range Coulombic component is selected,
-then a kspace style must also be used.
+No kspace style is defined.
 
 */

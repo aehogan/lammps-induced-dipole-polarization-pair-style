@@ -25,25 +25,28 @@ KSpaceStyle(pppm/cg/omp,PPPMCGOMP)
 
 namespace LAMMPS_NS {
 
-  class PPPMCGOMP : public PPPMCG, public ThrOMP {
+class PPPMCGOMP : public PPPMCG, public ThrOMP {
  public:
   PPPMCGOMP(class LAMMPS *, int, char **);
+  virtual ~PPPMCGOMP ();
   virtual void compute(int, int);
-  virtual void setup();
-  virtual ~PPPMCGOMP () {};
 
  protected:
   virtual void allocate();
-  virtual void deallocate();
-  virtual void fieldforce();
-  virtual void fieldforce_peratom();
-  virtual void make_rho();
 
+  virtual void compute_gf_ik();
+  virtual void compute_gf_ad();
+
+  virtual void make_rho();
+  virtual void fieldforce_ik();
+  virtual void fieldforce_ad();
+  virtual void fieldforce_peratom();
+
+ private:
   void compute_rho1d_thr(FFT_SCALAR * const * const, const FFT_SCALAR &,
                          const FFT_SCALAR &, const FFT_SCALAR &);
-//  void compute_rho_coeff();
-//  void slabcorr(int);
-
+  void compute_drho1d_thr(FFT_SCALAR * const * const, const FFT_SCALAR &,
+                          const FFT_SCALAR &, const FFT_SCALAR &);
 };
 
 }

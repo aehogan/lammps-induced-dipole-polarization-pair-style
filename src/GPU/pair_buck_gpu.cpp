@@ -15,9 +15,9 @@
    Contributing author: Trung Dac Nguyen (ORNL)
 ------------------------------------------------------------------------- */
 
-#include "math.h"
-#include "stdio.h"
-#include "stdlib.h"
+#include <math.h>
+#include <stdio.h>
+#include <stdlib.h>
 #include "pair_buck_gpu.h"
 #include "atom.h"
 #include "atom_vec.h"
@@ -32,8 +32,10 @@
 #include "universe.h"
 #include "update.h"
 #include "domain.h"
-#include "string.h"
+#include <string.h>
 #include "gpu_extra.h"
+
+using namespace LAMMPS_NS;
 
 // External functions from cuda library for atom decomposition
 
@@ -43,11 +45,14 @@ int buck_gpu_init(const int ntypes, double **cutsq, double **host_rhoinv,
                   double **offset, double *special_lj, const int inum,
                   const int nall, const int max_nbors,  const int maxspecial,
                   const double cell_size, int &gpu_mode, FILE *screen);
+void buck_gpu_reinit(const int ntypes, double **cutsq, double **host_rhoinv,
+                  double **host_buck1, double **host_buck2,
+                  double **host_a, double **host_c, double **offset);
 void buck_gpu_clear();
 int ** buck_gpu_compute_n(const int ago, const int inum_full, const int nall,
                           double **host_x, int *host_type, double *sublo,
-                          double *subhi, int *tag, int **nspecial,
-                          int **special, const bool eflag, const bool vflag,
+                          double *subhi, tagint *tag, int **nspecial,
+                          tagint **special, const bool eflag, const bool vflag,
                           const bool eatom, const bool vatom, int &host_start,
                           int **ilist, int **jnum, const double cpu_time,
                           bool &success);
@@ -57,8 +62,6 @@ void buck_gpu_compute(const int ago, const int inum_full, const int nall,
                       const bool eatom, const bool vatom, int &host_start,
                       const double cpu_time, bool &success);
 double buck_gpu_bytes();
-
-using namespace LAMMPS_NS;
 
 /* ---------------------------------------------------------------------- */
 
@@ -153,10 +156,20 @@ void PairBuckGPU::init_style()
   GPU_EXTRA::check_flag(success,error,world);
 
   if (gpu_mode == GPU_FORCE) {
-    int irequest = neighbor->request(this);
+    int irequest = neighbor->request(this,instance_me);
     neighbor->requests[irequest]->half = 0;
     neighbor->requests[irequest]->full = 1;
   }
+}
+
+/* ---------------------------------------------------------------------- */
+
+void PairBuckGPU::reinit()
+{
+  Pair::reinit();
+
+  buck_gpu_reinit(atom->ntypes+1, cutsq, rhoinv, buck1, buck2,
+                  a, c, offset);
 }
 
 /* ---------------------------------------------------------------------- */

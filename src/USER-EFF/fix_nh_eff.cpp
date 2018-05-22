@@ -12,10 +12,11 @@
 ------------------------------------------------------------------------- */
 
 /* ----------------------------------------------------------------------
- Contributing author: Andres Jaramillo-Botero (Caltech)
+   Contributing author: Andres Jaramillo-Botero (Caltech)
 ------------------------------------------------------------------------- */
 
-#include "math.h"
+#include <math.h>
+#include <stdlib.h>
 #include "fix_nh_eff.h"
 #include "atom.h"
 #include "atom_vec.h"
@@ -56,12 +57,11 @@ void FixNHEff::nve_v()
   int nlocal = atom->nlocal;
   if (igroup == atom->firstgroup) nlocal = atom->nfirst;
 
-  int itype;
   double dtfm;
 
   for (int i = 0; i < nlocal; i++) {
     if (mask[i] & groupbit) {
-      if (fabs(spin[i])==1) {
+      if (abs(spin[i])==1) {
         dtfm = dtf / mass[type[i]];
         ervel[i] = dtfm * erforce[i] / mefactor;
       }
@@ -88,7 +88,7 @@ void FixNHEff::nve_x()
 
   for (int i = 0; i < nlocal; i++)
     if (mask[i] & groupbit)
-      if (fabs(spin[i])==1) eradius[i] += dtv * ervel[i];
+      if (abs(spin[i])==1) eradius[i] += dtv * ervel[i];
 }
 
 /* ----------------------------------------------------------------------
@@ -109,5 +109,5 @@ void FixNHEff::nh_v_temp()
 
   for (int i = 0; i < nlocal; i++)
     if (mask[i] & groupbit)
-      if (fabs(spin[i])==1) ervel[i] *= factor_eta;
+      if (abs(spin[i])==1) ervel[i] *= factor_eta;
 }

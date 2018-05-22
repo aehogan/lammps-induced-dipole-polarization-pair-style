@@ -16,10 +16,10 @@
                         David Farrell (NWU) - ZBL addition
 ------------------------------------------------------------------------- */
 
-#include "math.h"
-#include "stdio.h"
-#include "stdlib.h"
-#include "string.h"
+#include <math.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
 #include "pair_tersoff_zbl.h"
 #include "atom.h"
 #include "update.h"
@@ -68,13 +68,13 @@ void PairTersoffZBL::read_file(char *file)
 
   memory->sfree(params);
   params = NULL;
-  nparams = 0;
+  nparams = maxparam = 0;
 
   // open file on proc 0
 
   FILE *fp;
   if (comm->me == 0) {
-    fp = fopen(file,"r");
+    fp = force->open_potential(file);
     if (fp == NULL) {
       char str[128];
       sprintf(str,"Cannot open Tersoff potential file %s",file);
@@ -104,7 +104,7 @@ void PairTersoffZBL::read_file(char *file)
 
     // strip comment, skip line if blank
 
-    if (ptr = strchr(line,'#')) *ptr = '\0';
+    if ((ptr = strchr(line,'#'))) *ptr = '\0';
     nwords = atom->count_words(line);
     if (nwords == 0) continue;
 
@@ -123,7 +123,7 @@ void PairTersoffZBL::read_file(char *file)
       if (eof) break;
       MPI_Bcast(&n,1,MPI_INT,0,world);
       MPI_Bcast(line,n,MPI_CHAR,0,world);
-      if (ptr = strchr(line,'#')) *ptr = '\0';
+      if ((ptr = strchr(line,'#'))) *ptr = '\0';
       nwords = atom->count_words(line);
     }
 
@@ -134,7 +134,7 @@ void PairTersoffZBL::read_file(char *file)
 
     nwords = 0;
     words[nwords++] = strtok(line," \t\n\r\f");
-    while (words[nwords++] = strtok(NULL," \t\n\r\f")) continue;
+    while ((words[nwords++] = strtok(NULL," \t\n\r\f"))) continue;
 
     // ielement,jelement,kelement = 1st args
     // if all 3 args are in element list, then parse this line
@@ -184,19 +184,25 @@ void PairTersoffZBL::read_file(char *file)
 
     params[nparams].powermint = int(params[nparams].powerm);
 
-    if (
-        params[nparams].lam3 < 0.0 || params[nparams].c < 0.0 ||
-        params[nparams].d < 0.0 || params[nparams].powern < 0.0 ||
-        params[nparams].beta < 0.0 || params[nparams].lam2 < 0.0 ||
-        params[nparams].bigb < 0.0 || params[nparams].bigr < 0.0 ||
+    if (params[nparams].c < 0.0 ||
+        params[nparams].d < 0.0 ||
+        params[nparams].powern < 0.0 ||
+        params[nparams].beta < 0.0 ||
+        params[nparams].lam2 < 0.0 ||
+        params[nparams].bigb < 0.0 ||
+        params[nparams].bigr < 0.0 ||
         params[nparams].bigd < 0.0 ||
         params[nparams].bigd > params[nparams].bigr ||
-        params[nparams].lam3 < 0.0 || params[nparams].biga < 0.0 ||
+        params[nparams].lam1 < 0.0 ||
+        params[nparams].biga < 0.0 ||
         params[nparams].powerm - params[nparams].powermint != 0.0 ||
-        (params[nparams].powermint != 3 && params[nparams].powermint != 1) ||
+        (params[nparams].powermint != 3 &&
+         params[nparams].powermint != 1) ||
         params[nparams].gamma < 0.0 ||
-        params[nparams].Z_i < 1.0 || params[nparams].Z_j < 1.0 ||
-        params[nparams].ZBLcut < 0.0 || params[nparams].ZBLexpscale < 0.0)
+        params[nparams].Z_i < 1.0 ||
+        params[nparams].Z_j < 1.0 ||
+        params[nparams].ZBLcut < 0.0 ||
+        params[nparams].ZBLexpscale < 0.0)
       error->all(FLERR,"Illegal Tersoff parameter");
 
     nparams++;

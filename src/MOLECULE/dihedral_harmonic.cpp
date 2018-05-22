@@ -15,10 +15,9 @@
    Contributing author: Paul Crozier (SNL)
 ------------------------------------------------------------------------- */
 
-#include "lmptype.h"
-#include "mpi.h"
-#include "math.h"
-#include "stdlib.h"
+#include <mpi.h>
+#include <math.h>
+#include <stdlib.h>
 #include "dihedral_harmonic.h"
 #include "atom.h"
 #include "comm.h"
@@ -36,7 +35,10 @@ using namespace LAMMPS_NS;
 
 /* ---------------------------------------------------------------------- */
 
-DihedralHarmonic::DihedralHarmonic(LAMMPS *lmp) : Dihedral(lmp) {}
+DihedralHarmonic::DihedralHarmonic(LAMMPS *lmp) : Dihedral(lmp)
+{
+  writedata = 1;
+}
 
 /* ---------------------------------------------------------------------- */
 
@@ -134,7 +136,9 @@ void DihedralHarmonic::compute(int eflag, int vflag)
       MPI_Comm_rank(world,&me);
       if (screen) {
         char str[128];
-        sprintf(str,"Dihedral problem: %d " BIGINT_FORMAT " %d %d %d %d",
+        sprintf(str,"Dihedral problem: %d " BIGINT_FORMAT " "
+                TAGINT_FORMAT " " TAGINT_FORMAT " "
+                TAGINT_FORMAT " " TAGINT_FORMAT,
                 me,update->ntimestep,
                 atom->tag[i1],atom->tag[i2],atom->tag[i3],atom->tag[i4]);
         error->warning(FLERR,str,0);
@@ -272,11 +276,11 @@ void DihedralHarmonic::coeff(int narg, char **arg)
   if (!allocated) allocate();
 
   int ilo,ihi;
-  force->bounds(arg[0],atom->ndihedraltypes,ilo,ihi);
+  force->bounds(FLERR,arg[0],atom->ndihedraltypes,ilo,ihi);
 
-  double k_one = force->numeric(arg[1]);
-  int sign_one = force->inumeric(arg[2]);
-  int multiplicity_one = force->inumeric(arg[3]);
+  double k_one = force->numeric(FLERR,arg[1]);
+  int sign_one = force->inumeric(FLERR,arg[2]);
+  int multiplicity_one = force->inumeric(FLERR,arg[3]);
 
   // require sign = +/- 1 for backwards compatibility
   // arbitrary phase angle shift could be allowed, but would break
@@ -345,3 +349,14 @@ void DihedralHarmonic::read_restart(FILE *fp)
     }
   }
 }
+
+/* ----------------------------------------------------------------------
+   proc 0 writes to data file
+------------------------------------------------------------------------- */
+
+void DihedralHarmonic::write_data(FILE *fp)
+{
+  for (int i = 1; i <= atom->ndihedraltypes; i++)
+    fprintf(fp,"%d %g %d %d\n",i,k[i],sign[i],multiplicity[i]);
+}
+

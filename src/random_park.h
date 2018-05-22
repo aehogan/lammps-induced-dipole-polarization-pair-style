@@ -1,4 +1,4 @@
-/* ----------------------------------------------------------------------
+/* -*- c++ -*- ----------------------------------------------------------
    LAMMPS - Large-scale Atomic/Molecular Massively Parallel Simulator
    http://lammps.sandia.gov, Sandia National Laboratories
    Steve Plimpton, sjplimp@sandia.gov
@@ -19,7 +19,6 @@
 namespace LAMMPS_NS {
 
 class RanPark : protected Pointers {
-  friend class Set;
  public:
   RanPark(class LAMMPS *, int);
   double uniform();

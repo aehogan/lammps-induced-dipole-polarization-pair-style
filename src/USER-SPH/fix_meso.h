@@ -1,4 +1,4 @@
-/* ----------------------------------------------------------------------
+/* -*- c++ -*- ----------------------------------------------------------
    LAMMPS - Large-scale Atomic/Molecular Massively Parallel Simulator
    http://lammps.sandia.gov, Sandia National Laboratories
    Steve Plimpton, sjplimp@sandia.gov
@@ -29,6 +29,7 @@ class FixMeso : public Fix {
   FixMeso(class LAMMPS *, int, char **);
   int setmask();
   virtual void init();
+  virtual void setup_pre_force(int);
   virtual void initial_integrate(int);
   virtual void final_integrate();
   void reset_dt();

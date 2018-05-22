@@ -17,11 +17,11 @@
                   Kurt Anderson (anderk5@rpi.edu)
 ------------------------------------------------------------------------- */
 
-#include "mpi.h"
-#include "math.h"
-#include "stdio.h"
-#include "string.h"
-#include "stdlib.h"
+#include <mpi.h>
+#include <math.h>
+#include <stdio.h>
+#include <string.h>
+#include <stdlib.h>
 #include "workspace.h"
 #include "fix_poems.h"
 #include "atom.h"
@@ -33,6 +33,7 @@
 #include "output.h"
 #include "group.h"
 #include "comm.h"
+#include "citeme.h"
 #include "memory.h"
 #include "error.h"
 
@@ -45,18 +46,38 @@ using namespace FixConst;
 #define EPSILON 1.0e-7
 #define MAXJACOBI 50
 
+static const char cite_fix_poems[] =
+  "fix poems command:\n\n"
+  "@Article{Mukherjee08,\n"
+  " author = {R. M. Mukherjee, P. S. Crozier, S. J. Plimpton, K. S. Anderson},\n"
+  " title = {Substructured molecular dynamics using multibody dynamics algorithms},\n"
+  " journal = {Intl.~J.~Non-linear Mechanics},\n"
+  " year =    2008,\n"
+  " volume =  43,\n"
+  " pages =   {1045--1055}\n"
+  "}\n\n";
+
 /* ----------------------------------------------------------------------
    define rigid bodies and joints, initiate POEMS
 ------------------------------------------------------------------------- */
 
 FixPOEMS::FixPOEMS(LAMMPS *lmp, int narg, char **arg) :
-  Fix(lmp, narg, arg)
+  Fix(lmp, narg, arg), step_respa(NULL), natom2body(NULL),
+  atom2body(NULL), displace(NULL), nrigid(NULL), masstotal(NULL),
+  xcm(NULL), vcm(NULL), fcm(NULL), inertia(NULL), ex_space(NULL),
+  ey_space(NULL), ez_space(NULL), angmom(NULL), omega(NULL),
+  torque(NULL), sum(NULL), all(NULL), jointbody(NULL),
+  xjoint(NULL), freelist(NULL), poems(NULL)
 {
+  if (lmp->citeme) lmp->citeme->add(cite_fix_poems);
+
   int i,j,ibody;
 
   time_integrate = 1;
   rigid_flag = 1;
   virial_flag = 1;
+  thermo_virial = 1;
+  dof_flag = 1;
 
   MPI_Comm_rank(world,&me);
 
@@ -80,7 +101,6 @@ FixPOEMS::FixPOEMS(LAMMPS *lmp, int narg, char **arg) :
   int mapflag = 0;
   if (atom->map_style == 0) {
     mapflag = 1;
-    atom->map_style = 1;
     atom->map_init();
     atom->map_set();
   }
@@ -130,7 +150,7 @@ FixPOEMS::FixPOEMS(LAMMPS *lmp, int narg, char **arg) :
       if (!(mask[i] & groupbit)) natom2body[i] = 0;
 
   // each molecule in fix group is a rigid body
-  // maxmol = largest molecule #
+  // maxmol = largest molecule ID
   // ncount = # of atoms in each molecule (have to sum across procs)
   // nbody = # of non-zero ncount values
   // use nall as incremented ptr to set atom2body[] values for each atom
@@ -138,31 +158,36 @@ FixPOEMS::FixPOEMS(LAMMPS *lmp, int narg, char **arg) :
   } else if (strcmp(arg[3],"molecule") == 0) {
     if (narg != 4) error->all(FLERR,"Illegal fix poems command");
     if (atom->molecular == 0)
-      error->all(FLERR,"Must use a molecular atom style with fix poems molecule");
+      error->all(FLERR,
+                 "Must use a molecular atom style with fix poems molecule");
 
     int *mask = atom->mask;
-    int *molecule = atom->molecule;
+    tagint *molecule = atom->molecule;
     int nlocal = atom->nlocal;
 
-    int maxmol = -1;
+    tagint maxmol_tag = -1;
     for (i = 0; i < nlocal; i++)
-      if (mask[i] & groupbit) maxmol = MAX(maxmol,molecule[i]);
+      if (mask[i] & groupbit) maxmol_tag = MAX(maxmol_tag,molecule[i]);
 
-    int itmp;
-    MPI_Allreduce(&maxmol,&itmp,1,MPI_INT,MPI_MAX,world);
-    maxmol = itmp + 1;
+    tagint itmp;
+    MPI_Allreduce(&maxmol_tag,&itmp,1,MPI_LMP_TAGINT,MPI_MAX,world);
+    if (itmp+1 > MAXSMALLINT)
+      error->all(FLERR,"Too many molecules for fix poems");
+    int maxmol = (int) itmp;
 
-    int *ncount = new int[maxmol];
-    for (i = 0; i < maxmol; i++) ncount[i] = 0;
+    int *ncount;
+    memory->create(ncount,maxmol+1,"rigid:ncount");
+    for (i = 0; i <= maxmol; i++) ncount[i] = 0;
 
     for (i = 0; i < nlocal; i++)
       if (mask[i] & groupbit) ncount[molecule[i]]++;
 
-    int *nall = new int[maxmol];
-    MPI_Allreduce(ncount,nall,maxmol,MPI_INT,MPI_SUM,world);
+    int *nall;
+    memory->create(nall,maxmol+1,"rigid:ncount");
+    MPI_Allreduce(ncount,nall,maxmol+1,MPI_INT,MPI_SUM,world);
 
     nbody = 0;
-    for (i = 0; i < maxmol; i++)
+    for (i = 0; i <= maxmol; i++)
       if (nall[i]) nall[i] = nbody++;
       else nall[i] = -1;
 
@@ -174,8 +199,8 @@ FixPOEMS::FixPOEMS(LAMMPS *lmp, int narg, char **arg) :
       }
     }
 
-    delete [] ncount;
-    delete [] nall;
+    memory->destroy(ncount);
+    memory->destroy(nall);
 
   } else error->all(FLERR,"Illegal fix poems command");
 
@@ -189,7 +214,8 @@ FixPOEMS::FixPOEMS(LAMMPS *lmp, int narg, char **arg) :
     if (natom2body[i] > MAXBODY) flag = 1;
   int flagall;
   MPI_Allreduce(&flag,&flagall,1,MPI_INT,MPI_SUM,world);
-  if (flagall) error->all(FLERR,"Atom in too many rigid bodies - boost MAXBODY");
+  if (flagall)
+    error->all(FLERR,"Atom in too many rigid bodies - boost MAXBODY");
 
   // create all nbody-length arrays
 
@@ -360,7 +386,7 @@ void FixPOEMS::init()
   // only count joint atoms in 1st body
 
   int *type = atom->type;
-  tagint *image = atom->image;
+  imageint *image = atom->image;
   double *mass = atom->mass;
   double **x = atom->x;
   double **v = atom->v;
@@ -596,7 +622,7 @@ void FixPOEMS::setup(int vflag)
   // only count joint atoms in 1st body
 
   int *type = atom->type;
-  tagint *image = atom->image;
+  imageint *image = atom->image;
   double *mass = atom->mass;
   double **x = atom->x;
   double **v = atom->v;
@@ -658,12 +684,14 @@ void FixPOEMS::setup(int vflag)
 
   // guestimate virial as 2x the set_v contribution
 
-  if (vflag_global)
-    for (n = 0; n < 6; n++) virial[n] *= 2.0;
-  if (vflag_atom) {
-    for (i = 0; i < nlocal; i++)
-      for (n = 0; n < 6; n++)
-        vatom[i][n] *= 2.0;
+  if (evflag) {
+    if (vflag_global)
+      for (n = 0; n < 6; n++) virial[n] *= 2.0;
+    if (vflag_atom) {
+      for (i = 0; i < nlocal; i++)
+        for (n = 0; n < 6; n++)
+          vatom[i][n] *= 2.0;
+    }
   }
 
   // use post_force() to compute initial fcm & torque
@@ -710,7 +738,7 @@ void FixPOEMS::post_force(int vflag)
   int xbox,ybox,zbox;
   double dx,dy,dz;
 
-  tagint *image = atom->image;
+  imageint *image = atom->image;
   double **x = atom->x;
   double **f = atom->f;
   int nlocal = atom->nlocal;
@@ -907,7 +935,7 @@ void FixPOEMS::readfile(char *file)
     if (ptr == NULL || ptr[0] == '#') continue;
     ptr = strtok(NULL," ,\t\n\0");
 
-    while (ptr = strtok(NULL," ,\t\n\0")) {
+    while ((ptr = strtok(NULL," ,\t\n\0"))) {
       id = atoi(ptr);
       i = atom->map(id);
       if (i < 0 || i >= nlocal) continue;
@@ -918,7 +946,7 @@ void FixPOEMS::readfile(char *file)
   }
 
   memory->destroy(line);
-  fclose(fp);
+  if (me == 0) fclose(fp);
 }
 
 /* ---------------------------------------------------------------------- */
@@ -960,7 +988,7 @@ void FixPOEMS::jointbuild()
   // an atom in N rigid bodies, infers N-1 joints between 1st body and others
   // mylist = [0],[1] = 2 body indices, [2] = global ID of joint atom
 
-  int *tag = atom->tag;
+  tagint *tag = atom->tag;
   int nlocal = atom->nlocal;
 
   int mjoint = 0;
@@ -969,7 +997,7 @@ void FixPOEMS::jointbuild()
     mjoint += natom2body[i]-1;
   }
 
-  int **mylist = NULL;
+  tagint **mylist = NULL;
   if (mjoint) memory->create(mylist,mjoint,3,"poems:mylist");
 
   mjoint = 0;
@@ -986,7 +1014,7 @@ void FixPOEMS::jointbuild()
   // jlist = mylist concatenated across all procs via MPI_Allgatherv
 
   MPI_Allreduce(&mjoint,&njoint,1,MPI_INT,MPI_SUM,world);
-  int **jlist = NULL;
+  tagint **jlist = NULL;
   if (njoint) memory->create(jlist,njoint,3,"poems:jlist");
 
   int nprocs;
@@ -1005,11 +1033,11 @@ void FixPOEMS::jointbuild()
 
   if (njoint) {
     if (mjoint)
-      MPI_Allgatherv(mylist[0],3*mjoint,MPI_INT,jlist[0],
-                     recvcounts,displs,MPI_INT,world);
+      MPI_Allgatherv(mylist[0],3*mjoint,MPI_LMP_TAGINT,jlist[0],
+                     recvcounts,displs,MPI_LMP_TAGINT,world);
     else
-      MPI_Allgatherv(NULL,3*mjoint,MPI_INT,jlist[0],
-                     recvcounts,displs,MPI_INT,world);
+      MPI_Allgatherv(NULL,3*mjoint,MPI_LMP_TAGINT,jlist[0],
+                     recvcounts,displs,MPI_LMP_TAGINT,world);
   }
 
   delete [] recvcounts;
@@ -1018,7 +1046,8 @@ void FixPOEMS::jointbuild()
   // warning if no joints
 
   if (njoint == 0 && me == 0)
-    error->warning(FLERR,"No joints between rigid bodies, use fix rigid instead");
+    error->warning(FLERR,
+                   "No joints between rigid bodies, use fix rigid instead");
 
   // sort joint list in ascending order by body indices
   // check for loops in joint connections between rigid bodies
@@ -1036,7 +1065,8 @@ void FixPOEMS::jointbuild()
     bodyflag[jlist[i][1]]++;
   }
   for (i = 0; i < nbody; i++)
-    if (bodyflag[i] > 2) error->all(FLERR,"Tree structure in joint connections");
+    if (bodyflag[i] > 2)
+      error->all(FLERR,"Tree structure in joint connections");
   delete [] bodyflag;
 
   // allocate and setup joint arrays
@@ -1101,9 +1131,10 @@ void FixPOEMS::jointbuild()
   sort criterion: sort on 1st body, if equal sort on 2nd body
 ------------------------------------------------------------------------- */
 
-void FixPOEMS::sortlist(int n, int **list)
+void FixPOEMS::sortlist(int n, tagint **list)
 {
-  int i,j,v0,v1,v2,flag;
+  int i,j,flag;
+  tagint v0,v1,v2;
 
   int inc = 1;
   while (inc <= n) inc = 3*inc + 1;
@@ -1140,7 +1171,7 @@ void FixPOEMS::sortlist(int n, int **list)
   treat as graph: vertex = body, edge = joint between 2 bodies
 ------------------------------------------------------------------------- */
 
-int FixPOEMS::loopcheck(int nvert, int nedge, int **elist)
+int FixPOEMS::loopcheck(int nvert, int nedge, tagint **elist)
 {
   int i,j,k;
 
@@ -1341,7 +1372,7 @@ void FixPOEMS::set_xv()
   double x0,x1,x2,v0,v1,v2,fc0,fc1,fc2,massone;
   double vr[6];
 
-  tagint *image = atom->image;
+  imageint *image = atom->image;
   double **x = atom->x;
   double **v = atom->v;
   double **f = atom->f;
@@ -1445,7 +1476,7 @@ void FixPOEMS::set_v()
   double **x = atom->x;
   double **v = atom->v;
   int *type = atom->type;
-  tagint *image = atom->image;
+  imageint *image = atom->image;
   int nlocal = atom->nlocal;
 
   double xprd = domain->xprd;
@@ -1528,7 +1559,7 @@ void FixPOEMS::grow_arrays(int nmax)
    copy values within local atom-based arrays
 ------------------------------------------------------------------------- */
 
-void FixPOEMS::copy_arrays(int i, int j)
+void FixPOEMS::copy_arrays(int i, int j, int delflag)
 {
   natom2body[j] = natom2body[i];
   for (int k = 0; k < natom2body[j]; k++) atom2body[j][k] = atom2body[i][k];

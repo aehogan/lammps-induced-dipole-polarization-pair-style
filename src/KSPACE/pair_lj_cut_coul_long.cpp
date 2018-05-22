@@ -15,10 +15,10 @@
    Contributing author: Paul Crozier (SNL)
 ------------------------------------------------------------------------- */
 
-#include "math.h"
-#include "stdio.h"
-#include "stdlib.h"
-#include "string.h"
+#include <math.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
 #include "pair_lj_cut_coul_long.h"
 #include "atom.h"
 #include "comm.h"
@@ -51,6 +51,7 @@ PairLJCutCoulLong::PairLJCutCoulLong(LAMMPS *lmp) : Pair(lmp)
 {
   ewaldflag = pppmflag = 1;
   respa_enable = 1;
+  writedata = 1;
   ftable = NULL;
   qdist = 0.0;
 }
@@ -223,10 +224,10 @@ void PairLJCutCoulLong::compute_inner()
   int newton_pair = force->newton_pair;
   double qqrd2e = force->qqrd2e;
 
-  inum = listinner->inum;
-  ilist = listinner->ilist;
-  numneigh = listinner->numneigh;
-  firstneigh = listinner->firstneigh;
+  inum = list->inum_inner;
+  ilist = list->ilist_inner;
+  numneigh = list->numneigh_inner;
+  firstneigh = list->firstneigh_inner;
 
   double cut_out_on = cut_respa[0];
   double cut_out_off = cut_respa[1];
@@ -308,10 +309,10 @@ void PairLJCutCoulLong::compute_middle()
   int newton_pair = force->newton_pair;
   double qqrd2e = force->qqrd2e;
 
-  inum = listmiddle->inum;
-  ilist = listmiddle->ilist;
-  numneigh = listmiddle->numneigh;
-  firstneigh = listmiddle->firstneigh;
+  inum = list->inum_middle;
+  ilist = list->ilist_middle;
+  numneigh = list->numneigh_middle;
+  firstneigh = list->firstneigh_middle;
 
   double cut_in_off = cut_respa[0];
   double cut_in_on = cut_respa[1];
@@ -409,10 +410,10 @@ void PairLJCutCoulLong::compute_outer(int eflag, int vflag)
   int newton_pair = force->newton_pair;
   double qqrd2e = force->qqrd2e;
 
-  inum = listouter->inum;
-  ilist = listouter->ilist;
-  numneigh = listouter->numneigh;
-  firstneigh = listouter->firstneigh;
+  inum = list->inum;
+  ilist = list->ilist;
+  numneigh = list->numneigh;
+  firstneigh = list->firstneigh;
 
   double cut_in_off = cut_respa[2];
   double cut_in_on = cut_respa[3];
@@ -549,9 +550,10 @@ void PairLJCutCoulLong::compute_outer(int eflag, int vflag)
           if (rsq <= cut_in_off_sq) {
             r6inv = r2inv*r2inv*r2inv;
             forcelj = r6inv * (lj1[itype][jtype]*r6inv - lj2[itype][jtype]);
-          } else if (rsq <= cut_in_on_sq)
+          } else if (rsq <= cut_in_on_sq) {
+            r6inv = r2inv*r2inv*r2inv;
             forcelj = r6inv * (lj1[itype][jtype]*r6inv - lj2[itype][jtype]);
-
+          }
           fpair = (forcecoul + factor_lj*forcelj) * r2inv;
         }
 
@@ -597,16 +599,16 @@ void PairLJCutCoulLong::settings(int narg, char **arg)
 {
  if (narg < 1 || narg > 2) error->all(FLERR,"Illegal pair_style command");
 
-  cut_lj_global = force->numeric(arg[0]);
+  cut_lj_global = force->numeric(FLERR,arg[0]);
   if (narg == 1) cut_coul = cut_lj_global;
-  else cut_coul = force->numeric(arg[1]);
+  else cut_coul = force->numeric(FLERR,arg[1]);
 
   // reset cutoffs that have been explicitly set
 
   if (allocated) {
     int i,j;
     for (i = 1; i <= atom->ntypes; i++)
-      for (j = i+1; j <= atom->ntypes; j++)
+      for (j = i; j <= atom->ntypes; j++)
         if (setflag[i][j]) cut_lj[i][j] = cut_lj_global;
   }
 }
@@ -622,14 +624,14 @@ void PairLJCutCoulLong::coeff(int narg, char **arg)
   if (!allocated) allocate();
 
   int ilo,ihi,jlo,jhi;
-  force->bounds(arg[0],atom->ntypes,ilo,ihi);
-  force->bounds(arg[1],atom->ntypes,jlo,jhi);
+  force->bounds(FLERR,arg[0],atom->ntypes,ilo,ihi);
+  force->bounds(FLERR,arg[1],atom->ntypes,jlo,jhi);
 
-  double epsilon_one = force->numeric(arg[2]);
-  double sigma_one = force->numeric(arg[3]);
+  double epsilon_one = force->numeric(FLERR,arg[2]);
+  double sigma_one = force->numeric(FLERR,arg[3]);
 
   double cut_lj_one = cut_lj_global;
-  if (narg == 5) cut_lj_one = force->numeric(arg[4]);
+  if (narg == 5) cut_lj_one = force->numeric(FLERR,arg[4]);
 
   int count = 0;
   for (int i = ilo; i <= ihi; i++) {
@@ -654,41 +656,23 @@ void PairLJCutCoulLong::init_style()
   if (!atom->q_flag)
     error->all(FLERR,"Pair style lj/cut/coul/long requires atom attribute q");
 
-  // request regular or rRESPA neighbor lists
+  // request regular or rRESPA neighbor list
 
   int irequest;
+  int respa = 0;
 
   if (update->whichflag == 1 && strstr(update->integrate_style,"respa")) {
-    int respa = 0;
     if (((Respa *) update->integrate)->level_inner >= 0) respa = 1;
     if (((Respa *) update->integrate)->level_middle >= 0) respa = 2;
+  }
 
-    if (respa == 0) irequest = neighbor->request(this);
-    else if (respa == 1) {
-      irequest = neighbor->request(this);
-      neighbor->requests[irequest]->id = 1;
-      neighbor->requests[irequest]->half = 0;
-      neighbor->requests[irequest]->respainner = 1;
-      irequest = neighbor->request(this);
-      neighbor->requests[irequest]->id = 3;
-      neighbor->requests[irequest]->half = 0;
-      neighbor->requests[irequest]->respaouter = 1;
-    } else {
-      irequest = neighbor->request(this);
-      neighbor->requests[irequest]->id = 1;
-      neighbor->requests[irequest]->half = 0;
-      neighbor->requests[irequest]->respainner = 1;
-      irequest = neighbor->request(this);
-      neighbor->requests[irequest]->id = 2;
-      neighbor->requests[irequest]->half = 0;
-      neighbor->requests[irequest]->respamiddle = 1;
-      irequest = neighbor->request(this);
-      neighbor->requests[irequest]->id = 3;
-      neighbor->requests[irequest]->half = 0;
-      neighbor->requests[irequest]->respaouter = 1;
-    }
+  irequest = neighbor->request(this,instance_me);
 
-  } else irequest = neighbor->request(this);
+  if (respa >= 1) {
+    neighbor->requests[irequest]->respaouter = 1;
+    neighbor->requests[irequest]->respainner = 1;
+  }
+  if (respa == 2) neighbor->requests[irequest]->respamiddle = 1;
 
   cut_coulsq = cut_coul * cut_coul;
 
@@ -708,19 +692,6 @@ void PairLJCutCoulLong::init_style()
   // setup force tables
 
   if (ncoultablebits) init_tables(cut_coul,cut_respa);
-}
-
-/* ----------------------------------------------------------------------
-   neighbor callback to inform pair style of neighbor list to use
-   regular or rRESPA
-------------------------------------------------------------------------- */
-
-void PairLJCutCoulLong::init_list(int id, NeighList *ptr)
-{
-  if (id == 0) list = ptr;
-  else if (id == 1) listinner = ptr;
-  else if (id == 2) listmiddle = ptr;
-  else if (id == 3) listouter = ptr;
 }
 
 /* ----------------------------------------------------------------------
@@ -746,7 +717,7 @@ double PairLJCutCoulLong::init_one(int i, int j)
   lj3[i][j] = 4.0 * epsilon[i][j] * pow(sigma[i][j],12.0);
   lj4[i][j] = 4.0 * epsilon[i][j] * pow(sigma[i][j],6.0);
 
-  if (offset_flag) {
+  if (offset_flag && (cut_lj[i][j] > 0.0)) {
     double ratio = sigma[i][j] / cut_lj[i][j];
     offset[i][j] = 4.0 * epsilon[i][j] * (pow(ratio,12.0) - pow(ratio,6.0));
   } else offset[i][j] = 0.0;
@@ -880,6 +851,28 @@ void PairLJCutCoulLong::read_restart_settings(FILE *fp)
   MPI_Bcast(&tabinner,1,MPI_DOUBLE,0,world);
 }
 
+
+/* ----------------------------------------------------------------------
+   proc 0 writes to data file
+------------------------------------------------------------------------- */
+
+void PairLJCutCoulLong::write_data(FILE *fp)
+{
+  for (int i = 1; i <= atom->ntypes; i++)
+    fprintf(fp,"%d %g %g\n",i,epsilon[i][i],sigma[i][i]);
+}
+
+/* ----------------------------------------------------------------------
+   proc 0 writes all pairs to data file
+------------------------------------------------------------------------- */
+
+void PairLJCutCoulLong::write_data_all(FILE *fp)
+{
+  for (int i = 1; i <= atom->ntypes; i++)
+    for (int j = i; j <= atom->ntypes; j++)
+      fprintf(fp,"%d %d %g %g %g\n",i,j,epsilon[i][j],sigma[i][j],cut_lj[i][j]);
+}
+
 /* ---------------------------------------------------------------------- */
 
 double PairLJCutCoulLong::single(int i, int j, int itype, int jtype,
@@ -954,5 +947,6 @@ void *PairLJCutCoulLong::extract(const char *str, int &dim)
   if (strcmp(str,"cut_coul") == 0) return (void *) &cut_coul;
   dim = 2;
   if (strcmp(str,"epsilon") == 0) return (void *) epsilon;
+  if (strcmp(str,"sigma") == 0) return (void *) sigma;
   return NULL;
 }

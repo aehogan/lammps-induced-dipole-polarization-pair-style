@@ -11,15 +11,15 @@
    See the README file in the top-level LAMMPS directory.
 ------------------------------------------------------------------------- */
 
-#include "mpi.h"
-#include "string.h"
+#include <mpi.h>
+#include <string.h>
 #include "compute_temp_region.h"
 #include "atom.h"
 #include "update.h"
 #include "force.h"
-#include "modify.h"
 #include "domain.h"
 #include "region.h"
+#include "group.h"
 #include "memory.h"
 #include "error.h"
 
@@ -28,7 +28,8 @@ using namespace LAMMPS_NS;
 /* ---------------------------------------------------------------------- */
 
 ComputeTempRegion::ComputeTempRegion(LAMMPS *lmp, int narg, char **arg) :
-  Compute(lmp, narg, arg)
+  Compute(lmp, narg, arg),
+  idregion(NULL)
 {
   if (narg != 4) error->all(FLERR,"Illegal compute temp/region command");
 
@@ -69,8 +70,22 @@ void ComputeTempRegion::init()
   iregion = domain->find_region(idregion);
   if (iregion == -1)
     error->all(FLERR,"Region ID for compute temp/region does not exist");
+}
 
+/* ---------------------------------------------------------------------- */
+
+void ComputeTempRegion::setup()
+{
+  dynamic = 0;
+  if (dynamic_user || group->dynamic[igroup]) dynamic = 1;
   dof = 0.0;
+}
+
+/* ---------------------------------------------------------------------- */
+
+void ComputeTempRegion::dof_remove_pre()
+{
+  domain->regions[iregion]->prematch();
 }
 
 /* ---------------------------------------------------------------------- */
@@ -97,6 +112,8 @@ double ComputeTempRegion::compute_scalar()
   int nlocal = atom->nlocal;
 
   Region *region = domain->regions[iregion];
+  region->prematch();
+
   int count = 0;
   double t = 0.0;
 
@@ -120,6 +137,8 @@ double ComputeTempRegion::compute_scalar()
   tarray[1] = t;
   MPI_Allreduce(tarray,tarray_all,2,MPI_DOUBLE,MPI_SUM,world);
   dof = domain->dimension * tarray_all[0] - extra_dof;
+  if (dof < 0.0 && tarray_all[0] > 0.0)
+    error->all(FLERR,"Temperature compute degrees of freedom < 0");
   if (dof > 0) scalar = force->mvv2e * tarray_all[1] / (dof * force->boltz);
   else scalar = 0.0;
   return scalar;
@@ -142,6 +161,8 @@ void ComputeTempRegion::compute_vector()
   int nlocal = atom->nlocal;
 
   Region *region = domain->regions[iregion];
+  region->prematch();
+
   double massone,t[6];
   for (i = 0; i < 6; i++) t[i] = 0.0;
 
@@ -179,6 +200,23 @@ void ComputeTempRegion::remove_bias(int i, double *v)
 }
 
 /* ----------------------------------------------------------------------
+   remove velocity bias from atom I to leave thermal velocity
+------------------------------------------------------------------------- */
+
+void ComputeTempRegion::remove_bias_thr(int i, double *v, double *b)
+{
+  double *x = atom->x[i];
+  if (domain->regions[iregion]->match(x[0],x[1],x[2]))
+    b[0] = b[1] = b[2] = 0.0;
+  else {
+    b[0] = v[0];
+    b[1] = v[1];
+    b[2] = v[2];
+    v[0] = v[1] = v[2] = 0.0;
+  }
+}
+
+/* ----------------------------------------------------------------------
    remove velocity bias from all atoms to leave thermal velocity
 ------------------------------------------------------------------------- */
 
@@ -189,7 +227,7 @@ void ComputeTempRegion::remove_bias_all()
   int *mask = atom->mask;
   int nlocal = atom->nlocal;
 
-  if (nlocal > maxbias) {
+  if (atom->nmax > maxbias) {
     memory->destroy(vbiasall);
     maxbias = atom->nmax;
     memory->create(vbiasall,maxbias,3,"temp/region:vbiasall");
@@ -223,6 +261,18 @@ void ComputeTempRegion::restore_bias(int i, double *v)
 }
 
 /* ----------------------------------------------------------------------
+   add back in velocity bias to atom I removed by remove_bias_thr()
+   assume remove_bias_thr() was previously called with the same buffer b
+------------------------------------------------------------------------- */
+
+void ComputeTempRegion::restore_bias_thr(int i, double *v, double *b)
+{
+  v[0] += b[0];
+  v[1] += b[1];
+  v[2] += b[2];
+}
+
+/* ----------------------------------------------------------------------
    add back in velocity bias to all atoms removed by remove_bias_all()
    assume remove_bias_all() was previously called
 ------------------------------------------------------------------------- */
@@ -245,6 +295,6 @@ void ComputeTempRegion::restore_bias_all()
 
 double ComputeTempRegion::memory_usage()
 {
-  double bytes = maxbias * sizeof(double);
+  double bytes = 3*maxbias * sizeof(double);
   return bytes;
 }

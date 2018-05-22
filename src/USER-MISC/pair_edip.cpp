@@ -21,11 +21,11 @@
        Phys. Rev. B 58, 2539 (1998)
 ------------------------------------------------------------------------- */
 
-#include "math.h"
-#include "float.h"
-#include "stdio.h"
-#include "stdlib.h"
-#include "string.h"
+#include <math.h>
+#include <float.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
 #include "pair_edip.h"
 #include "atom.h"
 #include "neighbor.h"
@@ -55,6 +55,7 @@ PairEDIP::PairEDIP(LAMMPS *lmp) : Pair(lmp)
   single_enable = 0;
   restartinfo = 0;
   one_coeff = 1;
+  manybody_flag = 1;
 
   nelements = 0;
   elements = NULL;
@@ -90,7 +91,7 @@ PairEDIP::~PairEDIP()
 void PairEDIP::compute(int eflag, int vflag)
 {
   int i,j,k,ii,inum,jnum;
-  int itype,jtype,ktype,ijparam,ikparam,ijkparam;
+  int itype,jtype,ktype,ijparam,ikparam;
   double xtmp,ytmp,ztmp,evdwl;
   int *ilist,*jlist,*numneigh,**firstneigh;
   register int preForceCoord_counter;
@@ -126,7 +127,6 @@ void PairEDIP::compute(int eflag, int vflag)
   double exp3B_ik;
   double exp3BDerived_ik;
   double qFunction;
-  double qFunctionDerived;
   double tauFunction;
   double tauFunctionDerived;
   double expMinusBetaZeta_iZeta_i;
@@ -289,8 +289,6 @@ void PairEDIP::compute(int eflag, int vflag)
     tauFunctionDerived = interpolY1 + (interpolY2 - interpolY1) *
       (interpolTMP-interpolIDX);
 
-    qFunctionDerived = -mu * qFunction;
-
     forceModCoord_factor = 2.0 * beta * zeta_i * expMinusBetaZeta_iZeta_i;
 
     forceModCoord = 0.0;
@@ -364,7 +362,6 @@ void PairEDIP::compute(int eflag, int vflag)
           k &= NEIGHMASK;
           ktype = map[type[k]];
           ikparam = elem2param[itype][ktype][ktype];
-          ijkparam = elem2param[itype][jtype][ktype];
 
           dr_ik[0] = x[k][0] - xtmp;
           dr_ik[1] = x[k][1] - ytmp;
@@ -638,7 +635,6 @@ void PairEDIP::initGrids(void)
   int numGridPointsNotOneCutoffFunction;
   int numGridPointsCutoffFunction;
   int numGridPointsR;
-  int numGridPointsRTotal;
   int numGridPointsQFunctionGrid;
   int numGridPointsExpMinusBetaZeta_iZeta_i;
   int numGridPointsTauFunctionGrid;
@@ -736,7 +732,6 @@ void PairEDIP::initGrids(void)
 
   numGridPointsR = (int)
     ((cutoffA + leftLimitToZero - GRIDSTART) * GRIDDENSITY);
-  numGridPointsRTotal = numGridPointsR + 2;
 
   r = GRIDSTART;
   deltaArgumentR = 1.0 / GRIDDENSITY;
@@ -803,10 +798,13 @@ void PairEDIP::coeff(int narg, char **arg)
     }
   }
 
+  if (nelements != 1)
+    error->all(FLERR,"Pair style edip only supports single element potentials");
+
   // read potential file and initialize potential parameters
 
   read_file(arg[2]);
-  setup();
+  setup_params();
 
   // clear setflag since coeff() called once with I,J = * *
 
@@ -840,14 +838,12 @@ void PairEDIP::coeff(int narg, char **arg)
 
 void PairEDIP::init_style()
 {
-  if (atom->tag_enable == 0)
-    error->all(FLERR,"Pair style EDIP requires atom IDs");
   if (force->newton_pair == 0)
-    error->all(FLERR,"Pair style EDIP requires newton pair on");
+    error->all(FLERR,"Pair style edip requires newton pair on");
 
   // need a full neighbor list
 
-  int irequest = neighbor->request(this);
+  int irequest = neighbor->request(this,instance_me);
   neighbor->requests[irequest]->half = 0;
   neighbor->requests[irequest]->full = 1;
 }
@@ -878,7 +874,7 @@ void PairEDIP::read_file(char *file)
 
   FILE *fp;
   if (comm->me == 0) {
-    fp = fopen(file,"r");
+    fp = force->open_potential(file);
     if (fp == NULL) {
       char str[128];
       sprintf(str,"Cannot open EDIP potential file %s",file);
@@ -1000,7 +996,7 @@ void PairEDIP::read_file(char *file)
 
 /* ---------------------------------------------------------------------- */
 
-void PairEDIP::setup()
+void PairEDIP::setup_params()
 {
   int i,j,k,m,n;
   double rtmp;
@@ -1041,7 +1037,7 @@ void PairEDIP::setup()
     if (rtmp > cutmax) cutmax = rtmp;
   }
 
-  // this should be removed for multi species parametrizations
+  // this should be removed for multi species parameterization
 
   A = params[0].A;
   B = params[0].B;

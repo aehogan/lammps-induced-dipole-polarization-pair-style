@@ -15,10 +15,10 @@
    Contributing author: Ilya Valuev (JIHT, Moscow, Russia)
 ------------------------------------------------------------------------- */
 
-#include "math.h"
-#include "stdio.h"
-#include "stdlib.h"
-#include "string.h"
+#include <math.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
 #include "pair_awpmd_cut.h"
 #include "atom.h"
 #include "update.h"
@@ -74,8 +74,8 @@ PairAWPMDCut::~PairAWPMDCut()
 
 
 struct cmp_x{
-  double tol;
   double **xx;
+  double tol;
   cmp_x(double **xx_=NULL, double tol_=1e-12):xx(xx_),tol(tol_){}
   bool operator()(const pair<int,int> &left, const pair<int,int> &right) const {
     if(left.first==right.first){
@@ -116,8 +116,6 @@ void PairAWPMDCut::compute(int eflag, int vflag)
   double **x = atom->x;
   double **f = atom->f;
   double *q = atom->q;
-  double *erforce = atom->erforce;
-  double *eradius = atom->eradius;
   int *spin = atom->spin;
   int *type = atom->type;
   int *etag = atom->etag;
@@ -128,7 +126,6 @@ void PairAWPMDCut::compute(int eflag, int vflag)
   int ntot=nlocal+nghost;
 
   int newton_pair = force->newton_pair;
-  double qqrd2e = force->qqrd2e;
 
   int inum = list->inum;
   int *ilist = list->ilist;
@@ -410,7 +407,7 @@ void PairAWPMDCut::allocate()
 void PairAWPMDCut::settings(int narg, char **arg){
   if (narg < 1) error->all(FLERR,"Illegal pair_style command");
 
-  cut_global = force->numeric(arg[0]);
+  cut_global = force->numeric(FLERR,arg[0]);
 
   ermscale=1.;
   width_pbc=0.;
@@ -430,21 +427,21 @@ void PairAWPMDCut::settings(int narg, char **arg){
       i++;
       if(i>=narg)
         error->all(FLERR,"Setting 'fix' should be followed by a number in awpmd/cut");
-      wpmd->w0=force->numeric(arg[i]);
+      wpmd->w0=force->numeric(FLERR,arg[i]);
     }
     else if(!strcmp(arg[i],"harm")){
       wpmd->constraint=AWPMD::HARM;
       i++;
       if(i>=narg)
         error->all(FLERR,"Setting 'harm' should be followed by a number in awpmd/cut");
-      wpmd->w0=force->numeric(arg[i]);
+      wpmd->w0=force->numeric(FLERR,arg[i]);
       wpmd->set_harm_constr(wpmd->w0);
     }
     else if(!strcmp(arg[i],"pbc")){
       i++;
       if(i>=narg)
         error->all(FLERR,"Setting 'pbc' should be followed by a number in awpmd/cut");
-      width_pbc=force->numeric(arg[i]);
+      width_pbc=force->numeric(FLERR,arg[i]);
     }
     else if(!strcmp(arg[i],"relax"))
       wpmd->constraint=AWPMD::RELAX;
@@ -452,21 +449,11 @@ void PairAWPMDCut::settings(int narg, char **arg){
       i++;
       if(i>=narg)
         error->all(FLERR,"Setting 'ermscale' should be followed by a number in awpmd/cut");
-      ermscale=force->numeric(arg[i]);
+      ermscale=force->numeric(FLERR,arg[i]);
     }
     else if(!strcmp(arg[i],"flex_press"))
       flexible_pressure_flag = 1;
   }
-
-
-  // reset cutoffs that have been explicitly set
-  /*
-  if (allocated) {
-    int i,j;
-    for (i = 1; i <= atom->ntypes; i++)
-      for (j = i+1; j <= atom->ntypes; j++)
-        if (setflag[i][j]) cut[i][j] = cut_global;
-  }*/
 }
 
 /* ----------------------------------------------------------------------
@@ -492,16 +479,16 @@ void PairAWPMDCut::coeff(int narg, char **arg)
   else{
     int i,j;
     for (i = 1; i <= atom->ntypes; i++)
-      for (j = i+1; j <= atom->ntypes; j++)
+      for (j = i; j <= atom->ntypes; j++)
         if (setflag[i][j]) cut[i][j] = cut_global;
   }
 
   int ilo,ihi,jlo,jhi;
-  force->bounds(arg[0],atom->ntypes,ilo,ihi);
-  force->bounds(arg[1],atom->ntypes,jlo,jhi);
+  force->bounds(FLERR,arg[0],atom->ntypes,ilo,ihi);
+  force->bounds(FLERR,arg[1],atom->ntypes,jlo,jhi);
 
   double cut_one = cut_global;
-  if (narg == 3) cut_one = atof(arg[2]);
+  if (narg == 3) cut_one = force->numeric(FLERR,arg[2]);
 
   int count = 0;
   for (int i = ilo; i <= ihi; i++) {
@@ -548,7 +535,7 @@ void PairAWPMDCut::init_style()
 
   // need a half neigh list and optionally a granular history neigh list
 
-  //int irequest = neighbor->request(this);
+  //int irequest = neighbor->request(this,instance_me);
 
   //if (atom->tag_enable == 0)
   //  error->all(FLERR,"Pair style reax requires atom IDs");
@@ -559,7 +546,7 @@ void PairAWPMDCut::init_style()
   //if (strcmp(update->unit_style,"real") != 0 && comm->me == 0)
     //error->warning(FLERR,"Not using real units with pair reax");
 
-  int irequest = neighbor->request(this);
+  int irequest = neighbor->request(this,instance_me);
   neighbor->requests[irequest]->newton = 2;
 
   if(force->e_mass==0. || force->hhmrr2e==0. || force->mvh2r==0.)

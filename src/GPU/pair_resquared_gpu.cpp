@@ -15,9 +15,9 @@
    Contributing author: Mike Brown (SNL)
 ------------------------------------------------------------------------- */
 
-#include "math.h"
-#include "stdio.h"
-#include "stdlib.h"
+#include <math.h>
+#include <stdio.h>
+#include <stdlib.h>
 #include "pair_resquared_gpu.h"
 #include "math_extra.h"
 #include "atom.h"
@@ -34,8 +34,10 @@
 #include "universe.h"
 #include "domain.h"
 #include "update.h"
-#include "string.h"
+#include <string.h>
 #include "gpu_extra.h"
+
+using namespace LAMMPS_NS;
 
 // External functions from cuda library for atom decomposition
 
@@ -49,7 +51,7 @@ int re_gpu_init(const int ntypes, double **shape, double **well,
 void re_gpu_clear();
 int ** re_gpu_compute_n(const int ago, const int inum, const int nall,
                         double **host_x, int *host_type, double *sublo,
-                        double *subhi, int *tag, int **nspecial, int **special,
+                        double *subhi, tagint *tag, int **nspecial, tagint **special,
                         const bool eflag, const bool vflag,
                         const bool eatom, const bool vatom, int &host_start,
                         int **ilist, int **jnum, const double cpu_time,
@@ -61,8 +63,6 @@ int * re_gpu_compute(const int ago, const int inum, const int nall,
                      const double cpu_time, bool &success, double **host_quat);
 double re_gpu_bytes();
 
-using namespace LAMMPS_NS;
-
 enum{SPHERE_SPHERE,SPHERE_ELLIPSE,ELLIPSE_SPHERE,ELLIPSE_ELLIPSE};
 
 /* ---------------------------------------------------------------------- */
@@ -70,6 +70,7 @@ enum{SPHERE_SPHERE,SPHERE_ELLIPSE,ELLIPSE_SPHERE,ELLIPSE_ELLIPSE};
 PairRESquaredGPU::PairRESquaredGPU(LAMMPS *lmp) : PairRESquared(lmp),
                                                 gpu_mode(GPU_FORCE)
 {
+  reinitflag = 0;
   avec = (AtomVecEllipsoid *) atom->style_match("ellipsoid");
   if (!avec)
     error->all(FLERR,"Pair resquared/gpu requires atom style ellipsoid");
@@ -200,7 +201,7 @@ void PairRESquaredGPU::init_style()
   GPU_EXTRA::check_flag(success,error,world);
 
   if (gpu_mode == GPU_FORCE) {
-    int irequest = neighbor->request(this);
+    int irequest = neighbor->request(this,instance_me);
     neighbor->requests[irequest]->half = 0;
     neighbor->requests[irequest]->full = 1;
   }

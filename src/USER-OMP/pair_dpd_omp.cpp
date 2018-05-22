@@ -12,7 +12,7 @@
    Contributing author: Axel Kohlmeyer (Temple U)
 ------------------------------------------------------------------------- */
 
-#include "math.h"
+#include <math.h>
 #include "pair_dpd_omp.h"
 #include "atom.h"
 #include "comm.h"
@@ -35,6 +35,7 @@ PairDPDOMP::PairDPDOMP(LAMMPS *lmp) :
   suffix_flag |= Suffix::OMP;
   respa_enable = 0;
   random_thr = NULL;
+  nthreads = 0;
 }
 
 /* ---------------------------------------------------------------------- */
@@ -42,7 +43,7 @@ PairDPDOMP::PairDPDOMP(LAMMPS *lmp) :
 PairDPDOMP::~PairDPDOMP()
 {
   if (random_thr) {
-    for (int i=1; i < comm->nthreads; ++i)
+    for (int i=1; i < nthreads; ++i)
       delete random_thr[i];
 
     delete[] random_thr;
@@ -59,15 +60,26 @@ void PairDPDOMP::compute(int eflag, int vflag)
   } else evflag = vflag_fdotr = 0;
 
   const int nall = atom->nlocal + atom->nghost;
-  const int nthreads = comm->nthreads;
   const int inum = list->inum;
 
-  if (!random_thr)
-    random_thr = new RanMars*[nthreads];
+  // number of threads has changed. reallocate pool of pRNGs
+  if (nthreads != comm->nthreads) {
+    if (random_thr) {
+      for (int i=1; i < nthreads; ++i)
+        delete random_thr[i];
 
-  // to ensure full compatibility with the serial DPD style
-  // we use is random number generator instance for thread 0
-  random_thr[0] = random;
+      delete[] random_thr;
+    }
+
+    nthreads = comm->nthreads;
+    random_thr = new RanMars*[nthreads];
+    for (int i=1; i < nthreads; ++i)
+      random_thr[i] = NULL;
+
+    // to ensure full compatibility with the serial DPD style
+    // we use the serial random number generator instance for thread 0
+    random_thr[0] = random;
+  }
 
 #if defined(_OPENMP)
 #pragma omp parallel default(none) shared(eflag,vflag)
@@ -77,11 +89,12 @@ void PairDPDOMP::compute(int eflag, int vflag)
 
     loop_setup_thr(ifrom, ito, tid, inum, nthreads);
     ThrData *thr = fix->get_thr(tid);
+    thr->timer(Timer::START);
     ev_setup_thr(eflag, vflag, nall, eatom, vatom, thr);
 
     // generate a random number generator instance for
     // all threads != 0. make sure we use unique seeds.
-    if (random_thr && tid > 0)
+    if ((tid > 0) && (random_thr[tid] == NULL))
       random_thr[tid] = new RanMars(Pair::lmp, seed + comm->me
                                     + comm->nprocs*tid);
 
@@ -98,6 +111,7 @@ void PairDPDOMP::compute(int eflag, int vflag)
       else eval<0,0,0>(ifrom, ito, thr);
     }
 
+    thr->timer(Timer::PAIR);
     reduce_thr(this, eflag, vflag, thr);
   } // end of omp parallel region
 }
@@ -113,10 +127,10 @@ void PairDPDOMP::eval(int iifrom, int iito, ThrData * const thr)
 
   evdwl = 0.0;
 
-  const double * const * const x = atom->x;
-  const double * const * const v = atom->v;
-  double * const * const f = thr->get_f();
-  const int * const type = atom->type;
+  const dbl3_t * _noalias const x = (dbl3_t *) atom->x[0];
+  const dbl3_t * _noalias const v = (dbl3_t *) atom->v[0];
+  dbl3_t * _noalias const f = (dbl3_t *) thr->get_f()[0];
+  const int * _noalias const type = atom->type;
   const int nlocal = atom->nlocal;
   const double *special_lj = force->special_lj;
   const double dtinvsqrt = 1.0/sqrt(update->dt);
@@ -132,12 +146,12 @@ void PairDPDOMP::eval(int iifrom, int iito, ThrData * const thr)
   for (ii = iifrom; ii < iito; ++ii) {
 
     i = ilist[ii];
-    xtmp = x[i][0];
-    ytmp = x[i][1];
-    ztmp = x[i][2];
-    vxtmp = v[i][0];
-    vytmp = v[i][1];
-    vztmp = v[i][2];
+    xtmp = x[i].x;
+    ytmp = x[i].y;
+    ztmp = x[i].z;
+    vxtmp = v[i].x;
+    vytmp = v[i].y;
+    vztmp = v[i].z;
     itype = type[i];
     jlist = firstneigh[i];
     jnum = numneigh[i];
@@ -148,9 +162,9 @@ void PairDPDOMP::eval(int iifrom, int iito, ThrData * const thr)
       factor_dpd = special_lj[sbmask(j)];
       j &= NEIGHMASK;
 
-      delx = xtmp - x[j][0];
-      dely = ytmp - x[j][1];
-      delz = ztmp - x[j][2];
+      delx = xtmp - x[j].x;
+      dely = ytmp - x[j].y;
+      delz = ztmp - x[j].z;
       rsq = delx*delx + dely*dely + delz*delz;
       jtype = type[j];
 
@@ -158,9 +172,9 @@ void PairDPDOMP::eval(int iifrom, int iito, ThrData * const thr)
         r = sqrt(rsq);
         if (r < EPSILON) continue;     // r can be 0.0 in DPD systems
         rinv = 1.0/r;
-        delvx = vxtmp - v[j][0];
-        delvy = vytmp - v[j][1];
-        delvz = vztmp - v[j][2];
+        delvx = vxtmp - v[j].x;
+        delvy = vytmp - v[j].y;
+        delvz = vztmp - v[j].z;
         dot = delx*delvx + dely*delvy + delz*delvz;
         wd = 1.0 - r/cut[itype][jtype];
         randnum = rng.gaussian();
@@ -178,9 +192,9 @@ void PairDPDOMP::eval(int iifrom, int iito, ThrData * const thr)
         fytmp += dely*fpair;
         fztmp += delz*fpair;
         if (NEWTON_PAIR || j < nlocal) {
-          f[j][0] -= delx*fpair;
-          f[j][1] -= dely*fpair;
-          f[j][2] -= delz*fpair;
+          f[j].x -= delx*fpair;
+          f[j].y -= dely*fpair;
+          f[j].z -= delz*fpair;
         }
 
         if (EFLAG) {
@@ -195,9 +209,9 @@ void PairDPDOMP::eval(int iifrom, int iito, ThrData * const thr)
                                  evdwl,0.0,fpair,delx,dely,delz,thr);
       }
     }
-    f[i][0] += fxtmp;
-    f[i][1] += fytmp;
-    f[i][2] += fztmp;
+    f[i].x += fxtmp;
+    f[i].y += fytmp;
+    f[i].z += fztmp;
   }
 }
 

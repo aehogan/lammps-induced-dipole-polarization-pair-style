@@ -16,11 +16,11 @@
                         Axel Kohlmeyer (Temple U), support for groups
 ------------------------------------------------------------------------- */
 
-#include "math.h"
-#include "inttypes.h"
-#include "stdio.h"
-#include "time.h"
-#include "string.h"
+#include <math.h>
+#include <inttypes.h>
+#include <stdio.h>
+#include <time.h>
+#include <string.h>
 #include "dump_dcd.h"
 #include "domain.h"
 #include "atom.h"
@@ -52,7 +52,8 @@ static inline void fwrite_int32(FILE* fd, uint32_t i)
 
 /* ---------------------------------------------------------------------- */
 
-DumpDCD::DumpDCD(LAMMPS *lmp, int narg, char **arg) : Dump(lmp, narg, arg)
+DumpDCD::DumpDCD(LAMMPS *lmp, int narg, char **arg) : Dump(lmp, narg, arg),
+  coords(NULL)
 {
   if (narg != 5) error->all(FLERR,"Illegal dump dcd command");
   if (binary || compressed || multifile || multiproc)
@@ -68,7 +69,8 @@ DumpDCD::DumpDCD(LAMMPS *lmp, int narg, char **arg) : Dump(lmp, narg, arg)
   // allocate global array for atom coords
 
   bigint n = group->count(igroup);
-  if (n > MAXSMALLINT/sizeof(float)) error->all(FLERR,"Too many atoms for dump dcd");
+  if (n > static_cast<bigint>(MAXSMALLINT/3/sizeof(float)))
+    error->all(FLERR,"Too many atoms for dump dcd");
   natoms = static_cast<int> (n);
 
   memory->create(coords,3*natoms,"dump:coords");
@@ -125,7 +127,7 @@ void DumpDCD::write_header(bigint n)
 {
   if (n != natoms) error->all(FLERR,"Dump dcd of non-matching # of atoms");
   if (update->ntimestep > MAXSMALLINT)
-    error->all(FLERR,"Too big a timestep for dump dcd");
+    error->one(FLERR,"Too big a timestep for dump dcd");
 
   // first time, write header for entire file
 
@@ -174,13 +176,13 @@ void DumpDCD::write_header(bigint n)
 
 /* ---------------------------------------------------------------------- */
 
-void DumpDCD::pack(int *ids)
+void DumpDCD::pack(tagint *ids)
 {
   int m,n;
 
-  int *tag = atom->tag;
+  tagint *tag = atom->tag;
   double **x = atom->x;
-  tagint *image = atom->image;
+  imageint *image = atom->image;
   int *mask = atom->mask;
   int nlocal = atom->nlocal;
 

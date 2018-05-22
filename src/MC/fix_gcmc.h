@@ -1,4 +1,4 @@
-/* ----------------------------------------------------------------------
+/* -*- c++ -*- ----------------------------------------------------------
    LAMMPS - Large-scale Atomic/Molecular Massively Parallel Simulator
    http://lammps.sandia.gov, Sandia National Laboratories
    Steve Plimpton, sjplimp@sandia.gov
@@ -20,7 +20,7 @@ FixStyle(gcmc,FixGCMC)
 #ifndef LMP_FIX_GCMC_H
 #define LMP_FIX_GCMC_H
 
-#include "stdio.h"
+#include <stdio.h>
 #include "fix.h"
 
 namespace LAMMPS_NS {
@@ -39,36 +39,55 @@ class FixGCMC : public Fix {
   void attempt_molecule_rotation();
   void attempt_molecule_deletion();
   void attempt_molecule_insertion();
-  double energy(int, int, int, double *);
+  void attempt_atomic_translation_full();
+  void attempt_atomic_deletion_full();
+  void attempt_atomic_insertion_full();
+  void attempt_molecule_translation_full();
+  void attempt_molecule_rotation_full();
+  void attempt_molecule_deletion_full();
+  void attempt_molecule_insertion_full();
+  double energy(int, int, tagint, double *);
+  double molecule_energy(tagint);
+  double energy_full();
   int pick_random_gas_atom();
-  int pick_random_gas_atom_in_region();
-  int pick_random_gas_molecule();
-  int pick_random_gas_molecule_in_region();
-  double molecule_energy(int);
-  void get_rotation_matrix(double, double *);
-  void get_model_molecule();
+  tagint pick_random_gas_molecule();
+  void toggle_intramolecular(int);
   void update_gas_atoms_list();
   double compute_vector(int);
   double memory_usage();
   void write_restart(FILE *);
   void restart(char *);
+  void grow_molecule_arrays(int);
 
  private:
-  int rotation_group,rotation_groupbit;
-  int rotation_inversegroupbit;
+  int molecule_group,molecule_group_bit;
+  int molecule_group_inversebit;
+  int exclusion_group,exclusion_group_bit;
   int ngcmc_type,nevery,seed;
   int ncycles,nexchanges,nmcmoves;
+  double patomtrans, pmoltrans, pmolrotate, pmctot;
   int ngas;                 // # of gas atoms on all procs
   int ngas_local;           // # of gas atoms on this proc
   int ngas_before;          // # of gas atoms on procs < this proc
-  int molflag;              // 0 = atomic, 1 = molecular system
+  int exchmode;             // exchange ATOM or MOLECULE
+  int movemode;             // move ATOM or MOLECULE
   int regionflag;           // 0 = anywhere in box, 1 = specific region
-  int iregion;              // GCMC region
-  char *idregion;           // GCMC region id
+  int iregion;              // gcmc region
+  char *idregion;           // gcmc region id
+  bool pressure_flag;       // true if user specified reservoir pressure
+  bool charge_flag;         // true if user specified atomic charge
+  bool full_flag;           // true if doing full system energy calculations
 
-  int maxmol;               // largest molecule tag across all existing atoms
-  int natoms_per_molecule;  // number of atoms in each gas molecule
+  int natoms_per_molecule;  // number of atoms in each inserted molecule
+  int nmaxmolatoms;         // number of atoms allocated for molecule arrays
 
+  int groupbitall;          // group bitmask for inserted atoms
+  int ngroups;              // number of group-ids for inserted atoms
+  char** groupstrings;      // list of group-ids for inserted atoms
+  int ngrouptypes;          // number of type-based group-ids for inserted atoms
+  char** grouptypestrings;  // list of type-based group-ids for inserted atoms
+  int* grouptypebits;       // list of type-based group bitmasks
+  int* grouptypes;          // list of type-based group types
   double ntranslation_attempts;
   double ntranslation_successes;
   double nrotation_attempts;
@@ -82,26 +101,43 @@ class FixGCMC : public Fix {
   int max_region_attempts;
   double gas_mass;
   double reservoir_temperature;
+  double tfac_insert;
   double chemical_potential;
   double displace;
   double max_rotation_angle;
   double beta,zz,sigma,volume;
+  double pressure,fugacity_coeff,charge;
   double xlo,xhi,ylo,yhi,zlo,zhi;
   double region_xlo,region_xhi,region_ylo,region_yhi,region_zlo,region_zhi;
   double region_volume;
+  double energy_stored;  // full energy of old/current configuration
   double *sublo,*subhi;
   int *local_gas_list;
   double **cutsq;
-  double **atom_coord;
-  double *model_atom_buf;
-  tagint imagetmp;
+  double **molcoords;
+  double *molq;
+  imageint *molimage;
+  imageint imagezero;
+  double overlap_cutoffsq; // square distance cutoff for overlap
+  int overlap_flag;
+
+  double energy_intra;
 
   class Pair *pair;
 
   class RanPark *random_equal;
   class RanPark *random_unequal;
-  
+
   class Atom *model_atom;
+
+  class Molecule **onemols;
+  int imol,nmol;
+  class Fix *fixrigid, *fixshake;
+  int rigidflag, shakeflag;
+  char *idrigid, *idshake;
+  int triclinic;                         // 0 = orthog box, 1 = triclinic
+
+  class Compute *c_pe;
 
   void options(int, char **);
 };
@@ -119,92 +155,160 @@ Self-explanatory.  Check the input script syntax and compare to the
 documentation for the command.  You can use -echo screen as a
 command-line option when running LAMMPS to see the offending line.
 
-E: Invalid atom type in fix GCMC command
+E: Fix gcmc does not (yet) work with atom_style template
 
-The atom type specified in the GCMC command does not exist.
+Self-explanatory.
+
+E: Fix gcmc region does not support a bounding box
+
+Not all regions represent bounded volumes.  You cannot use
+such a region with the fix gcmc command.
+
+E: Fix gcmc region cannot be dynamic
+
+Only static regions can be used with fix gcmc.
+
+E: Fix gcmc region extends outside simulation box
+
+Self-explanatory.
+
+E: Fix gcmc molecule must have coordinates
+
+The defined molecule does not specify coordinates.
+
+E: Fix gcmc molecule must have atom types
+
+The defined molecule does not specify atom types.
+
+E: Atom type must be zero in fix gcmc mol command
+
+Self-explanatory.
+
+E: Fix gcmc molecule has charges, but atom style does not
+
+Self-explanatory.
+
+E: Fix gcmc molecule template ID must be same as atom_style template ID
+
+When using atom_style template, you cannot insert molecules that are
+not in that template.
+
+E: Fix gcmc atom has charge, but atom style does not
+
+Self-explanatory.
+
+E: Cannot use fix gcmc shake and not molecule
+
+Self-explanatory.
+
+E: Molecule template ID for fix gcmc does not exist
+
+Self-explanatory.
+
+W: Molecule template for fix gcmc has multiple molecules
+
+The fix gcmc command will only create molecules of a single type,
+i.e. the first molecule in the template.
+
+E: Region ID for fix gcmc does not exist
+
+Self-explanatory.
+
+W: Fix gcmc using full_energy option
+
+Fix gcmc has automatically turned on the full_energy option since it
+is required for systems like the one specified by the user. User input
+included one or more of the following: kspace, a hybrid
+pair style, an eam pair style, tail correction,
+or no "single" function for the pair style.
+
+W: Energy of old configuration in fix gcmc is > MAXENERGYTEST.
+
+This probably means that a pair of atoms are closer than the
+overlap cutoff distance for keyword overlap_cutoff.
+
+W: Fix gcmc is being applied to the default group all
+
+This is allowed, but it will result in Monte Carlo moves
+being performed on all the atoms in the system, which is
+often not what is intended.
+
+E: Invalid atom type in fix gcmc command
+
+The atom type specified in the gcmc command does not exist.
+
+E: Fix gcmc cannot exchange individual atoms belonging to a molecule
+
+This is an error since you should not delete only one atom of a
+molecule.  The user has specified atomic (non-molecular) gas
+exchanges, but an atom belonging to a molecule could be deleted.
+
+E: All mol IDs should be set for fix gcmc group atoms
+
+The molecule flag is on, yet not all molecule ids in the fix group
+have been set to non-zero positive values by the user. This is an
+error since all atoms in the fix gcmc group are eligible for deletion,
+rotation, and translation and therefore must have valid molecule ids.
+
+E: Fix gcmc molecule command requires that atoms have molecule attributes
+
+Should not choose the gcmc molecule feature if no molecules are being
+simulated. The general molecule flag is off, but gcmc's molecule flag
+is on.
+
+E: Fix gcmc shake fix does not exist
+
+Self-explanatory.
+
+E: Fix gcmc and fix shake not using same molecule template ID
+
+Self-explanatory.
+
+E: Fix gcmc can not currently be used with fix rigid or fix rigid/small
+
+Self-explanatory.
+
+E: Cannot use fix gcmc in a 2d simulation
+
+Fix gcmc is set up to run in 3d only. No 2d simulations with fix gcmc
+are allowed.
+
+E: Could not find fix gcmc exclusion group ID
+
+Self-explanatory.
+
+E: Could not find fix gcmc rotation group ID
+
+Self-explanatory.
+
+E: Illegal fix gcmc gas mass <= 0
+
+The computed mass of the designated gas molecule or atom type was less
+than or equal to zero.
 
 E: Cannot do GCMC on atoms in atom_modify first group
 
 This is a restriction due to the way atoms are organized in a list to
 enable the atom_modify first command.
 
-E: Fix GCMC cannot exchange individual atoms belonging to a molecule
+E: Could not find specified fix gcmc group ID
 
-This is an error since you should not delete only one atom of a molecule.
-The user has specified atomic (non-molecular) gas exchanges, but an atom
-belonging to a molecule could be deleted.
+Self-explanatory.
 
-E: All mol IDs should be set for fix GCMC group atoms
+E: Fix gcmc put atom outside box
 
-The molecule flag is on, yet not all molecule ids in the fix group have
-been set to non-zero positive values by the user. This is an error since
-all atoms in the fix GCMC group are eligible for deletion, rotation, and
-translation and therefore must have valid molecule ids.
+This should not normally happen.  Contact the developers.
 
-E: Cannot use fix GCMC in a 2d simulation
+E: Fix gcmc ran out of available molecule IDs
 
-Fix GCMC is set up to run in 3d only. No 2d simulations with fix GCMC
-are allowed.
+See the setting for tagint in the src/lmptype.h file.
 
-E: Cannot use fix GCMC with a triclinic box
+E: Fix gcmc ran out of available atom IDs
 
-Fix GCMC is set up to run with othogonal boxes only. Simulations with
-triclinic boxes and fix GCMC are not allowed.
+See the setting for tagint in the src/lmptype.h file.
 
-E: Fix GCMC molecule command requires that atoms have molecule attributes
+E: Too many total atoms
 
-Should not choose the GCMC molecule feature if no molecules are being
-simulated. The general molecule flag is off, but GCMC's molecule flag
-is on.
-
-E: Fix GCMC could not find any atoms in the user-supplied template molecule
-
-When using the molecule option with fix GCMC, the user must supply a 
-template molecule in the usual LAMMPS data file with its molecule id
-specified in the fix GCMC command as the "type" of the exchanged gas.
-
-E: Fix GCMC incompatible with given pair_style
-
-Some pair_styles do not provide single-atom energies, which are needed
-by fix GCMC.
-
-E: Fix GCMC incorrect number of atoms per molecule
-
-The number of atoms in each gas molecule was not computed correctly.
-
-E: Illegal fix GCMC gas mass <= 0
-
-The computed mass of the designated gas molecule or atom type was less 
-than or equal to zero.
-
-E: Fix GCMC ran out of available molecule IDs
-
-This is a code limitation where more than MAXSMALLINT (usually around
-two billion) molecules have been created. The code needs to be 
-modified to either allow molecule ID recycling or use bigger ints for
-molecule IDs. A work-around is to run shorter simulations.
-
-W: Fix GCMC fix group should be all
-
-Fix GCMC will ignore the fix group specified by the user. User should
-set the fix group to "all". Fix GCMC will overwrite the user-specified
-fix group with a group consisting of all GCMC gas atoms.
-
-E: Fix GCMC region does not support a bounding box 
- 
-Not all regions represent bounded volumes.  You cannot use 
-such a region with the fix GCMC command. 
- 
-E: Fix GCMC region cannot be dynamic 
- 
-Only static regions can be used with fix GCMC. 
- 
-E: Fix GCMC region extends outside simulation box 
- 
-Self-explanatory. 
- 
-E: Region ID for fix GCMC does not exist 
- 
-Self-explanatory. 
+See the setting for bigint in the src/lmptype.h file.
 
 */

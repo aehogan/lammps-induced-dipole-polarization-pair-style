@@ -10,7 +10,7 @@
     This file is part of the LAMMPS Accelerator Library (LAMMPS_AL)
  __________________________________________________________________________
 
-    begin                : 
+    begin                :
     email                : nguyentd@ornl.gov
  ***************************************************************************/
 
@@ -65,7 +65,7 @@ int BaseDipoleT::init_atomic(const int nlocal, const int nall,
     _nbor_data=&(nbor->dev_packed);
   } else
     _nbor_data=&(nbor->dev_nbor);
-    
+
   int success=device->init(*ans,true,true,nlocal,host_nlocal,nall,nbor,
                            maxspecial,_gpu_host,max_nbors,cell_size,false,
                            _threads_per_atom);
@@ -155,8 +155,8 @@ template <class numtyp, class acctyp>
 inline void BaseDipoleT::build_nbor_list(const int inum, const int host_inum,
                                          const int nall, double **host_x,
                                          int *host_type, double *sublo,
-                                         double *subhi, int *tag, 
-                                         int **nspecial, int **special,
+                                         double *subhi, tagint *tag,
+                                         int **nspecial, tagint **special,
                                          bool &success) {
   success=true;
   resize_atom(inum,nall,success);
@@ -194,7 +194,7 @@ void BaseDipoleT::compute(const int f_ago, const int inum_full,
     zero_timers();
     return;
   }
-  
+
   int ago=hd_balancer.ago_first(f_ago);
   int inum=hd_balancer.balance(ago,inum_full,cpu_time);
   ans->inum(inum);
@@ -229,13 +229,13 @@ void BaseDipoleT::compute(const int f_ago, const int inum_full,
 template <class numtyp, class acctyp>
 int** BaseDipoleT::compute(const int ago, const int inum_full,
                            const int nall, double **host_x, int *host_type,
-                           double *sublo, double *subhi, int *tag,
-                           int **nspecial, int **special, const bool eflag, 
+                           double *sublo, double *subhi, tagint *tag,
+                           int **nspecial, tagint **special, const bool eflag,
                            const bool vflag, const bool eatom,
                            const bool vatom, int &host_start,
                            int **ilist, int **jnum,
                            const double cpu_time, bool &success,
-                           double *host_q, double **host_mu, 
+                           double *host_q, double **host_mu,
                            double *boxlo, double *prd) {
   acc_timers();
   if (inum_full==0) {
@@ -245,12 +245,12 @@ int** BaseDipoleT::compute(const int ago, const int inum_full,
     zero_timers();
     return NULL;
   }
-  
+
   hd_balancer.balance(cpu_time);
   int inum=hd_balancer.get_gpu_count(ago,inum_full);
   ans->inum(inum);
   host_start=inum;
- 
+
   // Build neighbor list on GPU if necessary
   if (ago==0) {
     build_nbor_list(inum, inum_full-inum, nall, host_x, host_type,
@@ -279,7 +279,7 @@ int** BaseDipoleT::compute(const int ago, const int inum_full,
   ans->copy_answers(eflag,vflag,eatom,vatom);
   device->add_ans_object(ans);
   hd_balancer.stop_timer();
-  
+
   return nbor->host_jlist.begin()-host_start;
 }
 
@@ -296,12 +296,8 @@ void BaseDipoleT::compile_kernels(UCL_Device &dev, const void *pair_str,
     return;
 
   std::string s_fast=std::string(kname)+"_fast";
-  std::string flags="-cl-fast-relaxed-math -cl-mad-enable "+
-                    std::string(OCL_PRECISION_COMPILE)+" -D"+
-                    std::string(OCL_VENDOR);
-
   pair_program=new UCL_Program(dev);
-  pair_program->load_string(pair_str,flags.c_str());
+  pair_program->load_string(pair_str,device->compile_string().c_str());
   k_pair_fast.set_function(*pair_program,s_fast.c_str());
   k_pair.set_function(*pair_program,kname);
   pos_tex.get_texture(*pair_program,"pos_tex");

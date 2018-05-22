@@ -5,7 +5,7 @@
 
    Copyright (2003) Sandia Corporation.  Under the terms of Contract
    DE-AC04-94AL85000 with Sandia Corporation, the U.S. Government retains
-   certain rights in this software.  This software is distributed under 
+   certain rights in this software.  This software is distributed under
    the GNU General Public License.
 
    See the README file in the top-level LAMMPS directory.
@@ -16,9 +16,8 @@
    [ based on dihedral_multi_harmonic.cpp Mathias Puetz (SNL) and friends ]
 ------------------------------------------------------------------------- */
 
-#include "lmptype.h"
-#include "math.h"
-#include "stdlib.h"
+#include <math.h>
+#include <stdlib.h>
 #include "dihedral_nharmonic.h"
 #include "atom.h"
 #include "neighbor.h"
@@ -36,7 +35,9 @@ using namespace LAMMPS_NS;
 
 /* ---------------------------------------------------------------------- */
 
-DihedralNHarmonic::DihedralNHarmonic(LAMMPS *lmp) : Dihedral(lmp) {}
+DihedralNHarmonic::DihedralNHarmonic(LAMMPS *lmp) : Dihedral(lmp) {
+  writedata = 1;
+}
 
 /* ---------------------------------------------------------------------- */
 
@@ -59,8 +60,8 @@ void DihedralNHarmonic::compute(int eflag, int vflag)
   double vb1x,vb1y,vb1z,vb2x,vb2y,vb2z,vb3x,vb3y,vb3z,vb2xm,vb2ym,vb2zm;
   double edihedral,f1[3],f2[3],f3[3],f4[3];
   double sb1,sb2,sb3,rb1,rb3,c0,b1mag2,b1mag,b2mag2;
-  double b2mag,b3mag2,b3mag,ctmp,r12c1,c1mag,r12c2;
-  double c2mag,sc1,sc2,s1,s12,c,p,pd,a,a11,a22;
+  double b2mag,b3mag2,b3mag,ctmp,c_,r12c1,c1mag,r12c2;
+  double c2mag,sc1,sc2,s1,s12,c,p,pd,a11,a22;
   double a33,a12,a13,a23,sx2,sy2,sz2;
   double s2,sin2;
 
@@ -156,7 +157,9 @@ void DihedralNHarmonic::compute(int eflag, int vflag)
       MPI_Comm_rank(world,&me);
       if (screen) {
         char str[128];
-        sprintf(str,"Dihedral problem: %d " BIGINT_FORMAT " %d %d %d %d",
+        sprintf(str,"Dihedral problem: %d " BIGINT_FORMAT " "
+                TAGINT_FORMAT " " TAGINT_FORMAT " "
+                TAGINT_FORMAT " " TAGINT_FORMAT,
                 me,update->ntimestep,
                 atom->tag[i1],atom->tag[i2],atom->tag[i3],atom->tag[i4]);
         error->warning(FLERR,str,0);
@@ -177,20 +180,21 @@ void DihedralNHarmonic::compute(int eflag, int vflag)
     // force & energy
     // p = sum (i=1,n) a_i * c**(i-1)
     // pd = dp/dc
+
+    c_ = c;
     p = this->a[type][0];
     pd = this->a[type][1];
     for (int i = 1; i < nterms[type]-1; i++) {
-      p += c * this->a[type][i];
-      pd += c * static_cast<double>(i+1) * this->a[type][i+1];
-      c *= c;
+      p += c_ * this->a[type][i];
+      pd += c_ * static_cast<double>(i+1) * this->a[type][i+1];
+      c_ *= c;
     }
-    p += c * this->a[type][nterms[type]-1];
+    p += c_ * this->a[type][nterms[type]-1];
 
     if (eflag) edihedral = p;
 
-    a = pd;
-    c = c * a;
-    s12 = s12 * a;
+    c = c * pd;
+    s12 = s12 * pd;
     a11 = c*sb1*s1;
     a22 = -sb2 * (2.0*c0*s12 - c*(s1+s2));
     a33 = c*sb3*s2;
@@ -272,20 +276,21 @@ void DihedralNHarmonic::coeff(int narg, char **arg)
 {
   if (narg < 4 ) error->all(FLERR,"Incorrect args for dihedral coefficients");
 
-  int n = force->inumeric(arg[1]);
-  if (narg != n + 2 ) error->all(FLERR,"Incorrect args for dihedral coefficients");
+  int n = force->inumeric(FLERR,arg[1]);
+  if (narg != n + 2)
+    error->all(FLERR,"Incorrect args for dihedral coefficients");
 
   if (!allocated) allocate();
 
   int ilo,ihi;
-  force->bounds(arg[0],atom->ndihedraltypes,ilo,ihi);
+  force->bounds(FLERR,arg[0],atom->ndihedraltypes,ilo,ihi);
 
   int count = 0;
   for (int i = ilo; i <= ihi; i++) {
     a[i] = new double [n];
     nterms[i] = n;
     for (int j = 0; j < n; j++ ) {
-      a[i][j] = force->numeric(arg[2+i]);
+      a[i][j] = force->numeric(FLERR,arg[2+j]);
       setflag[i] = 1;
     }
     count++;
@@ -295,7 +300,7 @@ void DihedralNHarmonic::coeff(int narg, char **arg)
 }
 
 /* ----------------------------------------------------------------------
-   proc 0 writes out coeffs to restart file 
+   proc 0 writes out coeffs to restart file
 ------------------------------------------------------------------------- */
 
 void DihedralNHarmonic::write_restart(FILE *fp)
@@ -306,22 +311,22 @@ void DihedralNHarmonic::write_restart(FILE *fp)
 }
 
 /* ----------------------------------------------------------------------
-   proc 0 reads coeffs from restart file, bcasts them 
+   proc 0 reads coeffs from restart file, bcasts them
 ------------------------------------------------------------------------- */
 
 void DihedralNHarmonic::read_restart(FILE *fp)
 {
   allocate();
 
-  if (comm->me == 0) 
+  if (comm->me == 0)
     fread(&nterms[1],sizeof(int),atom->ndihedraltypes,fp);
 
   MPI_Bcast(&nterms[1],atom->ndihedraltypes,MPI_INT,0,world);
 
-  // allocate 
+  // allocate
   for(int i = 1; i <= atom->ndihedraltypes; i++)
     a[i] = new double [nterms[i]];
-  
+
   if (comm->me == 0) {
     for(int i = 1; i <= atom->ndihedraltypes; i++)
       fread(a[i],sizeof(double),nterms[i],fp);
@@ -333,3 +338,18 @@ void DihedralNHarmonic::read_restart(FILE *fp)
   for (int i = 1; i <= atom->ndihedraltypes; i++) setflag[i] = 1;
 }
 
+/* ----------------------------------------------------------------------
+   proc 0 writes to data file
+------------------------------------------------------------------------- */
+
+void DihedralNHarmonic::write_data(FILE *fp)
+{
+  for (int i = 1; i <= atom->ndihedraltypes; i++) {
+    fprintf(fp, "%d %d", i, nterms[i]);
+    for (int j = 0; j < nterms[i]; j++ )
+      fprintf(fp, " %g", a[i][j]);
+
+    fprintf(fp, "\n");
+  }
+
+}

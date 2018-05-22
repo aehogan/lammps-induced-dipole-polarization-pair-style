@@ -11,9 +11,9 @@
    See the README file in the top-level LAMMPS directory.
 ------------------------------------------------------------------------- */
 
-#include "stdio.h"
-#include "stdlib.h"
-#include "string.h"
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
 #include "output.h"
 #include "style_dump.h"
 #include "atom.h"
@@ -30,7 +30,6 @@
 #include "force.h"
 #include "dump.h"
 #include "write_restart.h"
-#include "accelerator_cuda.h"
 #include "memory.h"
 #include "error.h"
 
@@ -50,18 +49,18 @@ Output::Output(LAMMPS *lmp) : Pointers(lmp)
   newarg[0] = (char *) "thermo_temp";
   newarg[1] = (char *) "all";
   newarg[2] = (char *) "temp";
-  modify->add_compute(3,newarg,lmp->suffix);
+  modify->add_compute(3,newarg);
 
   newarg[0] = (char *) "thermo_press";
   newarg[1] = (char *) "all";
   newarg[2] = (char *) "pressure";
   newarg[3] = (char *) "thermo_temp";
-  modify->add_compute(4,newarg,lmp->suffix);
+  modify->add_compute(4,newarg);
 
   newarg[0] = (char *) "thermo_pe";
   newarg[1] = (char *) "all";
   newarg[2] = (char *) "pe";
-  modify->add_compute(3,newarg,lmp->suffix);
+  modify->add_compute(3,newarg);
 
   delete [] newarg;
 
@@ -85,10 +84,20 @@ Output::Output(LAMMPS *lmp) : Pointers(lmp)
   dump = NULL;
 
   restart_flag = restart_flag_single = restart_flag_double = 0;
+  restart_every_single = restart_every_double = 0;
   last_restart = -1;
   restart1 = restart2a = restart2b = NULL;
   var_restart_single = var_restart_double = NULL;
   restart = NULL;
+
+  dump_map = new DumpCreatorMap();
+
+#define DUMP_CLASS
+#define DumpStyle(key,Class) \
+  (*dump_map)[#key] = &dump_creator<Class>;
+#include "style_dump.h"
+#undef DumpStyle
+#undef DUMP_CLASS
 }
 
 /* ----------------------------------------------------------------------
@@ -115,6 +124,8 @@ Output::~Output()
   delete [] var_restart_single;
   delete [] var_restart_double;
   delete restart;
+
+  delete dump_map;
 }
 
 /* ---------------------------------------------------------------------- */
@@ -289,11 +300,8 @@ void Output::write(bigint ntimestep)
 {
   // next_dump does not force output on last step of run
   // wrap dumps that invoke computes or eval of variable with clear/add
-  // download data from GPU if necessary
 
   if (next_dump_any == ntimestep) {
-    if (lmp->cuda && !lmp->cuda->oncpu) lmp->cuda->downloadAll();
-
     for (int idump = 0; idump < ndump; idump++) {
       if (next_dump[idump] == ntimestep) {
         if (dump[idump]->clearstep || every_dump[idump] == 0)
@@ -320,12 +328,9 @@ void Output::write(bigint ntimestep)
 
   // next_restart does not force output on last step of run
   // for toggle = 0, replace "*" with current timestep in restart filename
-  // download data from GPU if necessary
   // eval of variable may invoke computes so wrap with clear/add
 
   if (next_restart == ntimestep) {
-    if (lmp->cuda && !lmp->cuda->oncpu) lmp->cuda->downloadAll();
-
     if (next_restart_single == ntimestep) {
       char *file = new char[strlen(restart1) + 16];
       char *ptr = strchr(restart1,'*');
@@ -441,7 +446,7 @@ void Output::write_restart(bigint ntimestep)
    timestep is being changed, called by update->reset_timestep()
    reset next timestep values for dumps, restart, thermo output
    reset to smallest value >= new timestep
-   if next timestep set by varaible evaluation,
+   if next timestep set by variable evaluation,
      eval for ntimestep-1, so current ntimestep can be returned if needed
      no guarantee that variable can be evaluated for ntimestep-1
        if it depends on computes, but live with that rare case for now
@@ -449,11 +454,20 @@ void Output::write_restart(bigint ntimestep)
 
 void Output::reset_timestep(bigint ntimestep)
 {
+  next_dump_any = MAXBIGINT;
   for (int idump = 0; idump < ndump; idump++) {
     if (every_dump[idump]) {
       next_dump[idump] = (ntimestep/every_dump[idump])*every_dump[idump];
       if (next_dump[idump] < ntimestep) next_dump[idump] += every_dump[idump];
     } else {
+      // ivar_dump may not be initialized
+      if (ivar_dump[idump] < 0) {
+        ivar_dump[idump] = input->variable->find(var_dump[idump]);
+        if (ivar_dump[idump] < 0)
+          error->all(FLERR,"Variable name for dump every does not exist");
+        if (!input->variable->equalstyle(ivar_dump[idump]))
+          error->all(FLERR,"Variable for dump every is invalid style");
+      }
       modify->clearstep_compute();
       update->ntimestep--;
       bigint nextdump = static_cast<bigint>
@@ -464,8 +478,7 @@ void Output::reset_timestep(bigint ntimestep)
       next_dump[idump] = nextdump;
       modify->addstep_compute(next_dump[idump]);
     }
-    if (idump) next_dump_any = MIN(next_dump_any,next_dump[idump]);
-    else next_dump_any = next_dump[0];
+    next_dump_any = MIN(next_dump_any,next_dump[idump]);
   }
 
   if (restart_flag_single) {
@@ -514,7 +527,7 @@ void Output::reset_timestep(bigint ntimestep)
     next_thermo = static_cast<bigint>
       (input->variable->compute_equal(ivar_thermo));
     if (next_thermo < ntimestep)
-      error->all(FLERR,"Thermo every variable returned a bad timestep");
+      error->all(FLERR,"Thermo_modify every variable returned a bad timestep");
     update->ntimestep++;
     next_thermo = MIN(next_thermo,update->laststep);
     modify->addstep_compute(next_thermo);
@@ -543,7 +556,8 @@ void Output::add_dump(int narg, char **arg)
       error->all(FLERR,"Reuse of dump ID");
   int igroup = group->find(arg[1]);
   if (igroup == -1) error->all(FLERR,"Could not find dump group ID");
-  if (atoi(arg[3]) <= 0) error->all(FLERR,"Invalid dump frequency");
+  if (force->inumeric(FLERR,arg[3]) <= 0)
+    error->all(FLERR,"Invalid dump frequency");
 
   // extend Dump list if necessary
 
@@ -559,23 +573,36 @@ void Output::add_dump(int narg, char **arg)
     memory->grow(ivar_dump,max_dump,"output:ivar_dump");
   }
 
+  // initialize per-dump data to suitable default values
+
+  every_dump[ndump] = 0;
+  last_dump[ndump] = -1;
+  var_dump[ndump] = NULL;
+  ivar_dump[ndump] = -1;
+
   // create the Dump
 
-  if (0) return;         // dummy line to enable else-if macro expansion
+  if (dump_map->find(arg[2]) != dump_map->end()) {
+    DumpCreator dump_creator = (*dump_map)[arg[2]];
+    dump[ndump] = dump_creator(lmp, narg, arg);
+  }
+  else error->all(FLERR,"Unknown dump style");
 
-#define DUMP_CLASS
-#define DumpStyle(key,Class) \
-  else if (strcmp(arg[2],#key) == 0) dump[ndump] = new Class(lmp,narg,arg);
-#include "style_dump.h"
-#undef DUMP_CLASS
-
-  else error->all(FLERR,"Invalid dump style");
-
-  every_dump[ndump] = atoi(arg[3]);
+  every_dump[ndump] = force->inumeric(FLERR,arg[3]);
   if (every_dump[ndump] <= 0) error->all(FLERR,"Illegal dump command");
   last_dump[ndump] = -1;
   var_dump[ndump] = NULL;
   ndump++;
+}
+
+/* ----------------------------------------------------------------------
+   one instance per dump style in style_dump.h
+------------------------------------------------------------------------- */
+
+template <typename T>
+Dump *Output::dump_creator(LAMMPS *lmp, int narg, char ** arg)
+{
+  return new T(lmp, narg, arg);
 }
 
 /* ----------------------------------------------------------------------
@@ -626,6 +653,21 @@ void Output::delete_dump(char *id)
 }
 
 /* ----------------------------------------------------------------------
+   find a dump by ID
+   return index of dump or -1 if not found
+------------------------------------------------------------------------- */
+
+int Output::find_dump(const char *id)
+{
+  if (id == NULL) return -1;
+  int idump;
+  for (idump = 0; idump < ndump; idump++)
+    if (strcmp(id,dump[idump]->id) == 0) break;
+  if (idump == ndump) return -1;
+  return idump;
+}
+
+/* ----------------------------------------------------------------------
    set thermo output frequency from input script
 ------------------------------------------------------------------------- */
 
@@ -639,7 +681,7 @@ void Output::set_thermo(int narg, char **arg)
     var_thermo = new char[n];
     strcpy(var_thermo,&arg[0][2]);
   } else {
-    thermo_every = atoi(arg[0]);
+    thermo_every = force->inumeric(FLERR,arg[0]);
     if (thermo_every < 0) error->all(FLERR,"Illegal thermo command");
   }
 }
@@ -683,7 +725,7 @@ void Output::create_restart(int narg, char **arg)
   int varflag = 0;
 
   if (strstr(arg[0],"v_") == arg[0]) varflag = 1;
-  else every = atoi(arg[0]);
+  else every = force->inumeric(FLERR,arg[0]);
 
   if (!varflag && every == 0) {
     if (narg != 1) error->all(FLERR,"Illegal restart command");
@@ -704,9 +746,13 @@ void Output::create_restart(int narg, char **arg)
     return;
   }
 
-  if (narg != 2 && narg != 3) error->all(FLERR,"Illegal restart command");
+  if (narg < 2) error->all(FLERR,"Illegal restart command");
 
-  if (narg == 2) {
+  int nfile = 0;
+  if (narg % 2 == 0) nfile = 1;
+  else nfile = 2;
+
+  if (nfile == 1) {
     restart_flag = restart_flag_single = 1;
 
     if (varflag) {
@@ -718,12 +764,13 @@ void Output::create_restart(int narg, char **arg)
     } else restart_every_single = every;
 
     int n = strlen(arg[1]) + 3;
+    delete [] restart1;
     restart1 = new char[n];
     strcpy(restart1,arg[1]);
     if (strchr(restart1,'*') == NULL) strcat(restart1,".*");
   }
 
-  if (narg == 3) {
+  if (nfile == 2) {
     restart_flag = restart_flag_double = 1;
 
     if (varflag) {
@@ -734,6 +781,8 @@ void Output::create_restart(int narg, char **arg)
       restart_every_double = 0;
     } else restart_every_double = every;
 
+    delete [] restart2a;
+    delete [] restart2b;
     restart_toggle = 0;
     int n = strlen(arg[1]) + 3;
     restart2a = new char[n];
@@ -743,7 +792,35 @@ void Output::create_restart(int narg, char **arg)
     strcpy(restart2b,arg[2]);
   }
 
-  if (restart == NULL) restart = new WriteRestart(lmp);
+  // check for multiproc output and an MPI-IO filename
+  // if 2 filenames, must be consistent
+
+  int multiproc;
+  if (strchr(arg[1],'%')) multiproc = comm->nprocs;
+  else multiproc = 0;
+  if (nfile == 2) {
+    if (multiproc && !strchr(arg[2],'%'))
+      error->all(FLERR,"Both restart files must use % or neither");
+    if (!multiproc && strchr(arg[2],'%'))
+      error->all(FLERR,"Both restart files must use % or neither");
+  }
+
+  int mpiioflag;
+  if (strstr(arg[1],".mpi")) mpiioflag = 1;
+  else mpiioflag = 0;
+  if (nfile == 2) {
+    if (mpiioflag && !strstr(arg[2],".mpi"))
+      error->all(FLERR,"Both restart files must use MPI-IO or neither");
+    if (!mpiioflag && strstr(arg[2],".mpi"))
+      error->all(FLERR,"Both restart files must use MPI-IO or neither");
+  }
+
+  // setup output style and process optional args
+
+  delete restart;
+  restart = new WriteRestart(lmp);
+  int iarg = nfile+1;
+  restart->multiproc_options(multiproc,mpiioflag,narg-iarg,&arg[iarg]);
 }
 
 /* ----------------------------------------------------------------------
@@ -763,11 +840,18 @@ void Output::memory_usage()
   for (int i = 0; i < ndump; i++) bytes += dump[i]->memory_usage();
 
   double mbytes = bytes/1024.0/1024.0;
+  double mbavg,mbmin,mbmax;
+  MPI_Reduce(&mbytes,&mbavg,1,MPI_DOUBLE,MPI_SUM,0,world);
+  MPI_Reduce(&mbytes,&mbmin,1,MPI_DOUBLE,MPI_MIN,0,world);
+  MPI_Reduce(&mbytes,&mbmax,1,MPI_DOUBLE,MPI_MAX,0,world);
 
   if (comm->me == 0) {
+    mbavg /= comm->nprocs;
     if (screen)
-      fprintf(screen,"Memory usage per processor = %g Mbytes\n",mbytes);
+      fprintf(screen,"Per MPI rank memory allocation (min/avg/max) = "
+              "%.4g | %.4g | %.4g Mbytes\n",mbmin,mbavg,mbmax);
     if (logfile)
-      fprintf(logfile,"Memory usage per processor = %g Mbytes\n",mbytes);
+      fprintf(logfile,"Per MPI rank memory allocation (min/avg/max) = "
+              "%.4g | %.4g | %.4g Mbytes\n",mbmin,mbavg,mbmax);
   }
 }

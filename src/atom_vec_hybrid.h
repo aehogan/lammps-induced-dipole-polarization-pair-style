@@ -1,4 +1,4 @@
-/* ----------------------------------------------------------------------
+/* -*- c++ -*- ----------------------------------------------------------
    LAMMPS - Large-scale Atomic/Molecular Massively Parallel Simulator
    http://lammps.sandia.gov, Sandia National Laboratories
    Steve Plimpton, sjplimp@sandia.gov
@@ -20,7 +20,7 @@ AtomStyle(hybrid,AtomVecHybrid)
 #ifndef LMP_ATOM_VEC_HYBRID_H
 #define LMP_ATOM_VEC_HYBRID_H
 
-#include "stdio.h"
+#include <stdio.h>
 #include "atom_vec.h"
 
 namespace LAMMPS_NS {
@@ -33,12 +33,13 @@ class AtomVecHybrid : public AtomVec {
 
   AtomVecHybrid(class LAMMPS *);
   ~AtomVecHybrid();
-  void settings(int, char **);
+  void process_args(int, char **);
   void init();
   void grow(int);
   void grow_reset();
   void copy(int, int, int);
   void clear_bonus();
+  void force_clear(int, size_t);
   int pack_comm(int, int *, double *, int, int *);
   int pack_comm_vel(int, int *, double *, int, int *);
   void unpack_comm(int, int, double *);
@@ -54,17 +55,22 @@ class AtomVecHybrid : public AtomVec {
   int size_restart();
   int pack_restart(int, double *);
   int unpack_restart(double *);
-  void write_restart_settings(FILE *);
-  void read_restart_settings(FILE *);
   void create_atom(int, double *);
-  void data_atom(double *, tagint, char **);
+  void data_atom(double *, imageint, char **);
   int data_atom_hybrid(int, char **) {return 0;}
   void data_vel(int, char **);
+  void pack_data(double **);
+  void write_data(FILE *, int, double **);
+  void pack_vel(double **);
+  void write_vel(FILE *, int, double **);
+  int property_atom(char *);
+  void pack_property_atom(int, double *, int, int);
   bigint memory_usage();
 
  private:
-  int *tag,*type,*mask;
-  tagint *image;
+  tagint *tag;
+  int *type,*mask;
+  imageint *image;
   double **x,**v,**f;
   double **omega,**angmom;
 
@@ -82,17 +88,15 @@ class AtomVecHybrid : public AtomVec {
 
 /* ERROR/WARNING messages:
 
-E: Illegal ... command
+E: Atom style hybrid cannot have hybrid as an argument
 
-Self-explanatory.  Check the input script syntax and compare to the
-documentation for the command.  You can use -echo screen as a
-command-line option when running LAMMPS to see the offending line.
+Self-explanatory.
 
 E: Atom style hybrid cannot use same atom style twice
 
 Self-explanatory.
 
-E: Atom style hybrid cannot have hybrid as an argument
+E: Cannot mix molecular and molecule template atom styles
 
 Self-explanatory.
 
@@ -100,10 +104,6 @@ E: Per-processor system is too big
 
 The number of owned atoms plus ghost atoms on a single
 processor must fit in 32-bit integer.
-
-E: Invalid atom ID in Atoms section of data file
-
-Atom IDs must be positive integers.
 
 E: Invalid atom type in Atoms section of data file
 

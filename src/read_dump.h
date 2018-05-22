@@ -22,7 +22,7 @@ CommandStyle(read_dump,ReadDump)
 #ifndef LMP_READ_DUMP_H
 #define LMP_READ_DUMP_H
 
-#include "stdio.h"
+#include <stdio.h>
 #include "pointers.h"
 
 namespace LAMMPS_NS {
@@ -55,14 +55,17 @@ private:
   int boxflag;             // overwrite simulation with dump file box params
   int replaceflag,addflag; // flags for processing dump snapshot atoms
   int trimflag,purgeflag;
-  int scaledflag;          // user setting for coordinate scaling
-  int scaled;              // actual setting for coordinate scaling
+  int scaleflag;           // user 0/1 if dump file coords are unscaled/scaled
+  int wrapflag;            // user 0/1 if dump file coords are unwrapped/wrapped
   char *readerstyle;       // style of dump files to read
 
   int nfield;              // # of fields to extract from dump file
   int *fieldtype;          // type of each field = X,VY,IZ,etc
   char **fieldlabel;       // user specified label for field
   double **fields;         // per-atom field values
+
+  int scaled;              // 0/1 if dump file coords are unscaled/scaled
+  int wrapped;             // 0/1 if dump file coords are unwrapped/wrapped
 
   double box[3][3];         // dump file box parameters
   double xlo,xhi,ylo,yhi,zlo,zhi,xy,xz,yz;  // dump snapshot box params
@@ -79,6 +82,7 @@ private:
 
   class Reader *reader;           // class that reads dump file
 
+  int whichtype(char *);
   void process_atoms(int);
   void delete_atoms();
 
@@ -94,6 +98,11 @@ private:
 
 /* ERROR/WARNING messages:
 
+E: Read_dump command before simulation box is defined
+
+The read_dump command cannot be used before a read_data, read_restart,
+or create_box command.
+
 E: Illegal ... command
 
 Self-explanatory.  Check the input script syntax and compare to the
@@ -104,9 +113,9 @@ E: Dump file does not contain requested snapshot
 
 Self-explanatory.
 
-E: Invalid dump reader style
+E: Unknown dump reader style
 
-Self-explanatory.
+The choice of dump reader style via the format keyword is unknown.
 
 E: No box information in dump. You have to use 'box no'
 
@@ -121,7 +130,7 @@ E: Read_dump field not found in dump file
 
 Self-explanatory.
 
-E: Read_dump x,y,z fields do not have consistent scaling
+E: Read_dump xyz fields do not have consistent scaling/wrapping
 
 Self-explanatory.
 
@@ -134,6 +143,10 @@ coordinates.
 E: Too many total atoms
 
 See the setting for bigint in the src/lmptype.h file.
+
+E: Read dump of atom property that isn't allocated
+
+Self-explanatory.
 
 E: Duplicate fields in read_dump command
 

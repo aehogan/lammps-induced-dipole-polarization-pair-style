@@ -1,4 +1,4 @@
-/* ----------------------------------------------------------------------
+/* -*- c++ -*- ----------------------------------------------------------
    LAMMPS - Large-scale Atomic/Molecular Massively Parallel Simulator
    http://lammps.sandia.gov, Sandia National Laboratories
    Steve Plimpton, sjplimp@sandia.gov
@@ -21,6 +21,7 @@ PairStyle(comb,PairComb)
 #define LMP_PAIR_COMB_H
 
 #include "pair.h"
+#include "my_page.h"
 
 namespace LAMMPS_NS {
 
@@ -36,6 +37,7 @@ class PairComb : public Pair {
   double memory_usage();
 
   virtual double yasu_char(double *, int &);
+  double enegtot;
 
  protected:
   struct Param {
@@ -77,9 +79,15 @@ class PairComb : public Pair {
   int *NCo, cor_flag, cuo_flag, cuo_flag1, cuo_flag2;
   double **bbij;
 
+  int pgsize;                      // size of neighbor page
+  int oneatom;                     // max # of neighbors for one atom
+  int *sht_num,**sht_first;        // short-range neighbor list
+  MyPage<int> *ipage;              // neighbor list pages
+  double cutmin;
+
   void allocate();
   virtual void read_file(char *);
-  void setup();
+  void setup_params();
   virtual void repulsive(Param *, double, double &, int,
                          double &, double, double);
   double zeta(Param *, double, double, double *, double *);
@@ -142,16 +150,10 @@ class PairComb : public Pair {
   void Over_cor(Param *, double, int, double &, double &);
   int pack_reverse_comm(int, int, double *);
   void unpack_reverse_comm(int, int *, double *);
-  int pack_comm(int , int *, double *, int, int *);
-  void unpack_comm(int , int , double *);
+  int pack_forward_comm(int , int *, double *, int, int *);
+  void unpack_forward_comm(int , int , double *);
 
-  // short range neighbor list
-
-  void add_pages(int howmany = 1);
   void Short_neigh();
-  int maxpage, pgsize, oneatom, **pages;
-  int *sht_num, **sht_first;        // short-range neighbor list
-  double cutmin;
 
   // vector functions, inline for efficiency
 
@@ -228,13 +230,11 @@ invalid.
 
 E: Potential file has duplicate entry
 
-The potential file for a SW or Tersoff potential has more than
-one entry for the same 3 ordered elements.
+The potential file has more than one entry for the same element.
 
 E: Potential file is missing an entry
 
-The potential file for a SW or Tersoff potential does not have a
-needed entry.
+The potential file does not have a needed entry.
 
 W: Pair COMB charge %.10f with force %.10f hit min barrier
 
@@ -243,5 +243,11 @@ Something is possibly wrong with your model.
 W: Pair COMB charge %.10f with force %.10f hit max barrier
 
 Something is possibly wrong with your model.
+
+E: Neighbor list overflow, boost neigh_modify one
+
+There are too many neighbors of a single atom.  Use the neigh_modify
+command to increase the max number of neighbors allowed for one atom.
+You may also want to boost the page size.
 
 */

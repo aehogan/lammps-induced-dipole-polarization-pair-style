@@ -17,7 +17,7 @@
 /* -----------------------------------------------------------------------
    Copyright (2009) Sandia Corporation.  Under the terms of Contract
    DE-AC04-94AL85000 with Sandia Corporation, the U.S. Government retains
-   certain rights in this software.  This software is distributed under 
+   certain rights in this software.  This software is distributed under
    the Simplified BSD License.
    ----------------------------------------------------------------------- */
 
@@ -52,25 +52,42 @@
 /// Base class for vector/matrix containers
 /** All containers are associated with a default command queue.
   * For CUDA, this is the default stream.
-  * 
-  * The default queue is used for asynchonrous operations on the container 
+  *
+  * The default queue is used for asynchonrous operations on the container
   * that do not specify a queue. For OpenCL, this queue is also used in
-  * calls for reserving and copying memory **/ 
+  * calls for reserving and copying memory **/
 class UCL_BaseMat {
  public:
-  UCL_BaseMat() : _cq(0) { }
+  UCL_BaseMat() : _cq(0), _kind(UCL_VIEW) { }
   virtual ~UCL_BaseMat() { }
   /// Return the default command queue/stream associated with this data
   inline command_queue & cq() { return _cq; }
+  /// Change the default command queue associated with matrix
+  inline void cq(command_queue &cq_in) { _cq=cq_in; }
   /// Block until command_queue associated with matrix is complete
   inline void sync() { ucl_sync(_cq); }
-  
-  #ifdef UCL_DEBUG
-  // Returns the type of host allocation
-  virtual inline enum UCL_MEMOPT kind() const { return UCL_NOT_PINNED; }
-  #endif 
+  /// Return the type/permissions of memory allocation
+  /** Returns UCL_READ_WRITE, UCL_WRITE_ONLY, UCL_READ_ONLY, UCL_NOT_PINNED
+    * or UCL_VIEW **/
+  inline enum UCL_MEMOPT kind() const { return _kind; }
+
+  inline bool shared_mem_device() {
+    #ifdef _OCL_MAT
+    cl_device_id device;
+    CL_SAFE_CALL(clGetCommandQueueInfo(_cq,CL_QUEUE_DEVICE,
+                                       sizeof(cl_device_id),&device,NULL));
+    cl_device_type device_type;
+    CL_SAFE_CALL(clGetDeviceInfo(device,CL_DEVICE_TYPE,
+                                 sizeof(device_type),&device_type,NULL));
+    return _shared_mem_device(device_type);
+    #else
+    return false;
+    #endif
+  }
+
  protected:
   command_queue _cq;
+  enum UCL_MEMOPT _kind;
 };
 
 #endif

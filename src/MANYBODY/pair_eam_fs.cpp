@@ -15,12 +15,13 @@
    Contributing authors: Tim Lau (MIT)
 ------------------------------------------------------------------------- */
 
-#include "stdio.h"
-#include "stdlib.h"
-#include "string.h"
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
 #include "pair_eam_fs.h"
 #include "atom.h"
 #include "comm.h"
+#include "force.h"
 #include "memory.h"
 #include "error.h"
 
@@ -33,6 +34,7 @@ using namespace LAMMPS_NS;
 PairEAMFS::PairEAMFS(LAMMPS *lmp) : PairEAM(lmp)
 {
   one_coeff = 1;
+  manybody_flag = 1;
 }
 
 /* ----------------------------------------------------------------------
@@ -97,9 +99,10 @@ void PairEAMFS::coeff(int narg, char **arg)
     for (j = i; j <= n; j++) {
       if (map[i] >= 0 && map[j] >= 0) {
         setflag[i][j] = 1;
-        if (i == j) atom->set_mass(i,fs->mass[map[i]]);
+        if (i == j) atom->set_mass(FLERR,i,fs->mass[map[i]]);
         count++;
       }
+      scale[i][j] = 1.0;
     }
   }
 
@@ -121,7 +124,7 @@ void PairEAMFS::read_file(char *filename)
   char line[MAXLINE];
 
   if (me == 0) {
-    fptr = fopen(filename,"r");
+    fptr = force->open_potential(filename);
     if (fptr == NULL) {
       char str[128];
       sprintf(str,"Cannot open EAM potential file %s",filename);
@@ -151,7 +154,7 @@ void PairEAMFS::read_file(char *filename)
   char **words = new char*[file->nelements+1];
   nwords = 0;
   strtok(line," \t\n\r\f");
-  while (words[nwords++] = strtok(NULL," \t\n\r\f")) continue;
+  while ((words[nwords++] = strtok(NULL," \t\n\r\f"))) continue;
 
   file->elements = new char*[file->nelements];
   for (int i = 0; i < file->nelements; i++) {
@@ -163,15 +166,19 @@ void PairEAMFS::read_file(char *filename)
 
   if (me == 0) {
     fgets(line,MAXLINE,fptr);
-    sscanf(line,"%d %lg %d %lg %lg",
+    nwords = sscanf(line,"%d %lg %d %lg %lg",
            &file->nrho,&file->drho,&file->nr,&file->dr,&file->cut);
   }
 
+  MPI_Bcast(&nwords,1,MPI_INT,0,world);
   MPI_Bcast(&file->nrho,1,MPI_INT,0,world);
   MPI_Bcast(&file->drho,1,MPI_DOUBLE,0,world);
   MPI_Bcast(&file->nr,1,MPI_INT,0,world);
   MPI_Bcast(&file->dr,1,MPI_DOUBLE,0,world);
   MPI_Bcast(&file->cut,1,MPI_DOUBLE,0,world);
+
+  if ((nwords != 5) || (file->nrho <= 0) || (file->nr <= 0) || (file->dr <= 0.0))
+    error->all(FLERR,"Invalid EAM potential file");
 
   file->mass = new double[file->nelements];
   memory->create(file->frho,file->nelements,file->nrho+1,

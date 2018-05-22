@@ -36,23 +36,30 @@ class FixRigid : public Fix {
   virtual void final_integrate();
   void initial_integrate_respa(int, int, int);
   void final_integrate_respa(int, int);
+  void write_restart_file(char *);
   virtual double compute_scalar();
   virtual int modify_param(int, char **) {return 0;}
-  
+
   double memory_usage();
   void grow_arrays(int);
-  void copy_arrays(int, int);
+  void copy_arrays(int, int, int);
   void set_arrays(int);
   int pack_exchange(int, double *);
   int unpack_exchange(int, double *);
 
+  void setup_pre_neighbor();
   void pre_neighbor();
   int dof(int);
   void deform(int);
+  void enforce2d();
   void reset_dt();
-  virtual void *extract(const char*,int &);
+  void zero_momentum();
+  void zero_rotation();
+  virtual void *extract(const char*, int &);
+  double extract_ke();
+  double extract_erotational();
   double compute_array(int, int);
-    
+
  protected:
   int me,nprocs;
   double dtv,dtf,dtq;
@@ -60,14 +67,16 @@ class FixRigid : public Fix {
   int triclinic;
   double MINUSPI,TWOPI;
 
-  int rstyle;               // SINGLE,MOLECULE,GROUP
-  int firstflag;            // 1 for first-time setup of rigid bodies
   char *infile;             // file to read rigid body attributes from
+  int rstyle;               // SINGLE,MOLECULE,GROUP
+  int setupflag;            // 1 if body properties are setup, else 0
 
   int dimension;            // # of dimensions
   int nbody;                // # of rigid bodies
+  int nlinear;              // # of linear rigid bodies
   int *nrigid;              // # of atoms in each rigid body
   int *mol2body;            // convert mol-ID to rigid body index
+  int *body2mol;            // convert rigid body index to mol-ID
   int maxmol;               // size of mol2body = max mol-ID
 
   int *body;                // which body each atom is part of (-1 if none)
@@ -84,7 +93,7 @@ class FixRigid : public Fix {
   double **omega;           // angular velocity of each in space coords
   double **torque;          // torque on each rigid body in space coords
   double **quat;            // quaternion of each rigid body
-  tagint *imagebody;        // image flags of xcm of each rigid body
+  imageint *imagebody;        // image flags of xcm of each rigid body
   double **fflag;           // flag for on/off of center-of-mass force
   double **tflag;           // flag for on/off of center-of-mass torque
   double **langextra;       // Langevin thermostat forces and torques
@@ -95,7 +104,10 @@ class FixRigid : public Fix {
   int extended;             // 1 if any particles have extended attributes
   int orientflag;           // 1 if particles store spatial orientation
   int dorientflag;          // 1 if particles store dipole orientation
+  int reinitflag;           // 1 if re-initialize rigid bodies between runs
 
+  imageint *xcmimage;       // internal image flags for atoms in rigid bodies
+                            // set relative to in-box xcm of each body
   int *eflags;              // flags for extended particles
   double **orient;          // orientation vector of particle wrt rigid body
   double **dorient;         // orientation of dipole mu wrt rigid body
@@ -111,14 +123,14 @@ class FixRigid : public Fix {
   int pstat_flag;           // NPT settings
   double p_start[3],p_stop[3];
   double p_period[3],p_freq[3];
-  int p_flag[3];  
+  int p_flag[3];
   int pcouple,pstyle;
   int p_chain;
 
   int allremap;              // remap all atoms
   int dilate_group_bit;      // mask for dilation group
   char *id_dilate;           // group name to dilate
-  
+
   class RanMars *random;
   class AtomVecEllipsoid *avec_ellipsoid;
   class AtomVecLine *avec_line;
@@ -127,11 +139,13 @@ class FixRigid : public Fix {
   int POINT,SPHERE,ELLIPSOID,LINE,TRIANGLE,DIPOLE;   // bitmasks for eflags
   int OMEGA,ANGMOM,TORQUE;
 
-  void no_squish_rotate(int, double *, double *, double *, double);
+  void image_shift();
   void set_xv();
   void set_v();
-  void setup_bodies();
-  void readfile(int, double *, double **, int *);
+  void setup_bodies_static();
+  void setup_bodies_dynamic();
+  void readfile(int, double *, double **, double **, double **,
+                imageint *, int *);
 };
 
 }
@@ -150,6 +164,10 @@ command-line option when running LAMMPS to see the offending line.
 E: Fix rigid molecule requires atom attribute molecule
 
 Self-explanatory.
+
+E: Too many molecules for fix rigid
+
+The limit is 2^31 = ~2 billion molecules.
 
 E: Could not find fix rigid group ID
 
@@ -176,6 +194,10 @@ E: Fix rigid langevin period must be > 0.0
 
 Self-explanatory.
 
+E: Fix rigid npt/nph dilate group ID does not exist
+
+Self-explanatory.
+
 E: One or zero atoms in rigid body
 
 Any rigid body defined by the fix rigid command must contain 2 or more
@@ -191,6 +213,11 @@ NPT/NPH fix must be defined in input script after all rigid fixes,
 else the rigid fix contribution to the pressure virial is
 incorrect.
 
+W: Cannot count rigid body degrees-of-freedom before bodies are initialized
+
+This means the temperature associated with the rigid bodies may be
+incorrect on this timestep.
+
 W: Computing temperature of portions of rigid bodies
 
 The group defined by the temperature compute does not encompass all
@@ -200,7 +227,7 @@ not be accounted for.
 
 E: Fix rigid atom has non-zero image flag in a non-periodic dimension
 
-You cannot set image flags for non-periodic dimensions.
+Image flags for non-periodic dimensions should not be set.
 
 E: Insufficient Jacobi rotations for rigid body
 
@@ -220,13 +247,22 @@ E: Unexpected end of fix rigid file
 
 A read operation from the file failed.
 
+E: Fix rigid file has no lines
+
+Self-explanatory.
+
 E: Incorrect rigid body format in fix rigid file
 
 The number of fields per line is not what expected.
 
 E: Invalid rigid body ID in fix rigid file
 
-The ID does not match the number or an existing ID of rigid bodies
+The ID does not match the number of an existing ID of rigid bodies
 that are defined by the fix rigid command.
+
+E: Cannot open fix rigid restart file %s
+
+The specified file cannot be opened.  Check that the path and name are
+correct.
 
 */

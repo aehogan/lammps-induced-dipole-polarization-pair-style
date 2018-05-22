@@ -1,11 +1,11 @@
-/* ----------------------------------------------------------------------
+/* -*- c++ -*- ----------------------------------------------------------
    LAMMPS - Large-scale Atomic/Molecular Massively Parallel Simulator
    http://lammps.sandia.gov, Sandia National Laboratories
    Steve Plimpton, sjplimp@sandia.gov
 
    Copyright (2003) Sandia Corporation.  Under the terms of Contract
    DE-AC04-94AL85000 with Sandia Corporation, the U.S. Government retains
-   certain rights in this software.  This software is distributed under 
+   certain rights in this software.  This software is distributed under
    the GNU General Public License.
 
    See the README file in the top-level LAMMPS directory.
@@ -21,7 +21,7 @@ KSpaceStyle(pppm/disp,PPPMDisp)
 #define LMP_PPPM_DISP_H
 
 #include "lmptype.h"
-#include "mpi.h"
+#include <mpi.h>
 
 #ifdef FFT_SINGLE
 typedef float FFT_SCALAR;
@@ -36,8 +36,8 @@ typedef double FFT_SCALAR;
 namespace LAMMPS_NS {
 
 
-#define EWALD_MAXORDER	6
-#define EWALD_FUNCS	3
+#define EWALD_MAXORDER  6
+#define EWALD_FUNCS     4
 
 class PPPMDisp : public KSpace {
  public:
@@ -62,7 +62,6 @@ Variables needed for calculating the 1/r and 1/r^6 potential
   int me,nprocs;
   int nfactors;
   int *factors;
-  double qsum,qsqsum;
   double csumij;
   double csum;
   double *csumi;  //needed as correction term for per atom calculations!
@@ -75,10 +74,12 @@ Variables needed for calculating the 1/r and 1/r^6 potential
   double sf_coeff[6], sf_coeff_6[6];
   int peratom_allocate_flag;
 
+  int nsplit;
+  int nsplit_alloc;
 
   double delxinv,delyinv,delzinv,delvolinv;
   double delxinv_6,delyinv_6,delzinv_6,delvolinv_6;
-    
+
   double shift,shiftone;
   int nxlo_in,nylo_in,nzlo_in,nxhi_in,nyhi_in,nzhi_in;
   int nxlo_out,nylo_out,nzlo_out,nxhi_out,nyhi_out,nzhi_out;
@@ -92,14 +93,6 @@ Variables needed for calculating the 1/r and 1/r^6 potential
   int nxlo_fft_6,nylo_fft_6,nzlo_fft_6,nxhi_fft_6,nyhi_fft_6,nzhi_fft_6;
   int nlower_6,nupper_6;
   int ngrid_6,nfft_6,nfft_both_6;
-
-  //// variables needed for splitting the fourier transformed
-  int com_max, com_procs;
-  FFT_SCALAR **splitbuf1, **splitbuf2;
-  int **dict_send, **dict_rec;
-  int *com_each, *com_order;
-  FFT_SCALAR *split_1, *split_2;
-
 
   //// the following variables are needed for every structure factor
   FFT_SCALAR ***density_brick;
@@ -156,6 +149,12 @@ Variables needed for calculating the 1/r and 1/r^6 potential
   FFT_SCALAR ***u_brick_a6;
   FFT_SCALAR ***v0_brick_a6,***v1_brick_a6,***v2_brick_a6,***v3_brick_a6,***v4_brick_a6,***v5_brick_a6;
 
+  FFT_SCALAR ****density_brick_none;
+  FFT_SCALAR ****vdx_brick_none,****vdy_brick_none,****vdz_brick_none;
+  FFT_SCALAR **density_fft_none;
+  FFT_SCALAR ****u_brick_none;
+  FFT_SCALAR ****v0_brick_none,****v1_brick_none,****v2_brick_none,****v3_brick_none,****v4_brick_none,****v5_brick_none;
+
   //// needed for each interaction type
   double *greensfn;
   double **vg;
@@ -172,9 +171,9 @@ Variables needed for calculating the 1/r and 1/r^6 potential
   double *gf_b;
   double *gf_b_6;
 
-  double *sf_precoeff1, *sf_precoeff2, *sf_precoeff3, *sf_precoeff4, 
+  double *sf_precoeff1, *sf_precoeff2, *sf_precoeff3, *sf_precoeff4,
     *sf_precoeff5, *sf_precoeff6;
-  double *sf_precoeff1_6, *sf_precoeff2_6, *sf_precoeff3_6, 
+  double *sf_precoeff1_6, *sf_precoeff2_6, *sf_precoeff3_6,
     *sf_precoeff4_6, *sf_precoeff5_6, *sf_precoeff6_6;
   FFT_SCALAR **rho1d,**rho_coeff;
   FFT_SCALAR **drho1d, **drho_coeff;
@@ -188,10 +187,10 @@ Variables needed for calculating the 1/r and 1/r^6 potential
   class FFT3d *fft1_6, *fft2_6;
   class Remap *remap;
   class Remap *remap_6;
-  class CommGrid *cg;
-  class CommGrid *cg_peratom;
-  class CommGrid *cg_6;
-  class CommGrid *cg_peratom_6;
+  class GridComm *cg;
+  class GridComm *cg_peratom;
+  class GridComm *cg_6;
+  class GridComm *cg_peratom_6;
 
   int **part2grid;             // storage for particle -> grid mapping
   int **part2grid_6;
@@ -204,7 +203,13 @@ Variables needed for calculating the 1/r and 1/r^6 potential
   double qdist;                // distance from O site to negative charge
   double alpha;                // geometric factor
 
-  void init_coeffs();	
+  void init_coeffs();
+  int qr_alg(double**, double**, int);
+  void hessenberg(double**, double**, int);
+  void qr_tri(double**, double**, int);
+  void mmult(double**, double**, double**, int);
+  int check_convergence(double**, double**, double**,
+                        double**, double**, double**, int);
 
   void set_grid();
   void set_grid_6();
@@ -213,8 +218,8 @@ Variables needed for calculating the 1/r and 1/r^6 potential
                           int&, int&,int&, int&, int&,int&,
                           int&, int&,int&, int&, int&,int&,
                           int&, int&,int&, int&, int&,
-			  int&, int&, int&,
-		          double&, double&, int&);
+                          int&, int&, int&,
+                          double&, double&, int&);
   void set_n_pppm_6();
   void adjust_gewald();
   void adjust_gewald_6();
@@ -223,7 +228,7 @@ Variables needed for calculating the 1/r and 1/r^6 potential
   double f_6();
   double derivf_6();
   double final_accuracy();
-  double final_accuracy_6();
+  void final_accuracy_6(double&, double&, double&);
   double lj_rspace_error();
   double compute_qopt();
   double compute_qopt_6();
@@ -233,7 +238,6 @@ Variables needed for calculating the 1/r and 1/r^6 potential
   double compute_qopt_6_ad();
 
   void calc_csum();
-  void prepare_splitting();
 
   virtual void allocate();
   virtual void allocate_peratom();
@@ -244,9 +248,9 @@ Variables needed for calculating the 1/r and 1/r^6 potential
   double diffpr(double, double, double, double, double **);
   void compute_gf_denom(double*, int);
   double gf_denom(double, double, double, double*, int);
-  
 
-  void compute_sf_precoeff(int, int, int, int, 
+
+  void compute_sf_precoeff(int, int, int, int,
                            int, int, int,
                            int, int, int,
                            double*, double*, double*,
@@ -262,31 +266,33 @@ Variables needed for calculating the 1/r and 1/r^6 potential
                              int, int, int,
                              int, int, int);
   virtual void particle_map_c(double, double, double,
-			      double, int **, int, int,
+                              double, int **, int, int,
                               int, int, int,
                               int, int, int );
   virtual void make_rho_c();
   virtual void make_rho_g();
   virtual void make_rho_a();
+  virtual void make_rho_none();
 
   virtual void brick2fft(int, int, int, int, int, int,
-			 FFT_SCALAR ***, FFT_SCALAR *, FFT_SCALAR *,
+                         FFT_SCALAR ***, FFT_SCALAR *, FFT_SCALAR *,
                          LAMMPS_NS::Remap *);
   virtual void brick2fft_a();
+  virtual void brick2fft_none();
 
   virtual void poisson_ik(FFT_SCALAR *, FFT_SCALAR *,
-		          FFT_SCALAR *, LAMMPS_NS::FFT3d *,LAMMPS_NS::FFT3d *, 
+                          FFT_SCALAR *, LAMMPS_NS::FFT3d *,LAMMPS_NS::FFT3d *,
                           int, int, int, int, int, int, int,
-		          int, int, int, int, int, int,
+                          int, int, int, int, int, int,
                           int, int, int, double&, double *,
                           double *, double *, double *,
                           double *, double *, double *,
-		          FFT_SCALAR ***, FFT_SCALAR ***, FFT_SCALAR ***, double *, double **, double **,
+                          FFT_SCALAR ***, FFT_SCALAR ***, FFT_SCALAR ***, double *, double **, double **,
                           FFT_SCALAR ***, FFT_SCALAR ***, FFT_SCALAR ***, FFT_SCALAR ***,
                           FFT_SCALAR ***, FFT_SCALAR ***, FFT_SCALAR ***);
 
   virtual void poisson_ad(FFT_SCALAR*, FFT_SCALAR*,
-                          FFT_SCALAR*, LAMMPS_NS::FFT3d*,LAMMPS_NS::FFT3d*, 
+                          FFT_SCALAR*, LAMMPS_NS::FFT3d*,LAMMPS_NS::FFT3d*,
                           int, int, int, int,
                           int, int, int, int, int, int,
                           int, int, int, int, int, int,
@@ -295,7 +301,7 @@ Variables needed for calculating the 1/r and 1/r^6 potential
                           FFT_SCALAR***, FFT_SCALAR***, FFT_SCALAR***, FFT_SCALAR***,
                           FFT_SCALAR***, FFT_SCALAR***, FFT_SCALAR***);
 
-  virtual void poisson_peratom(FFT_SCALAR*, FFT_SCALAR*, LAMMPS_NS::FFT3d*, 
+  virtual void poisson_peratom(FFT_SCALAR*, FFT_SCALAR*, LAMMPS_NS::FFT3d*,
                                double**, double**, int,
                                int, int, int, int, int, int,
                                FFT_SCALAR***, FFT_SCALAR***, FFT_SCALAR***,
@@ -304,19 +310,33 @@ Variables needed for calculating the 1/r and 1/r^6 potential
                              FFT_SCALAR ***, FFT_SCALAR ***, FFT_SCALAR ***,
                              FFT_SCALAR ***, FFT_SCALAR ***, FFT_SCALAR ***,
                              FFT_SCALAR ***, FFT_SCALAR ***, FFT_SCALAR ***, FFT_SCALAR ***,
-			     FFT_SCALAR ***, FFT_SCALAR ***, FFT_SCALAR ***,
+                             FFT_SCALAR ***, FFT_SCALAR ***, FFT_SCALAR ***,
                              FFT_SCALAR ***, FFT_SCALAR ***, FFT_SCALAR ***, FFT_SCALAR ***,
-			     FFT_SCALAR ***, FFT_SCALAR ***, FFT_SCALAR ***);
+                             FFT_SCALAR ***, FFT_SCALAR ***, FFT_SCALAR ***);
   virtual void poisson_2s_ad(FFT_SCALAR *, FFT_SCALAR *,
                              FFT_SCALAR ***, FFT_SCALAR ***, FFT_SCALAR ***, FFT_SCALAR ***,
-			     FFT_SCALAR ***, FFT_SCALAR ***, FFT_SCALAR ***,
+                             FFT_SCALAR ***, FFT_SCALAR ***, FFT_SCALAR ***,
                              FFT_SCALAR ***, FFT_SCALAR ***, FFT_SCALAR ***, FFT_SCALAR ***,
-			     FFT_SCALAR ***, FFT_SCALAR ***, FFT_SCALAR ***);
+                             FFT_SCALAR ***, FFT_SCALAR ***, FFT_SCALAR ***);
 
   virtual void poisson_2s_peratom(FFT_SCALAR***, FFT_SCALAR***, FFT_SCALAR***,
-				  FFT_SCALAR***, FFT_SCALAR***, FFT_SCALAR***,
+                                  FFT_SCALAR***, FFT_SCALAR***, FFT_SCALAR***,
                                   FFT_SCALAR***, FFT_SCALAR***, FFT_SCALAR***,
                                   FFT_SCALAR***, FFT_SCALAR***, FFT_SCALAR***);
+
+  virtual void poisson_none_ad(int, int, FFT_SCALAR *, FFT_SCALAR *,
+                               FFT_SCALAR ***, FFT_SCALAR ***,
+                               FFT_SCALAR ****, FFT_SCALAR ****, FFT_SCALAR ****,
+                               FFT_SCALAR ****, FFT_SCALAR ****, FFT_SCALAR ****);
+  virtual void poisson_none_ik(int, int, FFT_SCALAR *, FFT_SCALAR *,
+                               FFT_SCALAR ***, FFT_SCALAR ***, FFT_SCALAR ***,
+                               FFT_SCALAR ***, FFT_SCALAR ***, FFT_SCALAR ***,
+                               FFT_SCALAR ****, FFT_SCALAR ****, FFT_SCALAR ****, FFT_SCALAR ****,
+                               FFT_SCALAR ****, FFT_SCALAR ****, FFT_SCALAR ****);
+  virtual void poisson_none_peratom(int, int, FFT_SCALAR***, FFT_SCALAR***, FFT_SCALAR***,
+                                    FFT_SCALAR***, FFT_SCALAR***, FFT_SCALAR***,
+                                    FFT_SCALAR***, FFT_SCALAR***, FFT_SCALAR***,
+                                    FFT_SCALAR***, FFT_SCALAR***, FFT_SCALAR***);
 
 
   virtual void fieldforce_c_ik();
@@ -328,15 +348,16 @@ Variables needed for calculating the 1/r and 1/r^6 potential
   virtual void fieldforce_a_ik();
   virtual void fieldforce_a_ad();
   virtual void fieldforce_a_peratom();
+  virtual void fieldforce_none_ik();
+  virtual void fieldforce_none_ad();
+  virtual void fieldforce_none_peratom();
   void procs2grid2d(int,int,int,int *, int*);
-  void compute_rho1d(const FFT_SCALAR &, const FFT_SCALAR &, 
-		     const FFT_SCALAR &, int, FFT_SCALAR **, FFT_SCALAR **);
-  void compute_drho1d(const FFT_SCALAR &, const FFT_SCALAR &, 
-		      const FFT_SCALAR &, int, FFT_SCALAR **, FFT_SCALAR **);
+  void compute_rho1d(const FFT_SCALAR &, const FFT_SCALAR &,
+                     const FFT_SCALAR &, int, FFT_SCALAR **, FFT_SCALAR **);
+  void compute_drho1d(const FFT_SCALAR &, const FFT_SCALAR &,
+                      const FFT_SCALAR &, int, FFT_SCALAR **, FFT_SCALAR **);
   void compute_rho_coeff(FFT_SCALAR **,FFT_SCALAR **, int);
   void slabcorr(int);
-  void split_fourier();
-  void split_order(int **);
 
   // grid communication
 
@@ -359,137 +380,154 @@ Self-explanatory.  Check the input script syntax and compare to the
 documentation for the command.  You can use -echo screen as a
 command-line option when running LAMMPS to see the offending line.
 
-E: Cannot (yet) use PPPM_disp with triclinic box
+E: Cannot use PPPMDisp with 2d simulation
 
-This feature is not yet supported.
+The kspace style pppm/disp cannot be used in 2d simulations.  You can
+use 2d pppm/disp in a 3d simulation; see the kspace_modify command.
 
-E: Cannot use PPPM_disp with 2d simulation
+E: PPPMDisp can only currently be used with comm_style brick
 
-The kspace style pppm_disp cannot be used in 2d simulations.  You can use
-2d PPPM_disp in a 3d simulation; see the kspace_modify command.
+This is a current restriction in LAMMPS.
 
-E: Kspace style with selected options requires atom attribute q
+E: Cannot use nonperiodic boundaries with PPPMDisp
 
-The atom style defined does not have these attributes.
-Change the atom style or switch of the coulomb solver.
+For kspace style pppm/disp, all 3 dimensions must have periodic
+boundaries unless you use the kspace_modify command to define a 2d
+slab with a non-periodic z dimension.
 
-E: Cannot use nonperiodic boundaries with PPPM_disp
-
-For kspace style pppm_disp, all 3 dimensions must have periodic boundaries
-unless you use the kspace_modify command to define a 2d slab with a
-non-periodic z dimension.
-
-E: Incorrect boundaries with slab PPPM_disp
+E: Incorrect boundaries with slab PPPMDisp
 
 Must have periodic x,y dimensions and non-periodic z dimension to use
-2d slab option with PPPM_disp.
+2d slab option with pppm/disp.
 
-E: PPPM_disp coulomb order cannot be greater than %d
+E: PPPMDisp coulomb order cannot be greater than %d
 
-Self-explanatory.
-
-E: PPPM_disp dispersion order cannot be greater than %d
-
-Self-explanatory.
+This is a limitation of the PPPM implementation in LAMMPS.
 
 E: KSpace style is incompatible with Pair style
 
-Setting a kspace style requires that a pair style with a long-range
-Coulombic and Dispersion component be selected.
+Setting a kspace style requires that a pair style with matching
+long-range Coulombic or dispersion components be used.
 
-E: Unsupported mixing rule in kspace_style pppm_disp for pair_style %s
+E: Unsupported order in kspace_style pppm/disp, pair_style %s
 
-PPPM_disp requires arithemtic or geometric mixing rules.
+Only pair styles with 1/r and 1/r^6 dependence are currently supported.
 
-E: Unsupported order in kspace_style pppm_disp pair_style %s
+W: Charges are set, but coulombic solver is not used
 
-PPPM_disp only works for 1/r and 1/r^6 potentials
+Self-explanatory.
 
-W: Charges are set, but coulombic long-range solver is not used.
+E: PPPMDisp used but no parameters set, for further information please see the pppm/disp documentation
 
-Charges have been specified, however, calculations are performed
-as if they were zero.
+An efficient and accurate usage of the pppm/disp requires settings via the kspace_modify command. Please see the pppm/disp documentation for further instructions.
 
 E: Bond and angle potentials must be defined for TIP4P
 
 Cannot use TIP4P pair potential unless bond and angle potentials
 are defined.
 
-E: Bad TIP4P angle type for PPPM_disp/TIP4P
+E: Bad TIP4P angle type for PPPMDisp/TIP4P
 
 Specified angle type is not valid.
 
-E: Bad TIP4P bond type for PPPM_disp/TIP4P
+E: Bad TIP4P bond type for PPPMDisp/TIP4P
 
 Specified bond type is not valid.
 
-E: Cannot use kspace solver with selected options on system with no charge
+W: Reducing PPPMDisp Coulomb order b/c stencil extends beyond neighbor processor
 
-No atoms in system have a non-zero charge. Change charges or change 
-options of the kspace solver/pair style.
+This may lead to a larger grid than desired.  See the kspace_modify overlap
+command to prevent changing of the PPPM order.
 
-W: System is not charge neutral, net charge = %g
+E: PPPMDisp Coulomb grid is too large
 
-The total charge on all atoms on the system is not 0.0, which
-is not valid for Ewald or PPPM coulombic solvers.
+The global PPPM grid is larger than OFFSET in one or more dimensions.
+OFFSET is currently set to 4096.  You likely need to decrease the
+requested accuracy.
 
-W: Reducing PPPM_disp Coulomb order b/c stencil extends beyond neighbor processor
+E: Coulomb PPPMDisp order has been reduced below minorder
 
-LAMMPS is attempting this in order to allow the simulation
-to run.  It should not effect the PPPM_disp accuracy.
+The default minimum order is 2.  This can be reset by the
+kspace_modify minorder command.
 
-W: Reducing PPPM_disp Dispersion order b/c stencil extends beyond neighbor processor
+W: Reducing PPPMDisp dispersion order b/c stencil extends beyond neighbor processor
 
-LAMMPS is attempting this in order to allow the simulation
-to run.  It should not effect the PPPM_disp accuracy.
+This may lead to a larger grid than desired.  See the kspace_modify overlap
+command to prevent changing of the PPPM order.
 
-E: PPPM_disp Coulomb grid is too large
+E: PPPMDisp Dispersion grid is too large
 
-The global PPPM_disp grid for Coulomb interactions is larger than OFFSET in one or more dimensions.
-OFFSET is currently set to 16384.  You likely need to decrease the
-requested precision.
+The global PPPM grid is larger than OFFSET in one or more dimensions.
+OFFSET is currently set to 4096.  You likely need to decrease the
+requested accuracy.
 
-E: PPPM_grid Dispersion grid is too large
+E: Dispersion PPPMDisp order has been reduced below minorder
 
-One of the PPPM_disp grids for Dispersion interactions is larger than OFFSET in one or more dimensions.
-OFFSET is currently set to 16384.  You likely need to decrease the
-requested precision.
+The default minimum order is 2.  This can be reset by the
+kspace_modify minorder command.
 
-E: Coulomb PPPM_disp order has been reduced to 0
+E: PPPM grid stencil extends beyond nearest neighbor processor
 
-LAMMPS has attempted to reduce the PPPM_disp coulomb order to enable the simulation
-to run, but can reduce the order no further.  Try increasing the
-accuracy of PPPM_disp coulomb by reducing the tolerance size, thus inducing a 
-larger PPPM_disp coulomb grid.
+This is not allowed if the kspace_modify overlap setting is no.
 
-E: Dispersion PPPM_disp order has been reduced to 0
+E: Matrix factorization to split dispersion coefficients failed
 
-LAMMPS has attempted to reduce the PPPM_disp dispersion order to enable the simulation
-to run, but can reduce the order no further.  Try increasing the
-accuracy of PPPM_disp dispersion by reducing the tolerance size, thus inducing a 
-larger PPPM_disp dispersion grid.
+This should not normally happen.  Contact the developers.
 
-E: Cannot compute PPPM_disp g_ewald
+W: Estimated error in splitting of dispersion coeffs is %g
 
-LAMMPS failed to compute a valid approximation for the PPPM_disp g_ewald
-factor that partitions the computation between real space and k-space
-for Coulomb interactions.
+Error is greater than 0.0001 percent.
+
+W: Simulations might be very slow because of large number of structure factors
+
+Self-explanatory.
+
+E: Epsilon or sigma reference not set by pair style in PPPMDisp
+
+Self-explanatory.
+
+E: KSpace accuracy too large to estimate G vector
+
+Reduce the accuracy request or specify gwald explicitly
+via the kspace_modify command.
+
+E: Could not compute grid size for Coulomb interaction
+
+The code is unable to compute a grid size consistent with the desired
+accuracy.  This error should not occur for typical problems.  Please
+send an email to the developers.
+
+E: Could not compute g_ewald
+
+The Newton-Raphson solver failed to converge to a good value for
+g_ewald.  This error should not occur for typical problems.  Please
+send an email to the developers.
+
+E: Could not adjust g_ewald_6
+
+The Newton-Raphson solver failed to converge to a good value for
+g_ewald.  This error should not occur for typical problems.  Please
+send an email to the developers.
 
 E: Cannot compute initial g_ewald_disp
 
 LAMMPS failed to compute an initial guess for the PPPM_disp g_ewald_6
 factor that partitions the computation between real space and k-space
-for Disptersion interactions.
+for Dispersion interactions.
 
-E: Cannot compute final g_ewald_disp
+E: Could not compute grid size for Dispersion
 
-LAMMPS failed to compute a final value for the PPPM_disp g_ewald_6
-factor that partitions the computation between real space and k-space
-for Disptersion interactions.
+The code is unable to compute a grid size consistent with the desired
+accuracy.  This error should not occur for typical problems.  Please
+send an email to the developers.
 
-E: Out of range atoms - cannot compute PPPM_disp
+E: Non-numeric box dimensions - simulation unstable
 
-One or more atoms are attempting to map their charge to a PPPM_disp grid
+The box size has apparently blown up.
+
+E: Out of range atoms - cannot compute PPPMDisp
+
+One or more atoms are attempting to map their charge to a PPPM grid
 point that is not owned by a processor.  This is likely for one of two
 reasons, both of them bad.  First, it may mean that an atom near the
 boundary of a processor's sub-domain has moved more than 1/2 the

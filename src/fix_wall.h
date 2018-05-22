@@ -1,4 +1,4 @@
-/* ----------------------------------------------------------------------
+/* -*- c++ -*- ----------------------------------------------------------
    LAMMPS - Large-scale Atomic/Molecular Massively Parallel Simulator
    http://lammps.sandia.gov, Sandia National Laboratories
    Steve Plimpton, sjplimp@sandia.gov
@@ -51,10 +51,9 @@ class FixWall : public Fix {
   int estyle[6],sstyle[6],wstyle[6];
   int eindex[6],sindex[6];
   char *estr[6],*sstr[6];
-  int vflag;                  // 1 if any wall position,epsilon,sigma is a var
+  int varflag;                // 1 if any wall position,epsilon,sigma is a var
   int eflag;                  // per-wall flag for energy summation
-  int nlevels_respa;
-  double dt;
+  int ilevel_respa;
   int fldflag;
 };
 
@@ -78,18 +77,13 @@ E: Fix wall cutoff <= 0.0
 
 Self-explanatory.
 
-E: Cannot use fix wall in periodic dimension
-
-Self-explanatory.
-
 E: Cannot use fix wall zlo/zhi for a 2d simulation
 
 Self-explanatory.
 
-E: Use of fix wall with undefined lattice
+E: Cannot use fix wall in periodic dimension
 
-Must use lattice command with fix wall command if units option is set
-to lattice.
+Self-explanatory.
 
 E: Variable name for fix wall does not exist
 
@@ -98,5 +92,9 @@ Self-explanatory.
 E: Variable for fix wall is invalid style
 
 Only equal-style variables can be used.
+
+E: Variable evaluation in fix wall gave bad value
+
+The returned value for epsilon or sigma < 0.0.
 
 */

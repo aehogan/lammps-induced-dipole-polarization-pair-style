@@ -11,7 +11,7 @@
    See the README file in the top-level LAMMPS directory.
 ------------------------------------------------------------------------- */
 
-#include "math.h"
+#include <math.h>
 #include "min_fire.h"
 #include "universe.h"
 #include "atom.h"
@@ -26,10 +26,6 @@ using namespace LAMMPS_NS;
 // EPS_ENERGY = minimum normalization for energy tolerance
 
 #define EPS_ENERGY 1.0e-8
-
-// same as in other min classes
-
-enum{MAXITER,MAXEVAL,ETOL,FTOL,DOWNHILL,ZEROALPHA,ZEROFORCE,ZEROQUAD};
 
 #define DELAYSTEP 5
 #define DT_GROW 1.1
@@ -49,6 +45,9 @@ void MinFire::init()
   Min::init();
 
   dt = update->dt;
+  dtmax = TMAX * dt;
+  alpha = ALPHA0;
+  last_negative = update->ntimestep;
 }
 
 /* ---------------------------------------------------------------------- */
@@ -83,15 +82,16 @@ int MinFire::iterate(int maxiter)
   bigint ntimestep;
   double vmax,vdotf,vdotfall,vdotv,vdotvall,fdotf,fdotfall;
   double scale1,scale2;
-  double dtvone,dtv,dtfm;
+  double dtvone,dtv,dtf,dtfm;
   int flag,flagall;
 
   alpha_final = 0.0;
-  double alpha = ALPHA0;
-  double dtmax = TMAX * dt;
-  bigint last_negative = update->ntimestep;
 
   for (int iter = 0; iter < maxiter; iter++) {
+
+    if (timer->check_timeout(niter))
+      return TIMEOUT;
+
     ntimestep = ++update->ntimestep;
     niter++;
 
@@ -195,13 +195,15 @@ int MinFire::iterate(int maxiter)
       MPI_Allreduce(&dtvone,&dtv,1,MPI_DOUBLE,MPI_MIN,universe->uworld);
     }
 
+    dtf = dtv * force->ftm2v;
+
     // Euler integration step
 
     double **x = atom->x;
 
     if (rmass) {
       for (int i = 0; i < nlocal; i++) {
-        dtfm = dtv / rmass[i];
+        dtfm = dtf / rmass[i];
         x[i][0] += dtv * v[i][0];
         x[i][1] += dtv * v[i][1];
         x[i][2] += dtv * v[i][2];
@@ -211,7 +213,7 @@ int MinFire::iterate(int maxiter)
       }
     } else {
       for (int i = 0; i < nlocal; i++) {
-        dtfm = dtv / mass[type[i]];
+        dtfm = dtf / mass[type[i]];
         x[i][0] += dtv * v[i][0];
         x[i][1] += dtv * v[i][1];
         x[i][2] += dtv * v[i][2];
@@ -264,7 +266,7 @@ int MinFire::iterate(int maxiter)
     if (output->next == ntimestep) {
       timer->stamp();
       output->write(ntimestep);
-      timer->stamp(TIME_OUTPUT);
+      timer->stamp(Timer::OUTPUT);
     }
   }
 

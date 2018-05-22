@@ -1,4 +1,4 @@
-/* ----------------------------------------------------------------------
+/* -*- c++ -*- ----------------------------------------------------------
    LAMMPS - Large-scale Atomic/Molecular Massively Parallel Simulator
    http://lammps.sandia.gov, Sandia National Laboratories
    Steve Plimpton, sjplimp@sandia.gov
@@ -20,7 +20,7 @@ AngleStyle(harmonic,AngleHarmonic)
 #ifndef LMP_ANGLE_HARMONIC_H
 #define LMP_ANGLE_HARMONIC_H
 
-#include "stdio.h"
+#include <stdio.h>
 #include "angle.h"
 
 namespace LAMMPS_NS {
@@ -30,16 +30,17 @@ class AngleHarmonic : public Angle {
   AngleHarmonic(class LAMMPS *);
   virtual ~AngleHarmonic();
   virtual void compute(int, int);
-  void coeff(int, char **);
+  virtual void coeff(int, char **);
   double equilibrium_angle(int);
   void write_restart(FILE *);
   void read_restart(FILE *);
+  void write_data(FILE *);
   double single(int, int, int, int);
 
  protected:
   double *k,*theta0;
 
-  void allocate();
+  virtual void allocate();
 };
 
 }

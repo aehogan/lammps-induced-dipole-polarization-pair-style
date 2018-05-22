@@ -1,4 +1,4 @@
-/* ----------------------------------------------------------------------
+/* -*- c++ -*- ----------------------------------------------------------
    LAMMPS - Large-scale Atomic/Molecular Massively Parallel Simulator
    http://lammps.sandia.gov, Sandia National Laboratories
    Steve Plimpton, sjplimp@sandia.gov
@@ -49,21 +49,28 @@ class AtomVecAngle : public AtomVec {
   int pack_restart(int, double *);
   int unpack_restart(double *);
   void create_atom(int, double *);
-  void data_atom(double *, tagint, char **);
+  void data_atom(double *, imageint, char **);
   int data_atom_hybrid(int, char **);
+  void pack_data(double **);
+  int pack_data_hybrid(int, double *);
+  void write_data(FILE *, int, double **);
+  int write_data_hybrid(FILE *, double *);
   bigint memory_usage();
 
  protected:
-  int *tag,*type,*mask;
-  tagint *image;
+  tagint *tag;
+  int *type,*mask;
+  imageint *image;
   double **x,**v,**f;
-  int *molecule;
-  int **nspecial,**special;
+  tagint *molecule;
+  int **nspecial;
+  tagint **special;
   int *num_bond;
-  int **bond_type,**bond_atom;
+  int **bond_type;
+  tagint **bond_atom;
   int *num_angle;
   int **angle_type;
-  int **angle_atom1,**angle_atom2,**angle_atom3;
+  tagint **angle_atom1,**angle_atom2,**angle_atom3;
 };
 
 }
@@ -77,10 +84,6 @@ E: Per-processor system is too big
 
 The number of owned atoms plus ghost atoms on a single
 processor must fit in 32-bit integer.
-
-E: Invalid atom ID in Atoms section of data file
-
-Atom IDs must be positive integers.
 
 E: Invalid atom type in Atoms section of data file
 

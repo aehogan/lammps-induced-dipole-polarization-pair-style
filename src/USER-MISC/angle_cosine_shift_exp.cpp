@@ -15,18 +15,20 @@
    Contributing author: Carsten Svaneborg, science@zqex.dk
 ------------------------------------------------------------------------- */
 
-#include "math.h"
-#include "stdlib.h"
+#include <math.h>
+#include <stdlib.h>
 #include "angle_cosine_shift_exp.h"
 #include "atom.h"
 #include "neighbor.h"
 #include "domain.h"
 #include "comm.h"
 #include "force.h"
+#include "math_const.h"
 #include "memory.h"
 #include "error.h"
 
 using namespace LAMMPS_NS;
+using namespace MathConst;
 
 #define SMALL 0.001
 
@@ -192,20 +194,20 @@ void AngleCosineShiftExp::coeff(int narg, char **arg)
   if (!allocated) allocate();
 
   int ilo,ihi;
-  force->bounds(arg[0],atom->nangletypes,ilo,ihi);
+  force->bounds(FLERR,arg[0],atom->nangletypes,ilo,ihi);
 
-  double umin_   = force->numeric(arg[1]);
-  double theta0_ = force->numeric(arg[2]);
-  double a_      = force->numeric(arg[3]);
+  double umin_   = force->numeric(FLERR,arg[1]);
+  double theta0_ = force->numeric(FLERR,arg[2]);
+  double a_      = force->numeric(FLERR,arg[3]);
 
   int count = 0;
   for (int i = ilo; i <= ihi; i++) {
     doExpansion[i]=(fabs(a_)<0.001);
     umin[i]  = umin_;
     a[i]     = a_;
-    cost[i]  = cos(theta0_*3.14159265/180);
-    sint[i]  = sin(theta0_*3.14159265/180);
-    theta0[i]=     theta0_*3.14159265/180;
+    cost[i]  = cos(theta0_*MY_PI / 180.0);
+    sint[i]  = sin(theta0_*MY_PI / 180.0);
+    theta0[i]=     theta0_*MY_PI / 180.0;
 
     if (!doExpansion[i]) opt1[i]=umin_/(exp(a_)-1);
 
@@ -266,6 +268,16 @@ void AngleCosineShiftExp::read_restart(FILE *fp)
              }
 }
 
+/* ----------------------------------------------------------------------
+   proc 0 writes to data file
+------------------------------------------------------------------------- */
+
+void AngleCosineShiftExp::write_data(FILE *fp)
+{
+  for (int i = 1; i <= atom->nangletypes; i++)
+    fprintf(fp,"%d %g %g %g\n",i,umin[i],theta0[i]/MY_PI*180.0,a[i]);
+}
+
 /* ---------------------------------------------------------------------- */
 
 double AngleCosineShiftExp::single(int type, int i1, int i2, int i3)
@@ -291,7 +303,6 @@ double AngleCosineShiftExp::single(int type, int i1, int i2, int i3)
   double s=sqrt(1.0-c*c);
 
   double cccpsss=c*cost[type]+s*sint[type];
-  double cssmscc=c*sint[type]-s*cost[type];
 
   if (doExpansion[type])
        {

@@ -1,4 +1,4 @@
-/* ----------------------------------------------------------------------
+/* -*- c++ -*- ----------------------------------------------------------
    LAMMPS - Large-scale Atomic/Molecular Massively Parallel Simulator
    http://lammps.sandia.gov, Sandia National Laboratories
    Steve Plimpton, sjplimp@sandia.gov
@@ -20,7 +20,7 @@ BondStyle(table,BondTable)
 #ifndef LMP_BOND_TABLE_H
 #define LMP_BOND_TABLE_H
 
-#include "stdio.h"
+#include <stdio.h>
 #include "bond.h"
 
 namespace LAMMPS_NS {
@@ -35,7 +35,7 @@ class BondTable : public Bond {
   double equilibrium_distance(int);
   void write_restart(FILE *);
   void read_restart(FILE *);
-  double single(int, double, int, int);
+  double single(int, double, int, int, double &);
 
  protected:
   int tabstyle,tablength;
@@ -103,7 +103,8 @@ The values in the tabulated file must be monotonically increasing.
 E: Cannot open file %s
 
 The specified file cannot be opened.  Check that the path and name are
-correct.
+correct. If the file is a compressed file, also check that the gzip
+executable can be found and run.
 
 E: Did not find keyword in table file
 

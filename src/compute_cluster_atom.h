@@ -1,4 +1,4 @@
-/* ----------------------------------------------------------------------
+/* -*- c++ -*- ----------------------------------------------------------
    LAMMPS - Large-scale Atomic/Molecular Massively Parallel Simulator
    http://lammps.sandia.gov, Sandia National Laboratories
    Steve Plimpton, sjplimp@sandia.gov
@@ -31,12 +31,12 @@ class ComputeClusterAtom : public Compute {
   void init();
   void init_list(int, class NeighList *);
   void compute_peratom();
-  int pack_comm(int, int *, double *, int, int *);
-  void unpack_comm(int, int, double *);
+  int pack_forward_comm(int, int *, double *, int, int *);
+  void unpack_forward_comm(int, int, double *);
   double memory_usage();
 
  private:
-  int nmax;
+  int nmax,commflag;
   double cutsq;
   class NeighList *list;
   double *clusterID;
@@ -59,7 +59,7 @@ E: Cannot use compute cluster/atom unless atoms have IDs
 
 Atom IDs are used to identify clusters.
 
-E: Compute cluster/atom requires a pair style be defined
+E: Compute cluster/atom requires a pair style to be defined
 
 This is so that the pair style defines a cutoff distance which
 is used to find clusters.

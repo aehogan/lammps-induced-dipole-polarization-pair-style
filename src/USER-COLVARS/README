@@ -1,42 +1,46 @@
-This package implements the "fix colvars" command which can be used
+This package implements the "fix colvars" command, which can be used
 in a LAMMPS input script.
 
-This fix allows to use "collective variables" to implement
-Adaptive Biasing Force, Metadynamics, Steered MD, Umbrella
-Sampling and Restraints. This code consists of two parts:
+The fix allows use of enhanced sampling methods based on a reduced set
+of "collective variables", including free-energy estimators based on
+thermodynamic forces, non-equilibrium work and probability
+distributions.
 
-- a portable collective variable module library written
-  and maintained by Giacomo Fiorin (ICMS, Temple University,
-  Philadelphia, PA, USA) and Jerome Henin (LISM, CNRS,
-  Marseille, France).
+The package uses the "Colvars" library, whose source code is included
+in the LAMMPS source code distribution and must be linked with LAMMPS.
+See the lib/colvars/README file and the LAMMPS manual for information
+on building LAMMPS with external libraries.  The settings in the
+Makefile.lammps file in that directory must be correct for LAMMPS to
+build correctly with this package installed.
 
-  This code is located in the directory lib/colvars and
-  needs to be compiled first. More info about this code
-  can be found in the publication:
-  Exploring Multidimensional Free Energy Landscapes Using
-  Time-Dependent Biases on Collective Variables,
-   J. Hénin, G. Fiorin, C. Chipot, and M. L. Klein,
-   J. Chem. Theory Comput., 6, 35-47 (2010).
+The files in the USER-COLVARS package folder implement an interface
+between LAMMPS and Colvars, originally written by Axel Kohlmeyer
+(akohlmey@gmail.com) and maintained by Giacomo Fiorin
+(giacomo.fiorin@gmail.com).
 
-- the colvars fix and a thin interface layer, which exchanges
-  information between LAMMPS and the collective variable module.
+More info about the Colvars library can be found at:
 
-See the doc page of fix colvars for more details
+https://github.com/colvars/colvars
 
-There are example scripts for using this package in
-examples/USER/colvars
+and in the reference article:
 
-This is a very new interface that does not yet support all
-features in the module and will see future optimizations
-and improvements. The colvars module library is also available
-in NAMD has been thoroughly used and tested there. Bugs and
-problems are likely due to the interface layers code.
-Thus the current version of this package should be considered
-beta quality.
+Using collective variables to drive molecular dynamics simulations,
+G. Fiorin, M. L. Klein, and J. Henin,
+Molecular Physics 111, 3345 (2013)
+http://dx.doi.org/10.1080/00268976.2013.813594
 
-The person who created this package is Axel Kohlmeyer at Temple U
-(akohlmey at gmail.com).  Contact him directly if you have questions.
- 
+A reference manual for the package and library is included with the
+LAMMPS doc pages:
+doc/PDF/colvars-refman-lammps.pdf
+which also includes citations to the articles documenting the various
+methods that make use Colvars.
+
+There are also example scripts for using this package in the folder
+examples/USER/colvars, as well as the GitHub page for Colvars.
+
+Please contact Giacomo Fiorin (giacomo.fiorin@gmail.com) for questions
+regarding this package.
+
 ---------------------------------
 
-version: 0.1 / 2012-03-03
+Version: 2016-12-22

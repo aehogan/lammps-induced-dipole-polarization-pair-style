@@ -1,4 +1,4 @@
-/* ----------------------------------------------------------------------
+/* -*- c++ -*- ----------------------------------------------------------
    LAMMPS - Large-scale Atomic/Molecular Massively Parallel Simulator
    http://lammps.sandia.gov, Sandia National Laboratories
    Steve Plimpton, sjplimp@sandia.gov
@@ -38,7 +38,6 @@ class PairRESquaredGPU : public PairRESquared {
  private:
   int gpu_mode;
   double cpu_time;
-  int *gpulist;
   int quat_nmax;
   double **quat;
 };

@@ -16,11 +16,10 @@
                          Christian Burisch (Bochum Univeristy, Germany)
 ------------------------------------------------------------------------- */
 
-#include "lmptype.h"
-#include "mpi.h"
-#include "math.h"
-#include "stdlib.h"
-#include "string.h"
+#include <mpi.h>
+#include <math.h>
+#include <stdlib.h>
+#include <string.h>
 #include "fix_tmd.h"
 #include "atom.h"
 #include "update.h"
@@ -40,12 +39,13 @@ using namespace FixConst;
 
 /* ---------------------------------------------------------------------- */
 
-FixTMD::FixTMD(LAMMPS *lmp, int narg, char **arg) : Fix(lmp, narg, arg)
+FixTMD::FixTMD(LAMMPS *lmp, int narg, char **arg) : Fix(lmp, narg, arg),
+nfileevery(0), fp(NULL), xf(NULL), xold(NULL)
 {
   if (narg < 6) error->all(FLERR,"Illegal fix tmd command");
 
-  rho_stop = atof(arg[3]);
-  nfileevery = atoi(arg[5]);
+  rho_stop = force->numeric(FLERR,arg[3]);
+  nfileevery = force->inumeric(FLERR,arg[5]);
   if (rho_stop < 0 || nfileevery < 0)
     error->all(FLERR,"Illegal fix tmd command");
   if (nfileevery && narg != 7) error->all(FLERR,"Illegal fix tmd command");
@@ -55,8 +55,6 @@ FixTMD::FixTMD(LAMMPS *lmp, int narg, char **arg) : Fix(lmp, narg, arg)
   // perform initial allocation of atom-based arrays
   // register with Atom class
 
-  xf = NULL;
-  xold = NULL;
   grow_arrays(atom->nmax);
   atom->add_callback(0);
 
@@ -86,13 +84,15 @@ FixTMD::FixTMD(LAMMPS *lmp, int narg, char **arg) : Fix(lmp, narg, arg)
   }
 
   masstotal = group->mass(igroup);
+  if (masstotal == 0.0)
+    error->all(FLERR,"Cannot use fix TMD on massless group");
 
   // rho_start = initial rho
   // xold = initial x or 0.0 if not in group
 
   int *mask = atom->mask;
   int *type = atom->type;
-  tagint *image = atom->image;
+  imageint *image = atom->image;
   double **x = atom->x;
   double *mass = atom->mass;
   int nlocal = atom->nlocal;
@@ -156,10 +156,7 @@ void FixTMD::init()
   int flag = 0;
   for (int i = 0; i < modify->nfix; i++) {
     if (strcmp(modify->fix[i]->style,"tmd") == 0) flag = 1;
-    if (flag && strcmp(modify->fix[i]->style,"nve") == 0) flag = 2;
-    if (flag && strcmp(modify->fix[i]->style,"nvt") == 0) flag = 2;
-    if (flag && strcmp(modify->fix[i]->style,"npt") == 0) flag = 2;
-    if (flag && strcmp(modify->fix[i]->style,"nph") == 0) flag = 2;
+    if (flag && modify->fix[i]->time_integrate) flag = 2;
   }
   if (flag == 2) error->all(FLERR,"Fix tmd must come after integration fixes");
 
@@ -186,7 +183,7 @@ void FixTMD::initial_integrate(int vflag)
   double **v = atom->v;
   double **f = atom->f;
   double *mass = atom->mass;
-  tagint *image = atom->image;
+  imageint *image = atom->image;
   int *type = atom->type;
   int *mask = atom->mask;
   int nlocal = atom->nlocal;
@@ -338,7 +335,7 @@ void FixTMD::grow_arrays(int nmax)
    copy values within local atom-based arrays
 ------------------------------------------------------------------------- */
 
-void FixTMD::copy_arrays(int i, int j)
+void FixTMD::copy_arrays(int i, int j, int delflag)
 {
   xf[j][0] = xf[i][0];
   xf[j][1] = xf[i][1];
@@ -393,8 +390,9 @@ void FixTMD::readfile(char *file)
   int nlocal = atom->nlocal;
 
   char *buffer = new char[CHUNK*MAXLINE];
-  char *ptr,*next,*bufptr;
-  int i,m,nlines,tag,imageflag,ix,iy,iz;
+  char *next,*bufptr;
+  int i,m,n,nlines,imageflag,ix,iy,iz;
+  tagint itag;
   double x,y,z,xprd,yprd,zprd;
 
   int firstline = 1;
@@ -402,7 +400,7 @@ void FixTMD::readfile(char *file)
   char *eof = NULL;
   xprd = yprd = zprd = -1.0;
 
-  while (!eof) {
+  do {
     if (me == 0) {
       m = 0;
       for (nlines = 0; nlines < CHUNK; nlines++) {
@@ -414,7 +412,7 @@ void FixTMD::readfile(char *file)
       m++;
     }
 
-    MPI_Bcast(&eof,1,MPI_INT,0,world);
+    MPI_Bcast(&eof,sizeof(char *)/sizeof(char),MPI_CHAR,0,world);
     MPI_Bcast(&nlines,1,MPI_INT,0,world);
     MPI_Bcast(&m,1,MPI_INT,0,world);
     MPI_Bcast(buffer,m,MPI_CHAR,0,world);
@@ -457,11 +455,19 @@ void FixTMD::readfile(char *file)
       }
 
       if (imageflag)
-        sscanf(bufptr,"%d %lg %lg %lg %d %d %d",&tag,&x,&y,&z,&ix,&iy,&iz);
+        n = sscanf(bufptr,TAGINT_FORMAT " %lg %lg %lg %d %d %d",
+                   &itag,&x,&y,&z,&ix,&iy,&iz);
       else
-        sscanf(bufptr,"%d %lg %lg %lg",&tag,&x,&y,&z);
+        n = sscanf(bufptr,TAGINT_FORMAT " %lg %lg %lg",&itag,&x,&y,&z);
 
-      m = atom->map(tag);
+      if (n < 0) {
+        if (me == 0) error->warning(FLERR,"Ignoring empty or incorrectly"
+                                    " formatted line in target file");
+        bufptr = next + 1;
+        continue;
+      }
+
+      m = atom->map(itag);
       if (m >= 0 && m < nlocal && mask[m] & groupbit) {
         if (imageflag) {
           xf[m][0] = x + ix*xprd;
@@ -474,10 +480,9 @@ void FixTMD::readfile(char *file)
         }
         ncount++;
       }
-
       bufptr = next + 1;
     }
-  }
+  } while (eof != NULL);
 
   // clean up
 
@@ -518,8 +523,14 @@ void FixTMD::open(char *file)
   else {
 #ifdef LAMMPS_GZIP
     char gunzip[128];
-    sprintf(gunzip,"gunzip -c %s",file);
+    sprintf(gunzip,"gzip -c -d %s",file);
+
+#ifdef _WIN32
+    fp = _popen(gunzip,"rb");
+#else
     fp = popen(gunzip,"r");
+#endif
+
 #else
     error->one(FLERR,"Cannot open gzipped file");
 #endif

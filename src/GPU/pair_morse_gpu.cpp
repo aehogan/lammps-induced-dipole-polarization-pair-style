@@ -15,9 +15,9 @@
    Contributing author: Mike Brown (SNL)
 ------------------------------------------------------------------------- */
 
-#include "math.h"
-#include "stdio.h"
-#include "stdlib.h"
+#include <math.h>
+#include <stdio.h>
+#include <stdlib.h>
 #include "pair_morse_gpu.h"
 #include "atom.h"
 #include "atom_vec.h"
@@ -32,8 +32,10 @@
 #include "universe.h"
 #include "update.h"
 #include "domain.h"
-#include "string.h"
+#include <string.h>
 #include "gpu_extra.h"
+
+using namespace LAMMPS_NS;
 
 // External functions from cuda library for atom decomposition
 
@@ -45,8 +47,8 @@ int mor_gpu_init(const int ntypes, double **cutsq, double **host_morse1,
 void mor_gpu_clear();
 int ** mor_gpu_compute_n(const int ago, const int inum,
                          const int nall, double **host_x, int *host_type,
-                         double *sublo, double *subhi, int *tag, int **nspecial,
-                         int **special, const bool eflag, const bool vflag,
+                         double *sublo, double *subhi, tagint *tag, int **nspecial,
+                         tagint **special, const bool eflag, const bool vflag,
                          const bool eatom, const bool vatom, int &host_start,
                          int **ilist, int **jnum,
                          const double cpu_time, bool &success);
@@ -57,12 +59,11 @@ void mor_gpu_compute(const int ago, const int inum, const int nall,
                      const double cpu_time, bool &success);
 double mor_gpu_bytes();
 
-using namespace LAMMPS_NS;
-
 /* ---------------------------------------------------------------------- */
 
 PairMorseGPU::PairMorseGPU(LAMMPS *lmp) : PairMorse(lmp), gpu_mode(GPU_FORCE)
 {
+  reinitflag = 0;
   cpu_time = 0.0;
   GPU_EXTRA::gpu_ready(lmp->modify, lmp->error);
 }
@@ -151,7 +152,7 @@ void PairMorseGPU::init_style()
   GPU_EXTRA::check_flag(success,error,world);
 
   if (gpu_mode == GPU_FORCE) {
-    int irequest = neighbor->request(this);
+    int irequest = neighbor->request(this,instance_me);
     neighbor->requests[irequest]->half = 0;
     neighbor->requests[irequest]->full = 1;
   }

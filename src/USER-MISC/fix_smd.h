@@ -1,4 +1,4 @@
-/* ----------------------------------------------------------------------
+/* -*- c++ -*- ----------------------------------------------------------
    LAMMPS - Large-scale Atomic/Molecular Massively Parallel Simulator
    http://lammps.sandia.gov, Sandia National Laboratories
    Steve Plimpton, sjplimp@sandia.gov
@@ -46,7 +46,7 @@ class FixSMD : public Fix {
 
   int igroup2,group2bit;
   double masstotal,masstotal2;
-  int nlevels_respa;
+  int ilevel_respa;
   double ftotal[3],ftotal_all[7];
   int force_flag;
 

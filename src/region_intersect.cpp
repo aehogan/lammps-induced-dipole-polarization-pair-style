@@ -11,42 +11,52 @@
    See the README file in the top-level LAMMPS directory.
 ------------------------------------------------------------------------- */
 
-#include "stdlib.h"
-#include "string.h"
+#include <stdlib.h>
+#include <string.h>
 #include "region_intersect.h"
 #include "domain.h"
 #include "error.h"
+#include "force.h"
 
 using namespace LAMMPS_NS;
 
 /* ---------------------------------------------------------------------- */
 
 RegIntersect::RegIntersect(LAMMPS *lmp, int narg, char **arg) :
-  Region(lmp, narg, arg)
+  Region(lmp, narg, arg), idsub(NULL)
 {
+  nregion = 0;
+
   if (narg < 5) error->all(FLERR,"Illegal region command");
-  int n = atoi(arg[2]);
+  int n = force->inumeric(FLERR,arg[2]);
   if (n < 2) error->all(FLERR,"Illegal region command");
   options(narg-(n+3),&arg[n+3]);
 
   // build list of regions to intersect
+  // store sub-region IDs in idsub
 
+  idsub = new char*[n];
   list = new int[n];
   nregion = 0;
 
-  int iregion;
+  int m,iregion;
   for (int iarg = 0; iarg < n; iarg++) {
-    iregion = domain->find_region(arg[iarg+3]);
-    if (iregion == -1) 
+    m = strlen(arg[iarg+3]) + 1;
+    idsub[nregion] = new char[m];
+    strcpy(idsub[nregion],arg[iarg+3]);
+    iregion = domain->find_region(idsub[nregion]);
+    if (iregion == -1)
       error->all(FLERR,"Region intersect region ID does not exist");
     list[nregion++] = iregion;
   }
 
-  // this region is variable shape if any of sub-regions are
+  // this region is variable shape or dynamic if any of sub-regions are
 
   Region **regions = domain->regions;
-  for (int ilist = 0; ilist < nregion; ilist++)
+  for (int ilist = 0; ilist < nregion; ilist++) {
     if (regions[list[ilist]]->varshape) varshape = 1;
+    if (regions[list[ilist]]->dynamic) dynamic = 1;
+  }
 
   // extent of intersection of regions
   // has bounding box if interior and any sub-region has bounding box
@@ -80,17 +90,26 @@ RegIntersect::RegIntersect(LAMMPS *lmp, int narg, char **arg) :
   }
 
   // possible contacts = sum of possible contacts in all sub-regions
+  // for near contacts and touching contacts
 
   cmax = 0;
   for (int ilist = 0; ilist < nregion; ilist++)
     cmax += regions[list[ilist]]->cmax;
   contact = new Contact[cmax];
+
+  tmax = 0;
+  for (int ilist = 0; ilist < nregion; ilist++) {
+    if (interior) tmax += regions[list[ilist]]->tmax;
+    else tmax++;
+  }
 }
 
 /* ---------------------------------------------------------------------- */
 
 RegIntersect::~RegIntersect()
 {
+  for (int ilist = 0; ilist < nregion; ilist++) delete [] idsub[ilist];
+  delete [] idsub;
   delete [] list;
   delete [] contact;
 }
@@ -100,22 +119,23 @@ RegIntersect::~RegIntersect()
 void RegIntersect::init()
 {
   Region::init();
+
+  // re-build list of sub-regions in case other regions were deleted
+  // error if a sub-region was deleted
+
+  int iregion;
+  for (int ilist = 0; ilist < nregion; ilist++) {
+    iregion = domain->find_region(idsub[ilist]);
+    if (iregion == -1)
+      error->all(FLERR,"Region union region ID does not exist");
+    list[ilist] = iregion;
+  }
+
+  // init the sub-regions
+
   Region **regions = domain->regions;
   for (int ilist = 0; ilist < nregion; ilist++)
     regions[list[ilist]]->init();
-}
-
-/* ----------------------------------------------------------------------
-   return 1 if region is dynamic, 0 if static
-   dynamic if any sub-region is dynamic, else static
-------------------------------------------------------------------------- */
-
-int RegIntersect::dynamic_check()
-{
-  Region **regions = domain->regions;
-  for (int ilist = 0; ilist < nregion; ilist++)
-    if (regions[list[ilist]]->dynamic_check()) return 1;
-  return 0;
 }
 
 /* ----------------------------------------------------------------------
@@ -148,6 +168,7 @@ int RegIntersect::surface_interior(double *x, double cutoff)
   Region **regions = domain->regions;
   int n = 0;
 
+  int walloffset = 0;
   for (ilist = 0; ilist < nregion; ilist++) {
     iregion = list[ilist];
     ncontacts = regions[iregion]->surface(x[0],x[1],x[2],cutoff);
@@ -162,12 +183,18 @@ int RegIntersect::surface_interior(double *x, double cutoff)
       }
       if (jlist == nregion) {
         contact[n].r = regions[iregion]->contact[m].r;
+        contact[n].radius = regions[iregion]->contact[m].radius;
         contact[n].delx = regions[iregion]->contact[m].delx;
         contact[n].dely = regions[iregion]->contact[m].dely;
         contact[n].delz = regions[iregion]->contact[m].delz;
+        contact[n].iwall = regions[iregion]->contact[m].iwall + walloffset;
+        contact[n].varflag = regions[iregion]->contact[m].varflag;
         n++;
       }
     }
+    // increment by cmax instead of tmax to insure
+    // possible wall IDs for sub-regions are non overlapping
+    walloffset += regions[iregion]->cmax;
   }
 
   return n;
@@ -207,9 +234,12 @@ int RegIntersect::surface_exterior(double *x, double cutoff)
       }
       if (jlist == nregion) {
         contact[n].r = regions[iregion]->contact[m].r;
+        contact[n].radius = regions[iregion]->contact[m].radius;
         contact[n].delx = regions[iregion]->contact[m].delx;
         contact[n].dely = regions[iregion]->contact[m].dely;
         contact[n].delz = regions[iregion]->contact[m].delz;
+        contact[n].iwall = ilist;
+        contact[n].varflag = regions[iregion]->contact[m].varflag;
         n++;
       }
     }
@@ -231,3 +261,97 @@ void RegIntersect::shape_update()
   for (int ilist = 0; ilist < nregion; ilist++)
     regions[list[ilist]]->shape_update();
 }
+
+/* ----------------------------------------------------------------------
+   move/rotate all sub-regions
+------------------------------------------------------------------------- */
+
+void RegIntersect::pretransform()
+{
+  Region **regions = domain->regions;
+  for (int ilist = 0; ilist < nregion; ilist++)
+    regions[list[ilist]]->pretransform();
+}
+
+
+/* ----------------------------------------------------------------------
+   get translational/angular velocities of all subregions
+------------------------------------------------------------------------- */
+
+void RegIntersect::set_velocity()
+{
+  Region **regions = domain->regions;
+  for (int ilist = 0; ilist < nregion; ilist++)
+    regions[list[ilist]]->set_velocity();
+}
+
+/* ----------------------------------------------------------------------
+   increment length of restart buffer based on region info
+   used by restart of fix/wall/gran/region
+------------------------------------------------------------------------- */
+
+void RegIntersect::length_restart_string(int& n)
+{
+  n += sizeof(int) + strlen(id)+1 +
+    sizeof(int) + strlen(style)+1 + sizeof(int);
+  for (int ilist = 0; ilist < nregion; ilist++)
+    domain->regions[list[ilist]]->length_restart_string(n);
+
+}
+/* ----------------------------------------------------------------------
+   region writes its current position/angle
+   needed by fix/wall/gran/region to compute velocity by differencing scheme
+------------------------------------------------------------------------- */
+
+void RegIntersect::write_restart(FILE *fp)
+{
+  int sizeid = (strlen(id)+1);
+  int sizestyle = (strlen(style)+1);
+  fwrite(&sizeid, sizeof(int), 1, fp);
+  fwrite(id, 1, sizeid, fp);
+  fwrite(&sizestyle, sizeof(int), 1, fp);
+  fwrite(style, 1, sizestyle, fp);
+  fwrite(&nregion,sizeof(int),1,fp);
+
+  for (int ilist = 0; ilist < nregion; ilist++){
+    domain->regions[list[ilist]]->write_restart(fp);
+  }
+}
+
+/* ----------------------------------------------------------------------
+   region reads its previous position/angle
+   needed by fix/wall/gran/region to compute velocity by differencing scheme
+------------------------------------------------------------------------- */
+
+int RegIntersect::restart(char *buf, int &n)
+{
+  int size = *((int *) (&buf[n]));
+  n += sizeof(int);
+  if ((size <= 0) || (strcmp(&buf[n],id) != 0)) return 0;
+  n += size;
+
+  size = *((int *) (&buf[n]));
+  n += sizeof(int);
+  if ((size <= 0) || (strcmp(&buf[n],style) != 0)) return 0;
+  n += size;
+
+  int restart_nreg = *((int *) (&buf[n]));
+  n += sizeof(int);
+  if (restart_nreg != nregion) return 0;
+
+  for (int ilist = 0; ilist < nregion; ilist++)
+    if (!domain->regions[list[ilist]]->restart(buf,n)) return 0;
+
+  return 1;
+}
+
+/* ----------------------------------------------------------------------
+   set prev vector to zero
+------------------------------------------------------------------------- */
+
+void RegIntersect::reset_vel()
+{
+  for (int ilist = 0; ilist < nregion; ilist++)
+    domain->regions[list[ilist]]->reset_vel();
+}
+

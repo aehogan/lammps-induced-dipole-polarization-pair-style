@@ -15,9 +15,9 @@
    Contributing author: Eric Simon (Cray)
 ------------------------------------------------------------------------- */
 
-#include "math.h"
-#include "string.h"
-#include "stdlib.h"
+#include <math.h>
+#include <string.h>
+#include <stdlib.h>
 #include "angle_class2.h"
 #include "atom.h"
 #include "neighbor.h"
@@ -41,6 +41,8 @@ AngleClass2::AngleClass2(LAMMPS *lmp) : Angle(lmp) {}
 
 AngleClass2::~AngleClass2()
 {
+  if (copymode) return;
+
   if (allocated) {
     memory->destroy(setflag);
     memory->destroy(setflag_a);
@@ -271,16 +273,16 @@ void AngleClass2::coeff(int narg, char **arg)
   if (!allocated) allocate();
 
   int ilo,ihi;
-  force->bounds(arg[0],atom->nangletypes,ilo,ihi);
+  force->bounds(FLERR,arg[0],atom->nangletypes,ilo,ihi);
 
   int count = 0;
 
   if (strcmp(arg[1],"bb") == 0) {
     if (narg != 5) error->all(FLERR,"Incorrect args for angle coefficients");
 
-    double bb_k_one = force->numeric(arg[2]);
-    double bb_r1_one = force->numeric(arg[3]);
-    double bb_r2_one = force->numeric(arg[4]);
+    double bb_k_one = force->numeric(FLERR,arg[2]);
+    double bb_r1_one = force->numeric(FLERR,arg[3]);
+    double bb_r2_one = force->numeric(FLERR,arg[4]);
 
     for (int i = ilo; i <= ihi; i++) {
       bb_k[i] = bb_k_one;
@@ -293,10 +295,10 @@ void AngleClass2::coeff(int narg, char **arg)
   } else if (strcmp(arg[1],"ba") == 0) {
     if (narg != 6) error->all(FLERR,"Incorrect args for angle coefficients");
 
-    double ba_k1_one = force->numeric(arg[2]);
-    double ba_k2_one = force->numeric(arg[3]);
-    double ba_r1_one = force->numeric(arg[4]);
-    double ba_r2_one = force->numeric(arg[5]);
+    double ba_k1_one = force->numeric(FLERR,arg[2]);
+    double ba_k2_one = force->numeric(FLERR,arg[3]);
+    double ba_r1_one = force->numeric(FLERR,arg[4]);
+    double ba_r2_one = force->numeric(FLERR,arg[5]);
 
     for (int i = ilo; i <= ihi; i++) {
       ba_k1[i] = ba_k1_one;
@@ -310,10 +312,10 @@ void AngleClass2::coeff(int narg, char **arg)
   } else {
     if (narg != 5) error->all(FLERR,"Incorrect args for angle coefficients");
 
-    double theta0_one = force->numeric(arg[1]);
-    double k2_one = force->numeric(arg[2]);
-    double k3_one = force->numeric(arg[3]);
-    double k4_one = force->numeric(arg[4]);
+    double theta0_one = force->numeric(FLERR,arg[1]);
+    double k2_one = force->numeric(FLERR,arg[2]);
+    double k3_one = force->numeric(FLERR,arg[3]);
+    double k4_one = force->numeric(FLERR,arg[4]);
 
     // convert theta0 from degrees to radians
 
@@ -401,6 +403,25 @@ void AngleClass2::read_restart(FILE *fp)
   MPI_Bcast(&ba_r2[1],atom->nangletypes,MPI_DOUBLE,0,world);
 
   for (int i = 1; i <= atom->nangletypes; i++) setflag[i] = 1;
+}
+
+/* ----------------------------------------------------------------------
+   proc 0 writes to data file
+------------------------------------------------------------------------- */
+
+void AngleClass2::write_data(FILE *fp)
+{
+  for (int i = 1; i <= atom->nangletypes; i++)
+    fprintf(fp,"%d %g %g %g %g\n",
+            i,theta0[i]/MY_PI*180.0,k2[i],k3[i],k4[i]);
+
+  fprintf(fp,"\nBondBond Coeffs\n\n");
+  for (int i = 1; i <= atom->nangletypes; i++)
+    fprintf(fp,"%d %g %g %g\n",i,bb_k[i],bb_r1[i],bb_r2[i]);
+
+  fprintf(fp,"\nBondAngle Coeffs\n\n");
+  for (int i = 1; i <= atom->nangletypes; i++)
+    fprintf(fp,"%d %g %g %g %g\n",i,ba_k1[i],ba_k2[i],ba_r1[i],ba_r2[i]);
 }
 
 /* ---------------------------------------------------------------------- */

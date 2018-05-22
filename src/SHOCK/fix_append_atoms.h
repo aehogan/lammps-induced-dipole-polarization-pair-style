@@ -1,4 +1,4 @@
-/* ----------------------------------------------------------------------
+/* -*- c++ -*- ----------------------------------------------------------
    LAMMPS - Large-scale Atomic/Molecular Massively Parallel Simulator
    http://lammps.sandia.gov, Sandia National Laboratories
    Steve Plimpton, sjplimp@sandia.gov
@@ -64,6 +64,10 @@ Self-explanatory.  Check the input script syntax and compare to the
 documentation for the command.  You can use -echo screen as a
 command-line option when running LAMMPS to see the offending line.
 
+E: Fix append/atoms requires a lattice be defined
+
+Use the lattice command for this purpose.
+
 E: Only zhi currently implemented for fix append/atoms
 
 Self-explanatory.
@@ -75,8 +79,13 @@ must be of type m (shrink/minimum).
 
 E: Bad fix ID in fix append/atoms command
 
-The value of the fix_id for keyword spatial must start with the suffix
-f_.
+The value of the fix_id for keyword spatial must start with 'f_'.
+
+E: Invalid basis setting in fix append/atoms command
+
+The basis index must be between 1 to N where N is the number of basis
+atoms in the lattice.  The type index must be between 1 to N where N
+is the number of atom types.
 
 E: Cannot use append/atoms in periodic dimension
 
@@ -85,19 +94,15 @@ type p (periodic).
 
 E: Cannot append atoms to a triclinic box
 
-The simulation box must be defined with edges alligned with the
+The simulation box must be defined with edges aligned with the
 Cartesian axes.
-
-E: Use of fix append/atoms with undefined lattice
-
-A lattice must be defined before using this fix.
 
 E: Fix ID for fix ave/spatial does not exist
 
 Self-explanatory.
 
-E: Must define lattice to append/atoms
+E: Too many total atoms
 
-A lattice must be defined before using this fix.
+See the setting for bigint in the src/lmptype.h file.
 
 */

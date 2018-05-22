@@ -1,4 +1,4 @@
-/* ----------------------------------------------------------------------
+/* -*- c++ -*- ----------------------------------------------------------
    LAMMPS - Large-scale Atomic/Molecular Massively Parallel Simulator
    http://lammps.sandia.gov, Sandia National Laboratories
    Steve Plimpton, sjplimp@sandia.gov
@@ -38,7 +38,6 @@ class PairGayBerneGPU : public PairGayBerne {
  private:
   int gpu_mode;
   double cpu_time;
-  int *gpulist;
   int quat_nmax;
   double **quat;
 };
@@ -49,14 +48,14 @@ class PairGayBerneGPU : public PairGayBerne {
 
 /* ERROR/WARNING messages:
 
-E: Pair gayberne/gpu requires atom style ellipsoid
-
-Self-explanatory.
-
 E: Insufficient memory on accelerator
 
 There is insufficient memory on one of the devices specified for the gpu
 package
+
+E: Pair gayberne/gpu requires atom style ellipsoid
+
+Self-explanatory.
 
 E: Cannot use newton pair with gayberne/gpu pair style
 

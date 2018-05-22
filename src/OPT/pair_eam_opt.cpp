@@ -19,8 +19,8 @@
      Vincent Natoli, Stone Ridge Technology
 ------------------------------------------------------------------------- */
 
-#include "math.h"
-#include "stdlib.h"
+#include <math.h>
+#include <stdlib.h>
 #include "pair_eam_opt.h"
 #include "atom.h"
 #include "comm.h"
@@ -68,11 +68,6 @@ void PairEAMOpt::eval()
   } fast_alpha_t;
 
   typedef struct {
-    double frho0,frho1,frho2,frho3,frho4,frho5,frho6;
-    double _pad[1];
-  } fast_beta_t;
-
-  typedef struct {
     double rhor4i,rhor5i,rhor6i;
     double rhor4j,rhor5j,rhor6j;
     double z2r0,z2r1,z2r2,z2r3,z2r4,z2r5,z2r6;
@@ -81,7 +76,7 @@ void PairEAMOpt::eval()
 
   int i,j,ii,jj,inum,jnum,itype,jtype;
   double evdwl = 0.0;
-  double* __restrict__ coeff;
+  double* _noalias coeff;
 
   // grow energy array if necessary
 
@@ -93,13 +88,13 @@ void PairEAMOpt::eval()
     fp = (double *) memory->smalloc(nmax*sizeof(double),"pair:fp");
   }
 
-  double** __restrict__ x = atom->x;
-  double** __restrict__ f = atom->f;
-  int* __restrict__ type = atom->type;
+  double** _noalias x = atom->x;
+  double** _noalias f = atom->f;
+  int* _noalias type = atom->type;
   int nlocal = atom->nlocal;
 
-  vec3_t* __restrict__ xx = (vec3_t*)x[0];
-  vec3_t* __restrict__ ff = (vec3_t*)f[0];
+  vec3_t* _noalias xx = (vec3_t*)x[0];
+  vec3_t* _noalias ff = (vec3_t*)f[0];
 
   double tmp_cutforcesq = cutforcesq;
   double tmp_rdr = rdr;
@@ -107,17 +102,17 @@ void PairEAMOpt::eval()
   int nr1 = nr-1;
 
   inum = list->inum;
-  int* __restrict__ ilist = list->ilist;
-  int** __restrict__ firstneigh = list->firstneigh;
-  int* __restrict__ numneigh = list->numneigh;
+  int* _noalias ilist = list->ilist;
+  int** _noalias firstneigh = list->firstneigh;
+  int* _noalias numneigh = list->numneigh;
 
   int ntypes = atom->ntypes;
   int ntypes2 = ntypes*ntypes;
 
-  fast_alpha_t* __restrict__ fast_alpha =
+  fast_alpha_t* _noalias fast_alpha =
     (fast_alpha_t*) malloc(ntypes2*(nr+1)*sizeof(fast_alpha_t));
   for (i = 0; i < ntypes; i++) for (j = 0; j < ntypes; j++) {
-    fast_alpha_t* __restrict__ tab = &fast_alpha[i*ntypes*nr+j*nr];
+    fast_alpha_t* _noalias tab = &fast_alpha[i*ntypes*nr+j*nr];
     if (type2rhor[i+1][j+1] >= 0) {
       for(int m = 1; m <= nr; m++) {
         tab[m].rhor0i =  rhor_spline[type2rhor[i+1][j+1]][m][6];
@@ -135,12 +130,12 @@ void PairEAMOpt::eval()
       }
     }
   }
-  fast_alpha_t* __restrict__ tabeight = fast_alpha;
+  fast_alpha_t* _noalias tabeight = fast_alpha;
 
-  fast_gamma_t* __restrict__ fast_gamma =
+  fast_gamma_t* _noalias fast_gamma =
     (fast_gamma_t*) malloc(ntypes2*(nr+1)*sizeof(fast_gamma_t));
   for (i = 0; i < ntypes; i++) for (j = 0; j < ntypes; j++) {
-    fast_gamma_t* __restrict__ tab = &fast_gamma[i*ntypes*nr+j*nr];
+    fast_gamma_t* _noalias tab = &fast_gamma[i*ntypes*nr+j*nr];
     if (type2rhor[i+1][j+1] >= 0) {
       for(int m = 1; m <= nr; m++) {
         tab[m].rhor4i =  rhor_spline[type2rhor[i+1][j+1]][m][2];
@@ -168,7 +163,7 @@ void PairEAMOpt::eval()
       }
     }
   }
-  fast_gamma_t* __restrict__ tabss = fast_gamma;
+  fast_gamma_t* _noalias tabss = fast_gamma;
 
   // zero out density
 
@@ -188,11 +183,11 @@ void PairEAMOpt::eval()
     double ytmp = xx[i].y;
     double ztmp = xx[i].z;
     itype = type[i] - 1;
-    int* __restrict__ jlist = firstneigh[i];
+    int* _noalias jlist = firstneigh[i];
     jnum = numneigh[i];
 
     double tmprho = rho[i];
-    fast_alpha_t* __restrict__ tabeighti = &tabeight[itype*ntypes*nr];
+    fast_alpha_t* _noalias tabeighti = &tabeight[itype*ntypes*nr];
 
     for (jj = 0; jj < jnum; jj++) {
       j = jlist[jj];
@@ -247,6 +242,7 @@ void PairEAMOpt::eval()
     if (EFLAG) {
       double phi = ((coeff[3]*p + coeff[4])*p + coeff[5])*p + coeff[6];
       if (rho[i] > rhomax) phi += fp[i] * (rho[i]-rhomax);
+      phi *= scale[type[i]][type[i]];
       if (eflag_global) eng_vdwl += phi;
       if (eflag_atom) eatom[i] += phi;
     }
@@ -265,14 +261,15 @@ void PairEAMOpt::eval()
     double ytmp = xx[i].y;
     double ztmp = xx[i].z;
     int itype1 = type[i] - 1;
-    int* __restrict__ jlist = firstneigh[i];
+    int* _noalias jlist = firstneigh[i];
     jnum = numneigh[i];
 
     double tmpfx = 0.0;
     double tmpfy = 0.0;
     double tmpfz = 0.0;
 
-    fast_gamma_t* __restrict__ tabssi = &tabss[itype1*ntypes*nr];
+    fast_gamma_t* _noalias tabssi = &tabss[itype1*ntypes*nr];
+    double* _noalias scale_i = scale[itype1+1]+1;
 
     for (jj = 0; jj < jnum; jj++) {
       j = jlist[jj];
@@ -316,12 +313,13 @@ void PairEAMOpt::eval()
         // psip needs both fp[i] and fp[j] terms since r_ij appears in two
         //   terms of embed eng: Fi(sum rho_ij) and Fj(sum rho_ji)
         //   hence embed' = Fi(sum rho_ij) rhojp + Fj(sum rho_ji) rhoip
+        // scale factor can be applied by thermodynamic integration
 
         double recip = 1.0/r;
         double phi = z2*recip;
         double phip = z2p*recip - phi*recip;
         double psip = fp[i]*rhojp + fp[j]*rhoip + phip;
-        double fpair = -psip*recip;
+        double fpair = -scale_i[jtype]*psip*recip;
 
         tmpfx += delx*fpair;
         tmpfy += dely*fpair;
@@ -332,7 +330,7 @@ void PairEAMOpt::eval()
           ff[j].z -= delz*fpair;
         }
 
-        if (EFLAG) evdwl = phi;
+        if (EFLAG) evdwl = scale_i[jtype]*phi;
 
         if (EVFLAG) ev_tally(i,j,nlocal,NEWTON_PAIR,
                              evdwl,0.0,fpair,delx,dely,delz);

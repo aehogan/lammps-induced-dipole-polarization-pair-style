@@ -158,7 +158,7 @@ pair_coeff 14 14 0.092339 2.994290 7.485725
 
 # ensure self molecule interactions excluded
 special_bonds  lj/coul 0.0 0.0 0.0
-neigh_modify exclude molecule all
+#neigh_modify exclude molecule all
 
 group moving molecule > 1
 

@@ -1,4 +1,4 @@
-/* ----------------------------------------------------------------------
+/* -*- c++ -*- ----------------------------------------------------------
    LAMMPS - Large-scale Atomic/Molecular Massively Parallel Simulator
    http://lammps.sandia.gov, Sandia National Laboratories
    Steve Plimpton, sjplimp@sandia.gov
@@ -29,7 +29,7 @@ class PairTersoffZBL : public PairTersoff {
   PairTersoffZBL(class LAMMPS *);
   ~PairTersoffZBL() {}
 
- private:
+ protected:
   double global_a_0;                // Bohr radius for Coulomb repulsion
   double global_epsilon_0;        // permittivity of vacuum for Coulomb repulsion
   double global_e;                // proton charge (negative of electron charge)
@@ -57,8 +57,8 @@ This is a current restriction of this pair potential.
 
 E: Cannot open Tersoff potential file %s
 
-The specified Tersoff potential file cannot be opened.  Check that the
-path and name are correct.
+The specified potential file cannot be opened.  Check that the path
+and name are correct.
 
 E: Incorrect format in Tersoff potential file
 

@@ -15,10 +15,10 @@
    Contributing author: Aidan Thompson (SNL)
 ------------------------------------------------------------------------- */
 
-#include "math.h"
-#include "stdio.h"
-#include "stdlib.h"
-#include "string.h"
+#include <math.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
 #include "pair_sw.h"
 #include "atom.h"
 #include "neighbor.h"
@@ -43,12 +43,17 @@ PairSW::PairSW(LAMMPS *lmp) : Pair(lmp)
   single_enable = 0;
   restartinfo = 0;
   one_coeff = 1;
+  manybody_flag = 1;
 
   nelements = 0;
   elements = NULL;
   nparams = maxparam = 0;
   params = NULL;
   elem2param = NULL;
+  map = NULL;
+
+  maxshort = 10;
+  neighshort = NULL;
 }
 
 /* ----------------------------------------------------------------------
@@ -57,6 +62,8 @@ PairSW::PairSW(LAMMPS *lmp) : Pair(lmp)
 
 PairSW::~PairSW()
 {
+  if (copymode) return;
+
   if (elements)
     for (int i = 0; i < nelements; i++) delete [] elements[i];
   delete [] elements;
@@ -66,6 +73,7 @@ PairSW::~PairSW()
   if (allocated) {
     memory->destroy(setflag);
     memory->destroy(cutsq);
+    memory->destroy(neighshort);
     delete [] map;
   }
 }
@@ -74,8 +82,9 @@ PairSW::~PairSW()
 
 void PairSW::compute(int eflag, int vflag)
 {
-  int i,j,k,ii,jj,kk,inum,jnum,jnumm1,itag,jtag;
+  int i,j,k,ii,jj,kk,inum,jnum,jnumm1;
   int itype,jtype,ktype,ijparam,ikparam,ijkparam;
+  tagint itag,jtag;
   double xtmp,ytmp,ztmp,delx,dely,delz,evdwl,fpair;
   double rsq,rsq1,rsq2;
   double delr1[3],delr2[3],fj[3],fk[3];
@@ -87,7 +96,7 @@ void PairSW::compute(int eflag, int vflag)
 
   double **x = atom->x;
   double **f = atom->f;
-  int *tag = atom->tag;
+  tagint *tag = atom->tag;
   int *type = atom->type;
   int nlocal = atom->nlocal;
   int newton_pair = force->newton_pair;
@@ -96,6 +105,8 @@ void PairSW::compute(int eflag, int vflag)
   ilist = list->ilist;
   numneigh = list->numneigh;
   firstneigh = list->firstneigh;
+
+  double fxtmp,fytmp,fztmp;
 
   // loop over full neighbor list of my atoms
 
@@ -106,17 +117,36 @@ void PairSW::compute(int eflag, int vflag)
     xtmp = x[i][0];
     ytmp = x[i][1];
     ztmp = x[i][2];
+    fxtmp = fytmp = fztmp = 0.0;
 
     // two-body interactions, skip half of them
 
     jlist = firstneigh[i];
     jnum = numneigh[i];
+    int numshort = 0;
 
     for (jj = 0; jj < jnum; jj++) {
       j = jlist[jj];
       j &= NEIGHMASK;
-      jtag = tag[j];
 
+      delx = xtmp - x[j][0];
+      dely = ytmp - x[j][1];
+      delz = ztmp - x[j][2];
+      rsq = delx*delx + dely*dely + delz*delz;
+
+      jtype = map[type[j]];
+      ijparam = elem2param[itype][jtype][jtype];
+      if (rsq >= params[ijparam].cutsq) {
+        continue;
+      } else {
+        neighshort[numshort++] = j;
+        if (numshort >= maxshort) {
+          maxshort += maxshort/2;
+          memory->grow(neighshort,maxshort,"pair:neighshort");
+        }
+      }
+
+      jtag = tag[j];
       if (itag > jtag) {
         if ((itag+jtag) % 2 == 0) continue;
       } else if (itag < jtag) {
@@ -127,21 +157,11 @@ void PairSW::compute(int eflag, int vflag)
         if (x[j][2] == ztmp && x[j][1] == ytmp && x[j][0] < xtmp) continue;
       }
 
-      jtype = map[type[j]];
-
-      delx = xtmp - x[j][0];
-      dely = ytmp - x[j][1];
-      delz = ztmp - x[j][2];
-      rsq = delx*delx + dely*dely + delz*delz;
-
-      ijparam = elem2param[itype][jtype][jtype];
-      if (rsq > params[ijparam].cutsq) continue;
-
       twobody(&params[ijparam],rsq,fpair,eflag,evdwl);
 
-      f[i][0] += delx*fpair;
-      f[i][1] += dely*fpair;
-      f[i][2] += delz*fpair;
+      fxtmp += delx*fpair;
+      fytmp += dely*fpair;
+      fztmp += delz*fpair;
       f[j][0] -= delx*fpair;
       f[j][1] -= dely*fpair;
       f[j][2] -= delz*fpair;
@@ -150,22 +170,22 @@ void PairSW::compute(int eflag, int vflag)
                            evdwl,0.0,fpair,delx,dely,delz);
     }
 
-    jnumm1 = jnum - 1;
+    jnumm1 = numshort - 1;
 
     for (jj = 0; jj < jnumm1; jj++) {
-      j = jlist[jj];
-      j &= NEIGHMASK;
+      j = neighshort[jj];
       jtype = map[type[j]];
       ijparam = elem2param[itype][jtype][jtype];
       delr1[0] = x[j][0] - xtmp;
       delr1[1] = x[j][1] - ytmp;
       delr1[2] = x[j][2] - ztmp;
       rsq1 = delr1[0]*delr1[0] + delr1[1]*delr1[1] + delr1[2]*delr1[2];
-      if (rsq1 > params[ijparam].cutsq) continue;
 
-      for (kk = jj+1; kk < jnum; kk++) {
-        k = jlist[kk];
-        k &= NEIGHMASK;
+      double fjxtmp,fjytmp,fjztmp;
+      fjxtmp = fjytmp = fjztmp = 0.0;
+
+      for (kk = jj+1; kk < numshort; kk++) {
+        k = neighshort[kk];
         ktype = map[type[k]];
         ikparam = elem2param[itype][ktype][ktype];
         ijkparam = elem2param[itype][jtype][ktype];
@@ -174,24 +194,29 @@ void PairSW::compute(int eflag, int vflag)
         delr2[1] = x[k][1] - ytmp;
         delr2[2] = x[k][2] - ztmp;
         rsq2 = delr2[0]*delr2[0] + delr2[1]*delr2[1] + delr2[2]*delr2[2];
-        if (rsq2 > params[ikparam].cutsq) continue;
 
         threebody(&params[ijparam],&params[ikparam],&params[ijkparam],
                   rsq1,rsq2,delr1,delr2,fj,fk,eflag,evdwl);
 
-        f[i][0] -= fj[0] + fk[0];
-        f[i][1] -= fj[1] + fk[1];
-        f[i][2] -= fj[2] + fk[2];
-        f[j][0] += fj[0];
-        f[j][1] += fj[1];
-        f[j][2] += fj[2];
+        fxtmp -= fj[0] + fk[0];
+        fytmp -= fj[1] + fk[1];
+        fztmp -= fj[2] + fk[2];
+        fjxtmp += fj[0];
+        fjytmp += fj[1];
+        fjztmp += fj[2];
         f[k][0] += fk[0];
         f[k][1] += fk[1];
         f[k][2] += fk[2];
 
         if (evflag) ev_tally3(i,j,k,evdwl,0.0,fj,fk,delr1,delr2);
       }
+      f[j][0] += fjxtmp;
+      f[j][1] += fjytmp;
+      f[j][2] += fjztmp;
     }
+    f[i][0] += fxtmp;
+    f[i][1] += fytmp;
+    f[i][2] += fztmp;
   }
 
   if (vflag_fdotr) virial_fdotr_compute();
@@ -206,7 +231,7 @@ void PairSW::allocate()
 
   memory->create(setflag,n+1,n+1,"pair:setflag");
   memory->create(cutsq,n+1,n+1,"pair:cutsq");
-
+  memory->create(neighshort,maxshort,"pair:neighshort");
   map = new int[n+1];
 }
 
@@ -269,7 +294,7 @@ void PairSW::coeff(int narg, char **arg)
   // read potential file and initialize potential parameters
 
   read_file(arg[2]);
-  setup();
+  setup_params();
 
   // clear setflag since coeff() called once with I,J = * *
 
@@ -304,7 +329,7 @@ void PairSW::init_style()
 
   // need a full neighbor list
 
-  int irequest = neighbor->request(this);
+  int irequest = neighbor->request(this,instance_me);
   neighbor->requests[irequest]->half = 0;
   neighbor->requests[irequest]->full = 1;
 }
@@ -335,7 +360,7 @@ void PairSW::read_file(char *file)
 
   FILE *fp;
   if (comm->me == 0) {
-    fp = fopen(file,"r");
+    fp = force->open_potential(file);
     if (fp == NULL) {
       char str[128];
       sprintf(str,"Cannot open Stillinger-Weber potential file %s",file);
@@ -366,7 +391,7 @@ void PairSW::read_file(char *file)
 
     // strip comment, skip line if blank
 
-    if (ptr = strchr(line,'#')) *ptr = '\0';
+    if ((ptr = strchr(line,'#'))) *ptr = '\0';
     nwords = atom->count_words(line);
     if (nwords == 0) continue;
 
@@ -385,7 +410,7 @@ void PairSW::read_file(char *file)
       if (eof) break;
       MPI_Bcast(&n,1,MPI_INT,0,world);
       MPI_Bcast(line,n,MPI_CHAR,0,world);
-      if (ptr = strchr(line,'#')) *ptr = '\0';
+      if ((ptr = strchr(line,'#'))) *ptr = '\0';
       nwords = atom->count_words(line);
     }
 
@@ -396,7 +421,7 @@ void PairSW::read_file(char *file)
 
     nwords = 0;
     words[nwords++] = strtok(line," \t\n\r\f");
-    while (words[nwords++] = strtok(NULL," \t\n\r\f")) continue;
+    while ((words[nwords++] = strtok(NULL," \t\n\r\f"))) continue;
 
     // ielement,jelement,kelement = 1st args
     // if all 3 args are in element list, then parse this line
@@ -450,7 +475,7 @@ void PairSW::read_file(char *file)
 
 /* ---------------------------------------------------------------------- */
 
-void PairSW::setup()
+void PairSW::setup_params()
 {
   int i,j,k,m,n;
   double rtmp;

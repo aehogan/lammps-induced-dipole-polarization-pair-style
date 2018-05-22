@@ -15,8 +15,12 @@
    Contributing author: Aidan Thompson (Sandia)
 ------------------------------------------------------------------------- */
 
-#include "stdlib.h"
-#include "string.h"
+#ifdef LAMMPS_BIGBIG
+#error LAMMPS_BIGBIG is not supported by the REAX package
+#endif
+
+#include <stdlib.h>
+#include <string.h>
 #include "fix_reax_bonds.h"
 #include "pair_reax_fortran.h"
 #include "atom.h"
@@ -41,11 +45,25 @@ FixReaxBonds::FixReaxBonds(LAMMPS *lmp, int narg, char **arg) :
 
   MPI_Comm_rank(world,&me);
 
-  nevery = atoi(arg[3]);
+  nevery = force->inumeric(FLERR,arg[3]);
   if (nevery < 1) error->all(FLERR,"Illegal fix reax/bonds command");
 
   if (me == 0) {
-    fp = fopen(arg[4],"w");
+    char *suffix = strrchr(arg[4],'.');
+    if (suffix && strcmp(suffix,".gz") == 0) {
+#ifdef LAMMPS_GZIP
+      char gzip[128];
+      sprintf(gzip,"gzip -6 > %s",arg[4]);
+#ifdef _WIN32
+      fp = _popen(gzip,"wb");
+#else
+      fp = popen(gzip,"w");
+#endif
+#else
+      error->one(FLERR,"Cannot open gzipped file");
+#endif
+    } else fp = fopen(arg[4],"w");
+
     if (fp == NULL) {
       char str[128];
       sprintf(str,"Cannot open fix reax/bonds file %s",arg[4]);
@@ -108,7 +126,6 @@ void FixReaxBonds::OutputReaxBonds(bigint ntimestep, FILE *fp)
   double cutof3;
   double *buf;
   MPI_Request irequest;
-  MPI_Status istatus;
 
   MPI_Comm_size(world,&nprocs);
 
@@ -194,7 +211,7 @@ void FixReaxBonds::OutputReaxBonds(bigint ntimestep, FILE *fp)
       } else {
         MPI_Irecv(&buf[0],nbuf,MPI_DOUBLE,inode,0,world,&irequest);
         MPI_Send(&itmp,0,MPI_INT,inode,0,world);
-        MPI_Wait(&irequest,&istatus);
+        MPI_Wait(&irequest,MPI_STATUS_IGNORE);
         nlocal_tmp = nint(buf[j++]);
       }
 
@@ -233,7 +250,7 @@ void FixReaxBonds::OutputReaxBonds(bigint ntimestep, FILE *fp)
     }
 
   } else {
-    MPI_Recv(&itmp,0,MPI_INT,0,0,world,&istatus);
+    MPI_Recv(&itmp,0,MPI_INT,0,0,world,MPI_STATUS_IGNORE);
     MPI_Rsend(&buf[0],nbuf_local,MPI_DOUBLE,0,0,world);
   }
 

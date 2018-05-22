@@ -15,8 +15,8 @@
    Contributing author: Mathias Puetz (SNL) and friends
 ------------------------------------------------------------------------- */
 
-#include "math.h"
-#include "stdlib.h"
+#include <math.h>
+#include <stdlib.h>
 #include "dihedral_multi_harmonic.h"
 #include "atom.h"
 #include "neighbor.h"
@@ -155,7 +155,9 @@ void DihedralMultiHarmonic::compute(int eflag, int vflag)
       MPI_Comm_rank(world,&me);
       if (screen) {
         char str[128];
-        sprintf(str,"Dihedral problem: %d " BIGINT_FORMAT " %d %d %d %d",
+        sprintf(str,"Dihedral problem: %d " BIGINT_FORMAT " "
+                TAGINT_FORMAT " " TAGINT_FORMAT " "
+                TAGINT_FORMAT " " TAGINT_FORMAT,
                 me,update->ntimestep,
                 atom->tag[i1],atom->tag[i2],atom->tag[i3],atom->tag[i4]);
         error->warning(FLERR,str,0);
@@ -271,13 +273,13 @@ void DihedralMultiHarmonic::coeff(int narg, char **arg)
   if (!allocated) allocate();
 
   int ilo,ihi;
-  force->bounds(arg[0],atom->ndihedraltypes,ilo,ihi);
+  force->bounds(FLERR,arg[0],atom->ndihedraltypes,ilo,ihi);
 
-  double a1_one = force->numeric(arg[1]);
-  double a2_one = force->numeric(arg[2]);
-  double a3_one = force->numeric(arg[3]);
-  double a4_one = force->numeric(arg[4]);
-  double a5_one = force->numeric(arg[5]);
+  double a1_one = force->numeric(FLERR,arg[1]);
+  double a2_one = force->numeric(FLERR,arg[2]);
+  double a3_one = force->numeric(FLERR,arg[3]);
+  double a4_one = force->numeric(FLERR,arg[4]);
+  double a5_one = force->numeric(FLERR,arg[5]);
 
   int count = 0;
   for (int i = ilo; i <= ihi; i++) {

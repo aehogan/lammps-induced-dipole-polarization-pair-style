@@ -11,14 +11,15 @@
    See the README file in the top-level LAMMPS directory.
 ------------------------------------------------------------------------- */
 
-#include "string.h"
-#include "stdlib.h"
+#include <string.h>
+#include <stdlib.h>
 #include "update.h"
 #include "integrate.h"
 #include "min.h"
 #include "style_integrate.h"
 #include "style_minimize.h"
 #include "neighbor.h"
+#include "neigh_list.h"
 #include "force.h"
 #include "modify.h"
 #include "fix.h"
@@ -38,6 +39,8 @@ Update::Update(LAMMPS *lmp) : Pointers(lmp)
   char *str;
 
   ntimestep = 0;
+  atime = 0.0;
+  atimestep = 0;
   first_update = 0;
 
   whichflag = 0;
@@ -58,13 +61,26 @@ Update::Update(LAMMPS *lmp) : Pointers(lmp)
   minimize_style = NULL;
   minimize = NULL;
 
-  if (lmp->cuda) {
-    str = (char *) "verlet/cuda";
-    create_integrate(1,&str,NULL);
-  } else {
-    str = (char *) "verlet";
-    create_integrate(1,&str,NULL);
-  }
+  integrate_map = new IntegrateCreatorMap();
+
+#define INTEGRATE_CLASS
+#define IntegrateStyle(key,Class) \
+  (*integrate_map)[#key] = &integrate_creator<Class>;
+#include "style_integrate.h"
+#undef IntegrateStyle
+#undef INTEGRATE_CLASS
+
+  minimize_map = new MinimizeCreatorMap();
+
+#define MINIMIZE_CLASS
+#define MinimizeStyle(key,Class) \
+  (*minimize_map)[#key] = &minimize_creator<Class>;
+#include "style_minimize.h"
+#undef MinimizeStyle
+#undef MINIMIZE_CLASS
+
+  str = (char *) "verlet";
+  create_integrate(1,&str,1);
 
   str = (char *) "cg";
   create_minimize(1,&str);
@@ -81,22 +97,15 @@ Update::~Update()
 
   delete [] minimize_style;
   delete minimize;
+
+  delete integrate_map;
+  delete minimize_map;
 }
 
 /* ---------------------------------------------------------------------- */
 
 void Update::init()
 {
-  // if USER-CUDA mode is enabled:
-  // integrate/minimize style must be CUDA variant
-
-  if (whichflag == 1 && lmp->cuda)
-    if (strstr(integrate_style,"cuda") == NULL)
-      error->all(FLERR,"USER-CUDA mode requires CUDA variant of run style");
-  if (whichflag == 2 && lmp->cuda)
-    if (strstr(minimize_style,"cuda") == NULL)
-      error->all(FLERR,"USER-CUDA mode requires CUDA variant of min style");
-
   // init the appropriate integrate and/or minimize class
   // if neither (e.g. from write_restart) then just return
 
@@ -119,7 +128,7 @@ void Update::set_units(const char *style)
 
   if (strcmp(style,"lj") == 0) {
     force->boltz = 1.0;
-    force->hplanck = 0.18292026;  // using LJ parameters for argon
+    force->hplanck = 1.0;
     force->mvv2e = 1.0;
     force->ftm2v = 1.0;
     force->mv2d = 1.0;
@@ -143,9 +152,9 @@ void Update::set_units(const char *style)
     force->hplanck = 95.306976368;
     force->mvv2e = 48.88821291 * 48.88821291;
     force->ftm2v = 1.0 / 48.88821291 / 48.88821291;
-    force->mv2d = 1.0 / 0.602214179;
+    force->mv2d = 1.0 / 0.602214129;
     force->nktv2p = 68568.415;
-    force->qqr2e = 332.06371;
+    force->qqr2e = 332.06371;     // see also force->qqr2d_lammps_real
     force->qe2f = 23.060549;
     force->vxmu2f = 1.4393264316e4;
     force->xxt2kmu = 0.1;
@@ -164,7 +173,7 @@ void Update::set_units(const char *style)
     force->hplanck = 4.135667403e-3;
     force->mvv2e = 1.0364269e-4;
     force->ftm2v = 1.0 / 1.0364269e-4;
-    force->mv2d = 1.0 / 0.602214179;
+    force->mv2d = 1.0 / 0.602214129;
     force->nktv2p = 1.6021765e6;
     force->qqr2e = 14.399645;
     force->qe2f = 1.0;
@@ -237,11 +246,53 @@ void Update::set_units(const char *style)
     force->hhmrr2e = 0.0;
     force->mvh2r = 0.0;
     force->angstrom = 1.88972612;
-    force->femtosecond = 0.0241888428;
+    force->femtosecond = 41.34137413;
     force->qelectron = 1.0;
 
     dt = 0.001;
     neighbor->skin = 2.0;
+
+  } else if (strcmp(style,"micro") == 0) {
+    force->boltz = 1.3806504e-8;
+    force->hplanck = 6.62606896e-13;
+    force->mvv2e = 1.0;
+    force->ftm2v = 1.0;
+    force->mv2d = 1.0;
+    force->nktv2p = 1.0;
+    force->qqr2e = 8.987556e6;
+    force->qe2f = 1.0;
+    force->vxmu2f = 1.0;
+    force->xxt2kmu = 1.0;
+    force->e_mass = 0.0;    // not yet set
+    force->hhmrr2e = 0.0;
+    force->mvh2r = 0.0;
+    force->angstrom = 1.0e-4;
+    force->femtosecond = 1.0e-9;
+    force->qelectron = 1.6021765e-7;
+
+    dt = 2.0;
+    neighbor->skin = 0.1;
+
+  } else if (strcmp(style,"nano") == 0) {
+    force->boltz = 0.013806504;
+    force->hplanck = 6.62606896e-4;
+    force->mvv2e = 1.0;
+    force->ftm2v = 1.0;
+    force->mv2d = 1.0;
+    force->nktv2p = 1.0;
+    force->qqr2e = 230.7078669;
+    force->qe2f = 1.0;
+    force->vxmu2f = 1.0;
+    force->xxt2kmu = 1.0;
+    force->e_mass = 0.0;    // not yet set
+    force->hhmrr2e = 0.0;
+    force->mvh2r = 0.0;
+    force->angstrom = 1.0e-1;
+    force->femtosecond = 1.0e-6;
+    force->qelectron = 1.0;
+
+    dt = 0.00045;
+    neighbor->skin = 0.1;
 
   } else error->all(FLERR,"Illegal units command");
 
@@ -253,7 +304,7 @@ void Update::set_units(const char *style)
 
 /* ---------------------------------------------------------------------- */
 
-void Update::create_integrate(int narg, char **arg, char *suffix)
+void Update::create_integrate(int narg, char **arg, int trysuffix)
 {
   if (narg < 1) error->all(FLERR,"Illegal run_style command");
 
@@ -261,11 +312,12 @@ void Update::create_integrate(int narg, char **arg, char *suffix)
   delete integrate;
 
   int sflag;
-  new_integrate(arg[0],narg-1,&arg[1],suffix,sflag);
+  new_integrate(arg[0],narg-1,&arg[1],trysuffix,sflag);
 
   if (sflag) {
     char estyle[256];
-    sprintf(estyle,"%s/%s",arg[0],suffix);
+    if (sflag == 1) sprintf(estyle,"%s/%s",arg[0],lmp->suffix);
+    else sprintf(estyle,"%s/%s",arg[0],lmp->suffix2);
     int n = strlen(estyle) + 1;
     integrate_style = new char[n];
     strcpy(integrate_style,estyle);
@@ -281,42 +333,50 @@ void Update::create_integrate(int narg, char **arg, char *suffix)
 ------------------------------------------------------------------------- */
 
 void Update::new_integrate(char *style, int narg, char **arg,
-                           char *suffix, int &sflag)
+                           int trysuffix, int &sflag)
 {
-  int success = 0;
+  if (trysuffix && lmp->suffix_enable) {
+    if (lmp->suffix) {
+      sflag = 1;
+      char estyle[256];
+      sprintf(estyle,"%s/%s",style,lmp->suffix);
+      if (integrate_map->find(estyle) != integrate_map->end()) {
+        IntegrateCreator integrate_creator = (*integrate_map)[estyle];
+        integrate = integrate_creator(lmp, narg, arg);
+        return;
+      }
+    }
 
-  if (suffix && lmp->suffix_enable) {
-    sflag = 1;
-    char estyle[256];
-    sprintf(estyle,"%s/%s",style,suffix);
-    success = 1;
-
-    if (0) return;
-
-#define INTEGRATE_CLASS
-#define IntegrateStyle(key,Class) \
-    else if (strcmp(estyle,#key) == 0) integrate = new Class(lmp,narg,arg);
-#include "style_integrate.h"
-#undef IntegrateStyle
-#undef INTEGRATE_CLASS
-
-    else success = 0;
+    if (lmp->suffix2) {
+      sflag = 2;
+      char estyle[256];
+      sprintf(estyle,"%s/%s",style,lmp->suffix2);
+      if (integrate_map->find(estyle) != integrate_map->end()) {
+        IntegrateCreator integrate_creator = (*integrate_map)[estyle];
+        integrate = integrate_creator(lmp, narg, arg);
+        return;
+      }
+    }
   }
 
-  if (!success) {
-    sflag = 0;
-
-    if (0) return;
-
-#define INTEGRATE_CLASS
-#define IntegrateStyle(key,Class) \
-    else if (strcmp(style,#key) == 0) integrate = new Class(lmp,narg,arg);
-#include "style_integrate.h"
-#undef IntegrateStyle
-#undef INTEGRATE_CLASS
-
-    else error->all(FLERR,"Illegal integrate style");
+  sflag = 0;
+  if (integrate_map->find(style) != integrate_map->end()) {
+    IntegrateCreator integrate_creator = (*integrate_map)[style];
+    integrate = integrate_creator(lmp, narg, arg);
+    return;
   }
+
+  error->all(FLERR,"Illegal integrate style");
+}
+
+/* ----------------------------------------------------------------------
+   one instance per integrate style in style_integrate.h
+------------------------------------------------------------------------- */
+
+template <typename T>
+Integrate *Update::integrate_creator(LAMMPS *lmp, int narg, char ** arg)
+{
+  return new T(lmp, narg, arg);
 }
 
 /* ---------------------------------------------------------------------- */
@@ -328,19 +388,25 @@ void Update::create_minimize(int narg, char **arg)
   delete [] minimize_style;
   delete minimize;
 
-  if (0) return;      // dummy line to enable else-if macro expansion
-
-#define MINIMIZE_CLASS
-#define MinimizeStyle(key,Class) \
-  else if (strcmp(arg[0],#key) == 0) minimize = new Class(lmp);
-#include "style_minimize.h"
-#undef MINIMIZE_CLASS
-
+  if (minimize_map->find(arg[0]) != minimize_map->end()) {
+    MinimizeCreator minimize_creator = (*minimize_map)[arg[0]];
+    minimize = minimize_creator(lmp);
+  }
   else error->all(FLERR,"Illegal min_style command");
 
   int n = strlen(arg[0]) + 1;
   minimize_style = new char[n];
   strcpy(minimize_style,arg[0]);
+}
+
+/* ----------------------------------------------------------------------
+   one instance per minimize style in style_minimize.h
+------------------------------------------------------------------------- */
+
+template <typename T>
+Min *Update::minimize_creator(LAMMPS *lmp)
+{
+  return new T(lmp);
 }
 
 /* ----------------------------------------------------------------------
@@ -350,18 +416,12 @@ void Update::create_minimize(int narg, char **arg)
 void Update::reset_timestep(int narg, char **arg)
 {
   if (narg != 1) error->all(FLERR,"Illegal reset_timestep command");
-  bigint newstep = ATOBIGINT(arg[0]);
+  bigint newstep = force->bnumeric(FLERR,arg[0]);
   reset_timestep(newstep);
 }
 
 /* ----------------------------------------------------------------------
    reset timestep
-   trigger reset of timestep for output and for fixes that require it
-   do not allow any timestep-dependent fixes to be defined
-   reset eflag/vflag global so nothing will think eng/virial are current
-   reset invoked flags of computes,
-     so nothing will think they are current between runs
-   clear timestep list of computes that store future invocation times
    called from rerun command and input script (indirectly)
 ------------------------------------------------------------------------- */
 
@@ -369,7 +429,14 @@ void Update::reset_timestep(bigint newstep)
 {
   ntimestep = newstep;
   if (ntimestep < 0) error->all(FLERR,"Timestep must be >= 0");
-  if (ntimestep > MAXBIGINT) error->all(FLERR,"Too big a timestep");
+
+  // set atimestep to new timestep
+  // so future update_time() calls will be correct
+
+  atimestep = ntimestep;
+
+  // trigger reset of timestep for output
+  // do not allow any timestep-dependent fixes to be already defined
 
   output->reset_timestep(ntimestep);
 
@@ -377,10 +444,14 @@ void Update::reset_timestep(bigint newstep)
     if (modify->fix[i]->time_depend)
       error->all(FLERR,
                  "Cannot reset timestep with a time-dependent fix defined");
-    modify->fix[i]->reset_timestep(ntimestep);
   }
 
+  // reset eflag/vflag global so no commands will think eng/virial are current
+
   eflag_global = vflag_global = -1;
+
+  // reset invoked flags of computes,
+  // so no commands will think they are current between runs
 
   for (int i = 0; i < modify->ncompute; i++) {
     modify->compute[i]->invoked_scalar = -1;
@@ -390,14 +461,31 @@ void Update::reset_timestep(bigint newstep)
     modify->compute[i]->invoked_local = -1;
   }
 
+  // clear timestep list of computes that store future invocation times
+
   for (int i = 0; i < modify->ncompute; i++)
     if (modify->compute[i]->timeflag) modify->compute[i]->clearstep();
+
+  // Neighbor Bin/Stencil/Pair classes store timestamps that need to be cleared
+
+  neighbor->reset_timestep(ntimestep);
 
   // NOTE: 7Jun12, adding rerun command, don't think this is required
 
   //for (int i = 0; i < domain->nregion; i++)
   //  if (domain->regions[i]->dynamic_check())
   //    error->all(FLERR,"Cannot reset timestep with a dynamic region defined");
+}
+
+/* ----------------------------------------------------------------------
+   update elapsed simulation time
+   called at end of runs or when timestep size changes
+------------------------------------------------------------------------- */
+
+void Update::update_time()
+{
+  atime += (ntimestep-atimestep) * dt;
+  atimestep = ntimestep;
 }
 
 /* ----------------------------------------------------------------------

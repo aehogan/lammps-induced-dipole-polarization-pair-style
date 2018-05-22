@@ -1,4 +1,4 @@
-/* ----------------------------------------------------------------------
+/* -*- c++ -*- ----------------------------------------------------------
    LAMMPS - Large-scale Atomic/Molecular Massively Parallel Simulator
    http://lammps.sandia.gov, Sandia National Laboratories
    Steve Plimpton, sjplimp@sandia.gov
@@ -38,7 +38,7 @@ class FixViscous : public Fix {
 
  protected:
   double *gamma;
-  int nlevels_respa;
+  int ilevel_respa;
 };
 
 }

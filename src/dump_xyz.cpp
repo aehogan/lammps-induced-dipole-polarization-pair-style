@@ -11,7 +11,7 @@
    See the README file in the top-level LAMMPS directory.
 ------------------------------------------------------------------------- */
 
-#include "string.h"
+#include <string.h>
 #include "dump_xyz.h"
 #include "atom.h"
 #include "group.h"
@@ -21,14 +21,21 @@
 
 using namespace LAMMPS_NS;
 
+#define ONELINE 128
+#define DELTA 1048576
+
 /* ---------------------------------------------------------------------- */
 
-DumpXYZ::DumpXYZ(LAMMPS *lmp, int narg, char **arg) : Dump(lmp, narg, arg)
+DumpXYZ::DumpXYZ(LAMMPS *lmp, int narg, char **arg) : Dump(lmp, narg, arg),
+  typenames(NULL)
 {
   if (narg != 5) error->all(FLERR,"Illegal dump xyz command");
   if (binary || multiproc) error->all(FLERR,"Invalid dump xyz filename");
 
   size_one = 5;
+
+  buffer_allow = 1;
+  buffer_flag = 1;
   sort_flag = 1;
   sortcol = 0;
 
@@ -62,9 +69,11 @@ DumpXYZ::~DumpXYZ()
 
 void DumpXYZ::init_style()
 {
+  // format = copy of default or user-specified line format
+
   delete [] format;
   char *str;
-  if (format_user) str = format_user;
+  if (format_line_user) str = format_line_user;
   else str = format_default;
 
   int n = strlen(str) + 2;
@@ -82,6 +91,11 @@ void DumpXYZ::init_style()
       sprintf(typenames[itype],"%d",itype);
     }
   }
+
+  // setup function ptr
+
+  if (buffer_flag == 1) write_choice = &DumpXYZ::write_string;
+  else write_choice = &DumpXYZ::write_lines;
 
   // open single file, one time only
 
@@ -129,11 +143,11 @@ void DumpXYZ::write_header(bigint n)
 
 /* ---------------------------------------------------------------------- */
 
-void DumpXYZ::pack(int *ids)
+void DumpXYZ::pack(tagint *ids)
 {
   int m,n;
 
-  int *tag = atom->tag;
+  tagint *tag = atom->tag;
   int *type = atom->type;
   int *mask = atom->mask;
   double **x = atom->x;
@@ -151,9 +165,49 @@ void DumpXYZ::pack(int *ids)
     }
 }
 
+
+/* ----------------------------------------------------------------------
+   convert mybuf of doubles to one big formatted string in sbuf
+   return -1 if strlen exceeds an int, since used as arg in MPI calls in Dump
+------------------------------------------------------------------------- */
+
+int DumpXYZ::convert_string(int n, double *mybuf)
+{
+  int offset = 0;
+  int m = 0;
+  for (int i = 0; i < n; i++) {
+    if (offset + ONELINE > maxsbuf) {
+      if ((bigint) maxsbuf + DELTA > MAXSMALLINT) return -1;
+      maxsbuf += DELTA;
+      memory->grow(sbuf,maxsbuf,"dump:sbuf");
+    }
+
+    offset += sprintf(&sbuf[offset],format,
+                      typenames[static_cast<int> (mybuf[m+1])],
+                      mybuf[m+2],mybuf[m+3],mybuf[m+4]);
+    m += size_one;
+  }
+
+  return offset;
+}
+
 /* ---------------------------------------------------------------------- */
 
 void DumpXYZ::write_data(int n, double *mybuf)
+{
+  (this->*write_choice)(n,mybuf);
+}
+
+/* ---------------------------------------------------------------------- */
+
+void DumpXYZ::write_string(int n, double *mybuf)
+{
+  fwrite(mybuf,sizeof(char),n,fp);
+}
+
+/* ---------------------------------------------------------------------- */
+
+void DumpXYZ::write_lines(int n, double *mybuf)
 {
   int m = 0;
   for (int i = 0; i < n; i++) {

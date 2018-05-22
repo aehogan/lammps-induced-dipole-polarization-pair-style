@@ -11,10 +11,10 @@
    See the README file in the top-level LAMMPS directory.
 ------------------------------------------------------------------------- */
 
-#include "math.h"
-#include "stdio.h"
-#include "stdlib.h"
-#include "string.h"
+#include <math.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
 #include "fix_gravity.h"
 #include "atom.h"
 #include "update.h"
@@ -25,6 +25,7 @@
 #include "variable.h"
 #include "math_const.h"
 #include "error.h"
+#include "force.h"
 
 using namespace LAMMPS_NS;
 using namespace FixConst;
@@ -36,13 +37,17 @@ enum{CONSTANT,EQUAL};
 /* ---------------------------------------------------------------------- */
 
 FixGravity::FixGravity(LAMMPS *lmp, int narg, char **arg) :
-  Fix(lmp, narg, arg)
+  Fix(lmp, narg, arg),
+  mstr(NULL), vstr(NULL), pstr(NULL), tstr(NULL), xstr(NULL), ystr(NULL), zstr(NULL)
 {
   if (narg < 5) error->all(FLERR,"Illegal fix gravity command");
 
+  dynamic_group_allow = 1;
   scalar_flag = 1;
   global_freq = 1;
   extscalar = 1;
+  respa_level_support = 1;
+  ilevel_respa = 0;
 
   mstr = vstr = pstr = tstr = xstr = ystr = zstr = NULL;
   mstyle = vstyle = pstyle = tstyle = xstyle = ystyle = zstyle = CONSTANT;
@@ -53,7 +58,7 @@ FixGravity::FixGravity(LAMMPS *lmp, int narg, char **arg) :
     strcpy(mstr,&arg[3][2]);
     mstyle = EQUAL;
   } else {
-    magnitude = atof(arg[3]);
+    magnitude = force->numeric(FLERR,arg[3]);
     mstyle = CONSTANT;
   }
 
@@ -66,7 +71,7 @@ FixGravity::FixGravity(LAMMPS *lmp, int narg, char **arg) :
       strcpy(vstr,&arg[5][2]);
       vstyle = EQUAL;
     } else {
-      vert = atof(arg[5]);
+      vert = force->numeric(FLERR,arg[5]);
       vstyle = CONSTANT;
     }
 
@@ -79,7 +84,7 @@ FixGravity::FixGravity(LAMMPS *lmp, int narg, char **arg) :
       strcpy(pstr,&arg[5][2]);
       pstyle = EQUAL;
     } else {
-      phi = atof(arg[5]);
+      phi = force->numeric(FLERR,arg[5]);
       pstyle = CONSTANT;
     }
     if (strstr(arg[6],"v_") == arg[6]) {
@@ -88,7 +93,7 @@ FixGravity::FixGravity(LAMMPS *lmp, int narg, char **arg) :
       strcpy(tstr,&arg[6][2]);
       tstyle = EQUAL;
     } else {
-      theta = atof(arg[6]);
+      theta = force->numeric(FLERR,arg[6]);
       tstyle = CONSTANT;
     }
 
@@ -101,7 +106,7 @@ FixGravity::FixGravity(LAMMPS *lmp, int narg, char **arg) :
       strcpy(xstr,&arg[5][2]);
       xstyle = EQUAL;
     } else {
-      xdir = atof(arg[5]);
+      xdir = force->numeric(FLERR,arg[5]);
       xstyle = CONSTANT;
     }
     if (strstr(arg[6],"v_") == arg[6]) {
@@ -110,7 +115,7 @@ FixGravity::FixGravity(LAMMPS *lmp, int narg, char **arg) :
       strcpy(ystr,&arg[6][2]);
       ystyle = EQUAL;
     } else {
-      ydir = atof(arg[6]);
+      ydir = force->numeric(FLERR,arg[6]);
       ystyle = CONSTANT;
     }
     if (strstr(arg[7],"v_") == arg[7]) {
@@ -119,7 +124,7 @@ FixGravity::FixGravity(LAMMPS *lmp, int narg, char **arg) :
       strcpy(zstr,&arg[7][2]);
       zstyle = EQUAL;
     } else {
-      zdir = atof(arg[7]);
+      zdir = force->numeric(FLERR,arg[7]);
       zstyle = CONSTANT;
     }
 
@@ -160,8 +165,10 @@ int FixGravity::setmask()
 
 void FixGravity::init()
 {
-  if (strstr(update->integrate_style,"respa"))
-    nlevels_respa = ((Respa *) update->integrate)->nlevels;
+  if (strstr(update->integrate_style,"respa")) {
+    ilevel_respa = ((Respa *) update->integrate)->nlevels-1;
+    if (respa_level >= 0) ilevel_respa = MIN(respa_level,ilevel_respa);
+  }
 
   // check variables
 
@@ -232,9 +239,9 @@ void FixGravity::setup(int vflag)
   if (strstr(update->integrate_style,"verlet"))
     post_force(vflag);
   else {
-    ((Respa *) update->integrate)->copy_flevel_f(nlevels_respa-1);
-    post_force_respa(vflag,nlevels_respa-1,0);
-    ((Respa *) update->integrate)->copy_f_flevel(nlevels_respa-1);
+    ((Respa *) update->integrate)->copy_flevel_f(ilevel_respa);
+    post_force_respa(vflag,ilevel_respa,0);
+    ((Respa *) update->integrate)->copy_f_flevel(ilevel_respa);
   }
 }
 
@@ -247,12 +254,12 @@ void FixGravity::post_force(int vflag)
   if (varflag != CONSTANT) {
     modify->clearstep_compute();
     if (mstyle == EQUAL) magnitude = input->variable->compute_equal(mvar);
-    if (vstyle == EQUAL) magnitude = input->variable->compute_equal(vvar);
-    if (pstyle == EQUAL) magnitude = input->variable->compute_equal(pvar);
-    if (tstyle == EQUAL) magnitude = input->variable->compute_equal(tvar);
-    if (xstyle == EQUAL) magnitude = input->variable->compute_equal(xvar);
-    if (ystyle == EQUAL) magnitude = input->variable->compute_equal(yvar);
-    if (zstyle == EQUAL) magnitude = input->variable->compute_equal(zvar);
+    if (vstyle == EQUAL) vert = input->variable->compute_equal(vvar);
+    if (pstyle == EQUAL) phi = input->variable->compute_equal(pvar);
+    if (tstyle == EQUAL) theta = input->variable->compute_equal(tvar);
+    if (xstyle == EQUAL) xdir = input->variable->compute_equal(xvar);
+    if (ystyle == EQUAL) ydir = input->variable->compute_equal(yvar);
+    if (zstyle == EQUAL) zdir = input->variable->compute_equal(zvar);
     modify->addstep_compute(update->ntimestep + 1);
 
     set_acceleration();
@@ -295,7 +302,7 @@ void FixGravity::post_force(int vflag)
 
 void FixGravity::post_force_respa(int vflag, int ilevel, int iloop)
 {
-  if (ilevel == nlevels_respa-1) post_force(vflag);
+  if (ilevel == ilevel_respa) post_force(vflag);
 }
 
 /* ---------------------------------------------------------------------- */

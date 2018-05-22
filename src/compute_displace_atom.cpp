@@ -11,8 +11,8 @@
    See the README file in the top-level LAMMPS directory.
 ------------------------------------------------------------------------- */
 
-#include "math.h"
-#include "string.h"
+#include <math.h>
+#include <string.h>
 #include "compute_displace_atom.h"
 #include "atom.h"
 #include "update.h"
@@ -20,6 +20,7 @@
 #include "domain.h"
 #include "modify.h"
 #include "fix.h"
+#include "fix_store.h"
 #include "memory.h"
 #include "error.h"
 
@@ -28,34 +29,54 @@ using namespace LAMMPS_NS;
 /* ---------------------------------------------------------------------- */
 
 ComputeDisplaceAtom::ComputeDisplaceAtom(LAMMPS *lmp, int narg, char **arg) :
-  Compute(lmp, narg, arg)
+  Compute(lmp, narg, arg),
+  displace(NULL), id_fix(NULL)
 {
   if (narg != 3) error->all(FLERR,"Illegal compute displace/atom command");
 
   peratom_flag = 1;
   size_peratom_cols = 4;
+  create_attribute = 1;
 
-  // create a new fix store/state style
-  // id = compute-ID + store_state, fix group = compute group
+  // create a new fix STORE style
+  // id = compute-ID + COMPUTE_STORE, fix group = compute group
 
-  int n = strlen(id) + strlen("_store_state") + 1;
+  int n = strlen(id) + strlen("_COMPUTE_STORE") + 1;
   id_fix = new char[n];
   strcpy(id_fix,id);
-  strcat(id_fix,"_store_state");
+  strcat(id_fix,"_COMPUTE_STORE");
 
-  char **newarg = new char*[7];
+  char **newarg = new char*[6];
   newarg[0] = id_fix;
   newarg[1] = group->names[igroup];
-  newarg[2] = (char *) "store/state";
-  newarg[3] = (char *) "0";
-  newarg[4] = (char *) "xu";
-  newarg[5] = (char *) "yu";
-  newarg[6] = (char *) "zu";
-  modify->add_fix(7,newarg);
+  newarg[2] = (char *) "STORE";
+  newarg[3] = (char *) "peratom";
+  newarg[4] = (char *) "1";
+  newarg[5] = (char *) "3";
+  modify->add_fix(6,newarg);
+  fix = (FixStore *) modify->fix[modify->nfix-1];
   delete [] newarg;
 
+  // calculate xu,yu,zu for fix store array
+  // skip if reset from restart file
+
+  if (fix->restart_reset) fix->restart_reset = 0;
+  else {
+    double **xoriginal = fix->astore;
+
+    double **x = atom->x;
+    int *mask = atom->mask;
+    imageint *image = atom->image;
+    int nlocal = atom->nlocal;
+
+    for (int i = 0; i < nlocal; i++)
+      if (mask[i] & groupbit) domain->unmap(x[i],image[i],xoriginal[i]);
+      else xoriginal[i][0] = xoriginal[i][1] = xoriginal[i][2] = 0.0;
+  }
+
+  // per-atom displacement array
+
   nmax = 0;
-  displace = NULL;
 }
 
 /* ---------------------------------------------------------------------- */
@@ -78,7 +99,7 @@ void ComputeDisplaceAtom::init()
 
   int ifix = modify->find_fix(id_fix);
   if (ifix < 0) error->all(FLERR,"Could not find compute displace/atom fix ID");
-  fix = modify->fix[ifix];
+  fix = (FixStore *) modify->fix[ifix];
 }
 
 /* ---------------------------------------------------------------------- */
@@ -89,7 +110,7 @@ void ComputeDisplaceAtom::compute_peratom()
 
   // grow local displacement array if necessary
 
-  if (atom->nlocal > nmax) {
+  if (atom->nmax > nmax) {
     memory->destroy(displace);
     nmax = atom->nmax;
     memory->create(displace,nmax,4,"displace/atom:displace");
@@ -100,11 +121,11 @@ void ComputeDisplaceAtom::compute_peratom()
   // original unwrapped position is stored by fix
   // for triclinic, need to unwrap current atom coord via h matrix
 
-  double **xoriginal = fix->array_atom;
+  double **xoriginal = fix->astore;
 
   double **x = atom->x;
   int *mask = atom->mask;
-  tagint *image = atom->image;
+  imageint *image = atom->image;
   int nlocal = atom->nlocal;
 
   double *h = domain->h;
@@ -147,6 +168,19 @@ void ComputeDisplaceAtom::compute_peratom()
       } else displace[i][0] = displace[i][1] =
                displace[i][2] = displace[i][3] = 0.0;
   }
+}
+
+/* ----------------------------------------------------------------------
+   initialize one atom's storage values, called when atom is created
+------------------------------------------------------------------------- */
+
+void ComputeDisplaceAtom::set_arrays(int i)
+{
+  double **xoriginal = fix->astore;
+  double **x = atom->x;
+  xoriginal[i][0] = x[i][0];
+  xoriginal[i][1] = x[i][1];
+  xoriginal[i][2] = x[i][2];
 }
 
 /* ----------------------------------------------------------------------

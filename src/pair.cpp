@@ -15,13 +15,14 @@
    Contributing author: Paul Crozier (SNL)
 ------------------------------------------------------------------------- */
 
-#include "mpi.h"
-#include "float.h"
-#include "limits.h"
-#include "math.h"
-#include "stdio.h"
-#include "stdlib.h"
-#include "string.h"
+#include <mpi.h>
+#include <ctype.h>
+#include <float.h>
+#include <limits.h>
+#include <math.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
 #include "pair.h"
 #include "atom.h"
 #include "neighbor.h"
@@ -31,25 +32,30 @@
 #include "force.h"
 #include "kspace.h"
 #include "update.h"
-#include "accelerator_cuda.h"
+#include "modify.h"
+#include "compute.h"
 #include "suffix.h"
 #include "atom_masks.h"
 #include "memory.h"
+#include "math_const.h"
 #include "error.h"
 
 using namespace LAMMPS_NS;
+using namespace MathConst;
 
-#define EWALD_F   1.12837917
+enum{NONE,RLINEAR,RSQ,BMP};
 
-enum{RLINEAR,RSQ,BMP};
+// allocate space for static class instance variable and initialize it
+
+int Pair::instance_total = 0;
 
 /* ---------------------------------------------------------------------- */
 
 Pair::Pair(LAMMPS *lmp) : Pointers(lmp)
 {
-  THIRD = 1.0/3.0;
+  instance_me = instance_total++;
 
-  eng_vdwl = eng_coul = eng_pol = 0.0;
+  eng_vdwl = eng_coul = /* polarization stuff */ eng_pol /* end polarization stuff */ = 0.0;
 
   comm_forward = comm_reverse = comm_reverse_off = 0;
 
@@ -58,6 +64,7 @@ Pair::Pair(LAMMPS *lmp) : Pointers(lmp)
   respa_enable = 0;
   one_coeff = 0;
   no_virial_fdotr_compute = 0;
+  writedata = 0;
   ghostneigh = 0;
 
   nextra = 0;
@@ -65,17 +72,23 @@ Pair::Pair(LAMMPS *lmp) : Pointers(lmp)
   single_extra = 0;
   svector = NULL;
 
-  ewaldflag = pppmflag = msmflag = dispersionflag = tip4pflag = 0;
+  ewaldflag = pppmflag = msmflag = dispersionflag = tip4pflag = dipoleflag = 0;
+  reinitflag = 1;
 
   // pair_modify settings
 
   compute_flag = 1;
+  manybody_flag = 0;
   offset_flag = 0;
   mix_flag = GEOMETRIC;
   tail_flag = 0;
   etail = ptail = etail_ij = ptail_ij = 0.0;
   ncoultablebits = 12;
+  ndisptablebits = 12;
   tabinner = sqrt(2.0);
+  tabinner_disp = sqrt(2.0);
+  ftable = NULL;
+  fdisptable = NULL;
 
   allocated = 0;
   suffix_flag = Suffix::NONE;
@@ -84,21 +97,36 @@ Pair::Pair(LAMMPS *lmp) : Pointers(lmp)
   eatom = NULL;
   vatom = NULL;
 
-  datamask = ALL_MASK;
-  datamask_ext = ALL_MASK;
+  num_tally_compute = 0;
+  list_tally_compute = NULL;
+
+  // KOKKOS per-fix data masks
+
+  execution_space = Host;
+  datamask_read = ALL_MASK;
+  datamask_modify = ALL_MASK;
+
+  copymode = 0;
 }
 
 /* ---------------------------------------------------------------------- */
 
 Pair::~Pair()
 {
+  num_tally_compute = 0;
+  memory->sfree((void *) list_tally_compute);
+  list_tally_compute = NULL;
+
+  if (copymode) return;
+
   memory->destroy(eatom);
   memory->destroy(vatom);
 }
 
 /* ----------------------------------------------------------------------
    modify parameters of the pair style
-   pair_hybrid has its own version of this routine for its sub-styles
+   pair_hybrid has its own version of this routine
+     to apply modifications to each of its sub-styles
 ------------------------------------------------------------------------- */
 
 void Pair::modify_params(int narg, char **arg)
@@ -122,13 +150,23 @@ void Pair::modify_params(int narg, char **arg)
       iarg += 2;
     } else if (strcmp(arg[iarg],"table") == 0) {
       if (iarg+2 > narg) error->all(FLERR,"Illegal pair_modify command");
-      ncoultablebits = atoi(arg[iarg+1]);
+      ncoultablebits = force->inumeric(FLERR,arg[iarg+1]);
       if (ncoultablebits > sizeof(float)*CHAR_BIT)
+        error->all(FLERR,"Too many total bits for bitmapped lookup table");
+      iarg += 2;
+    } else if (strcmp(arg[iarg],"table/disp") == 0) {
+      if (iarg+2 > narg) error->all(FLERR,"Illegal pair_modify command");
+      ndisptablebits = force->inumeric(FLERR,arg[iarg+1]);
+      if (ndisptablebits > sizeof(float)*CHAR_BIT)
         error->all(FLERR,"Too many total bits for bitmapped lookup table");
       iarg += 2;
     } else if (strcmp(arg[iarg],"tabinner") == 0) {
       if (iarg+2 > narg) error->all(FLERR,"Illegal pair_modify command");
-      tabinner = atof(arg[iarg+1]);
+      tabinner = force->numeric(FLERR,arg[iarg+1]);
+      iarg += 2;
+    } else if (strcmp(arg[iarg],"tabinner/disp") == 0) {
+      if (iarg+2 > narg) error->all(FLERR,"Illegal pair_modify command");
+      tabinner_disp = force->numeric(FLERR,arg[iarg+1]);
       iarg += 2;
     } else if (strcmp(arg[iarg],"tail") == 0) {
       if (iarg+2 > narg) error->all(FLERR,"Illegal pair_modify command");
@@ -158,11 +196,33 @@ void Pair::init()
     error->all(FLERR,"Cannot use pair tail corrections with 2d simulations");
   if (tail_flag && domain->nonperiodic && comm->me == 0)
     error->warning(FLERR,"Using pair tail corrections with nonperiodic system");
+  if (!compute_flag && tail_flag && comm->me == 0)
+    error->warning(FLERR,"Using pair tail corrections with "
+                   "pair_modify compute no");
+  if (!compute_flag && offset_flag && comm->me == 0)
+    error->warning(FLERR,"Using pair potential shift with "
+                   "pair_modify compute no");
 
-  if (!allocated) error->all(FLERR,"All pair coeffs are not set");
+  // for manybody potentials
+  // check if bonded exclusions could invalidate the neighbor list
+
+  if (manybody_flag && atom->molecular) {
+    int flag = 0;
+    if (atom->nbonds > 0 && force->special_lj[1] == 0.0 &&
+        force->special_coul[1] == 0.0) flag = 1;
+    if (atom->nangles > 0 && force->special_lj[2] == 0.0 &&
+        force->special_coul[2] == 0.0) flag = 1;
+    if (atom->ndihedrals > 0 && force->special_lj[3] == 0.0 &&
+        force->special_coul[3] == 0.0) flag = 1;
+    if (flag && comm->me == 0)
+      error->warning(FLERR,"Using a manybody potential with "
+                     "bonds/angles/dihedrals and special_bond exclusions");
+  }
 
   // I,I coeffs must be set
   // init_one() will check if I,J is set explicitly or inferred by mixing
+
+  if (!allocated) error->all(FLERR,"All pair coeffs are not set");
 
   for (i = 1; i <= atom->ntypes; i++)
     if (setflag[i][i] == 0) error->all(FLERR,"All pair coeffs are not set");
@@ -202,14 +262,16 @@ void Pair::init()
 
 void Pair::reinit()
 {
-  int i,j;
-  double tmp;
+  // generalize this error message if reinit() is used by more than fix adapt
+
+  if (!reinitflag)
+    error->all(FLERR,"Fix adapt interface to this pair style not supported");
 
   etail = ptail = 0.0;
 
-  for (i = 1; i <= atom->ntypes; i++)
-    for (j = i; j <= atom->ntypes; j++) {
-      tmp = init_one(i,j);
+  for (int i = 1; i <= atom->ntypes; i++)
+    for (int j = i; j <= atom->ntypes; j++) {
+      init_one(i,j);
       if (tail_flag) {
         etail += etail_ij;
         ptail += ptail_ij;
@@ -231,7 +293,7 @@ void Pair::reinit()
 
 void Pair::init_style()
 {
-  neighbor->request(this);
+  neighbor->request(this,instance_me);
 }
 
 /* ----------------------------------------------------------------------
@@ -245,7 +307,7 @@ void Pair::init_list(int which, NeighList *ptr)
 }
 
 /* ----------------------------------------------------------------------
-   setup force tables used in compute routines
+   setup Coulomb force tables used in compute routines
 ------------------------------------------------------------------------- */
 
 void Pair::init_tables(double cut_coul, double *cut_respa)
@@ -255,11 +317,11 @@ void Pair::init_tables(double cut_coul, double *cut_respa)
   double qqrd2e = force->qqrd2e;
 
   if (force->kspace == NULL)
-    error->all(FLERR,"Pair style requres a KSpace style");
+    error->all(FLERR,"Pair style requires a KSpace style");
   double g_ewald = force->kspace->g_ewald;
-  
+
   double cut_coulsq = cut_coul * cut_coul;
-  
+
   tabinnersq = tabinner*tabinner;
   init_bitmap(tabinner,cut_coul,ncoultablebits,
               masklo,maskhi,ncoulmask,ncoulshiftbits);
@@ -307,7 +369,8 @@ void Pair::init_tables(double cut_coul, double *cut_respa)
     r = sqrtf(rsq_lookup.f);
     if (msmflag) {
       egamma = 1.0 - (r/cut_coul)*force->kspace->gamma(r/cut_coul);
-      fgamma = 1.0 + (rsq_lookup.f/cut_coulsq)*force->kspace->dgamma(r/cut_coul);
+      fgamma = 1.0 + (rsq_lookup.f/cut_coulsq)*
+        force->kspace->dgamma(r/cut_coul);
     } else {
       grij = g_ewald * r;
       expm2 = exp(-grij*grij);
@@ -320,7 +383,7 @@ void Pair::init_tables(double cut_coul, double *cut_respa)
         ftable[i] = qqrd2e/r * fgamma;
         etable[i] = qqrd2e/r * egamma;
       } else {
-        ftable[i] = qqrd2e/r * (derfc + EWALD_F*grij*expm2);
+        ftable[i] = qqrd2e/r * (derfc + MY_ISPI4*grij*expm2);
         etable[i] = qqrd2e/r * derfc;
       }
     } else {
@@ -332,9 +395,9 @@ void Pair::init_tables(double cut_coul, double *cut_respa)
         etable[i] = qqrd2e/r * egamma;
         vtable[i] = qqrd2e/r * fgamma;
       } else {
-        ftable[i] = qqrd2e/r * (derfc + EWALD_F*grij*expm2 - 1.0);
+        ftable[i] = qqrd2e/r * (derfc + MY_ISPI4*grij*expm2 - 1.0);
         etable[i] = qqrd2e/r * derfc;
-        vtable[i] = qqrd2e/r * (derfc + EWALD_F*grij*expm2);
+        vtable[i] = qqrd2e/r * (derfc + MY_ISPI4*grij*expm2);
       }
       if (rsq_lookup.f > cut_respa[2]*cut_respa[2]) {
         if (rsq_lookup.f < cut_respa[3]*cut_respa[3]) {
@@ -343,7 +406,7 @@ void Pair::init_tables(double cut_coul, double *cut_respa)
           ctable[i] = qqrd2e/r * rsw*rsw*(3.0 - 2.0*rsw);
         } else {
           if (msmflag) ftable[i] = qqrd2e/r * fgamma;
-          else ftable[i] = qqrd2e/r * (derfc + EWALD_F*grij*expm2);
+          else ftable[i] = qqrd2e/r * (derfc + MY_ISPI4*grij*expm2);
           ctable[i] = qqrd2e/r;
         }
       }
@@ -403,7 +466,8 @@ void Pair::init_tables(double cut_coul, double *cut_respa)
     r = sqrtf(rsq_lookup.f);
     if (msmflag) {
       egamma = 1.0 - (r/cut_coul)*force->kspace->gamma(r/cut_coul);
-      fgamma = 1.0 + (rsq_lookup.f/cut_coulsq)*force->kspace->dgamma(r/cut_coul);
+      fgamma = 1.0 + (rsq_lookup.f/cut_coulsq)*
+        force->kspace->dgamma(r/cut_coul);
     } else {
       grij = g_ewald * r;
       expm2 = exp(-grij*grij);
@@ -415,7 +479,7 @@ void Pair::init_tables(double cut_coul, double *cut_respa)
         f_tmp = qqrd2e/r * fgamma;
         e_tmp = qqrd2e/r * egamma;
       } else {
-        f_tmp = qqrd2e/r * (derfc + EWALD_F*grij*expm2);
+        f_tmp = qqrd2e/r * (derfc + MY_ISPI4*grij*expm2);
         e_tmp = qqrd2e/r * derfc;
       }
     } else {
@@ -426,9 +490,9 @@ void Pair::init_tables(double cut_coul, double *cut_respa)
         e_tmp = qqrd2e/r * egamma;
         v_tmp = qqrd2e/r * fgamma;
       } else {
-        f_tmp = qqrd2e/r * (derfc + EWALD_F*grij*expm2 - 1.0);
+        f_tmp = qqrd2e/r * (derfc + MY_ISPI4*grij*expm2 - 1.0);
         e_tmp = qqrd2e/r * derfc;
-        v_tmp = qqrd2e/r * (derfc + EWALD_F*grij*expm2);
+        v_tmp = qqrd2e/r * (derfc + MY_ISPI4*grij*expm2);
       }
       if (rsq_lookup.f > cut_respa[2]*cut_respa[2]) {
         if (rsq_lookup.f < cut_respa[3]*cut_respa[3]) {
@@ -437,7 +501,7 @@ void Pair::init_tables(double cut_coul, double *cut_respa)
           c_tmp = qqrd2e/r * rsw*rsw*(3.0 - 2.0*rsw);
         } else {
           if (msmflag) f_tmp = qqrd2e/r * fgamma;
-          else f_tmp = qqrd2e/r * (derfc + EWALD_F*grij*expm2);
+          else f_tmp = qqrd2e/r * (derfc + MY_ISPI4*grij*expm2);
           c_tmp = qqrd2e/r;
         }
       }
@@ -455,7 +519,109 @@ void Pair::init_tables(double cut_coul, double *cut_respa)
 }
 
 /* ----------------------------------------------------------------------
-   free memory for tables used in pair computations
+ setup force tables for dispersion used in compute routines
+ ------------------------------------------------------------------------- */
+
+void Pair::init_tables_disp(double cut_lj_global)
+{
+  int masklo,maskhi;
+  double rsq;
+  double g_ewald_6 = force->kspace->g_ewald_6;
+  double g2 = g_ewald_6*g_ewald_6, g6 = g2*g2*g2, g8 = g6*g2;
+
+  tabinnerdispsq = tabinner_disp*tabinner_disp;
+  init_bitmap(tabinner_disp,cut_lj_global,ndisptablebits,
+              masklo,maskhi,ndispmask,ndispshiftbits);
+
+  int ntable = 1;
+  for (int i = 0; i < ndisptablebits; i++) ntable *= 2;
+
+  // linear lookup tables of length N = 2^ndisptablebits
+  // stored value = value at lower edge of bin
+  // d values = delta from lower edge to upper edge of bin
+
+  if (fdisptable) free_disp_tables();
+
+  memory->create(rdisptable,ntable,"pair:rdisptable");
+  memory->create(fdisptable,ntable,"pair:fdisptable");
+  memory->create(edisptable,ntable,"pair:edisptable");
+  memory->create(drdisptable,ntable,"pair:drdisptable");
+  memory->create(dfdisptable,ntable,"pair:dfdisptable");
+  memory->create(dedisptable,ntable,"pair:dedisptable");
+
+  union_int_float_t rsq_lookup;
+  union_int_float_t minrsq_lookup;
+  int itablemin;
+  minrsq_lookup.i = 0 << ndispshiftbits;
+  minrsq_lookup.i |= maskhi;
+
+  for (int i = 0; i < ntable; i++) {
+    rsq_lookup.i = i << ndispshiftbits;
+    rsq_lookup.i |= masklo;
+    if (rsq_lookup.f < tabinnerdispsq) {
+      rsq_lookup.i = i << ndispshiftbits;
+      rsq_lookup.i |= maskhi;
+    }
+    rsq = rsq_lookup.f;
+    register double x2 = g2*rsq, a2 = 1.0/x2;
+    x2 = a2*exp(-x2);
+
+    rdisptable[i] = rsq_lookup.f;
+    fdisptable[i] = g8*(((6.0*a2+6.0)*a2+3.0)*a2+1.0)*x2*rsq;
+    edisptable[i] = g6*((a2+1.0)*a2+0.5)*x2;
+
+    minrsq_lookup.f = MIN(minrsq_lookup.f,rsq_lookup.f);
+  }
+
+  tabinnerdispsq = minrsq_lookup.f;
+
+  int ntablem1 = ntable - 1;
+
+  for (int i = 0; i < ntablem1; i++) {
+    drdisptable[i] = 1.0/(rdisptable[i+1] - rdisptable[i]);
+    dfdisptable[i] = fdisptable[i+1] - fdisptable[i];
+    dedisptable[i] = edisptable[i+1] - edisptable[i];
+  }
+
+  // get the delta values for the last table entries
+  // tables are connected periodically between 0 and ntablem1
+
+  drdisptable[ntablem1] = 1.0/(rdisptable[0] - rdisptable[ntablem1]);
+  dfdisptable[ntablem1] = fdisptable[0] - fdisptable[ntablem1];
+  dedisptable[ntablem1] = edisptable[0] - edisptable[ntablem1];
+
+  // get the correct delta values at itablemax
+  // smallest r is in bin itablemin
+  // largest r is in bin itablemax, which is itablemin-1,
+  //   or ntablem1 if itablemin=0
+  // deltas at itablemax only needed if corresponding rsq < cut*cut
+  // if so, compute deltas between rsq and cut*cut
+
+  double f_tmp,e_tmp;
+  double cut_lj_globalsq;
+  itablemin = minrsq_lookup.i & ndispmask;
+  itablemin >>= ndispshiftbits;
+  int itablemax = itablemin - 1;
+  if (itablemin == 0) itablemax = ntablem1;
+  rsq_lookup.i = itablemax << ndispshiftbits;
+  rsq_lookup.i |= maskhi;
+
+  if (rsq_lookup.f < (cut_lj_globalsq = cut_lj_global * cut_lj_global)) {
+    rsq_lookup.f = cut_lj_globalsq;
+
+    register double x2 = g2*rsq, a2 = 1.0/x2;
+    x2 = a2*exp(-x2);
+    f_tmp = g8*(((6.0*a2+6.0)*a2+3.0)*a2+1.0)*x2*rsq;
+    e_tmp = g6*((a2+1.0)*a2+0.5)*x2;
+
+    drdisptable[itablemax] = 1.0/(rsq_lookup.f - rdisptable[itablemax]);
+    dfdisptable[itablemax] = f_tmp - fdisptable[itablemax];
+    dedisptable[itablemax] = e_tmp - edisptable[itablemax];
+  }
+}
+
+/* ----------------------------------------------------------------------
+   free memory for tables used in Coulombic pair computations
 ------------------------------------------------------------------------- */
 
 void Pair::free_tables()
@@ -475,20 +641,32 @@ void Pair::free_tables()
 }
 
 /* ----------------------------------------------------------------------
+  free memory for tables used in pair computations for dispersion
+  ------------------------------------------------------------------------- */
+
+void Pair::free_disp_tables()
+{
+  memory->destroy(rdisptable);
+  memory->destroy(drdisptable);
+  memory->destroy(fdisptable);
+  memory->destroy(dfdisptable);
+  memory->destroy(edisptable);
+  memory->destroy(dedisptable);
+}
+/* ----------------------------------------------------------------------
    mixing of pair potential prefactors (epsilon)
 ------------------------------------------------------------------------- */
 
 double Pair::mix_energy(double eps1, double eps2, double sig1, double sig2)
 {
-  double value;
   if (mix_flag == GEOMETRIC)
-    value = sqrt(eps1*eps2);
+    return sqrt(eps1*eps2);
   else if (mix_flag == ARITHMETIC)
-    value = sqrt(eps1*eps2);
+    return sqrt(eps1*eps2);
   else if (mix_flag == SIXTHPOWER)
-    value = 2.0 * sqrt(eps1*eps2) *
-      pow(sig1,3.0) * pow(sig2,3.0) / (pow(sig1,6.0) + pow(sig2,6.0));
-  return value;
+    return (2.0 * sqrt(eps1*eps2) *
+      pow(sig1,3.0) * pow(sig2,3.0) / (pow(sig1,6.0) + pow(sig2,6.0)));
+  else return 0.0;
 }
 
 /* ----------------------------------------------------------------------
@@ -497,14 +675,13 @@ double Pair::mix_energy(double eps1, double eps2, double sig1, double sig2)
 
 double Pair::mix_distance(double sig1, double sig2)
 {
-  double value;
   if (mix_flag == GEOMETRIC)
-    value = sqrt(sig1*sig2);
+    return sqrt(sig1*sig2);
   else if (mix_flag == ARITHMETIC)
-    value = 0.5 * (sig1+sig2);
+    return (0.5 * (sig1+sig2));
   else if (mix_flag == SIXTHPOWER)
-    value = pow((0.5 * (pow(sig1,6.0) + pow(sig2,6.0))),1.0/6.0);
-  return value;
+    return pow((0.5 * (pow(sig1,6.0) + pow(sig2,6.0))),1.0/6.0);
+  else return 0.0;
 }
 
 /* ---------------------------------------------------------------------- */
@@ -515,12 +692,64 @@ void Pair::compute_dummy(int eflag, int vflag)
   else evflag = 0;
 }
 
+/* -------------------------------------------------------------------
+   register a callback to a compute, so it can compute and accumulate
+   additional properties during the pair computation from within
+   Pair::ev_tally(). ensure each compute instance is registered only once
+---------------------------------------------------------------------- */
+
+void Pair::add_tally_callback(Compute *ptr)
+{
+  if (lmp->kokkos)
+    error->all(FLERR,"Cannot yet use compute tally with Kokkos");
+
+  int i,found=-1;
+
+  for (i=0; i < num_tally_compute; ++i) {
+    if (list_tally_compute[i] == ptr)
+      found = i;
+  }
+
+  if (found < 0) {
+    found = num_tally_compute;
+    ++num_tally_compute;
+    void *p = memory->srealloc((void *)list_tally_compute,
+                               sizeof(Compute *) * num_tally_compute,
+                               "pair:list_tally_compute");
+    list_tally_compute = (Compute **) p;
+    list_tally_compute[num_tally_compute-1] = ptr;
+  }
+}
+
+/* -------------------------------------------------------------------
+   unregister a callback to a fix for additional pairwise tallying
+---------------------------------------------------------------------- */
+
+void Pair::del_tally_callback(Compute *ptr)
+{
+  int i,found=-1;
+
+  for (i=0; i < num_tally_compute; ++i) {
+    if (list_tally_compute[i] == ptr)
+      found = i;
+  }
+
+  if (found < 0)
+    return;
+
+  // compact the list of active computes
+  --num_tally_compute;
+  for (i=found; i < num_tally_compute; ++i) {
+    list_tally_compute[i] = list_tally_compute[i+1];
+  }
+}
+
 /* ----------------------------------------------------------------------
    setup for energy, virial computation
    see integrate::ev_set() for values of eflag (0-3) and vflag (0-6)
 ------------------------------------------------------------------------- */
 
-void Pair::ev_setup(int eflag, int vflag)
+void Pair::ev_setup(int eflag, int vflag, int alloc)
 {
   int i,n;
 
@@ -538,27 +767,31 @@ void Pair::ev_setup(int eflag, int vflag)
 
   if (eflag_atom && atom->nmax > maxeatom) {
     maxeatom = atom->nmax;
-    memory->destroy(eatom);
-    memory->create(eatom,comm->nthreads*maxeatom,"pair:eatom");
+    if (alloc) {
+      memory->destroy(eatom);
+      memory->create(eatom,comm->nthreads*maxeatom,"pair:eatom");
+    }
   }
   if (vflag_atom && atom->nmax > maxvatom) {
     maxvatom = atom->nmax;
-    memory->destroy(vatom);
-    memory->create(vatom,comm->nthreads*maxvatom,6,"pair:vatom");
+    if (alloc) {
+      memory->destroy(vatom);
+      memory->create(vatom,comm->nthreads*maxvatom,6,"pair:vatom");
+    }
   }
 
   // zero accumulators
   // use force->newton instead of newton_pair
   //   b/c some bonds/dihedrals call pair::ev_tally with pairwise info
 
-  if (eflag_global) eng_vdwl = eng_coul = eng_pol = 0.0;
+  if (eflag_global) eng_vdwl = eng_coul = /* polarization stuff */ eng_pol /* end polarization stuff */ = 0.0;
   if (vflag_global) for (i = 0; i < 6; i++) virial[i] = 0.0;
-  if (eflag_atom) {
+  if (eflag_atom && alloc) {
     n = atom->nlocal;
     if (force->newton) n += atom->nghost;
     for (i = 0; i < n; i++) eatom[i] = 0.0;
   }
-  if (vflag_atom) {
+  if (vflag_atom && alloc) {
     n = atom->nlocal;
     if (force->newton) n += atom->nghost;
     for (i = 0; i < n; i++) {
@@ -582,7 +815,15 @@ void Pair::ev_setup(int eflag, int vflag)
     if (vflag_either == 0 && eflag_either == 0) evflag = 0;
   } else vflag_fdotr = 0;
 
-  if (lmp->cuda) lmp->cuda->evsetup_eatom_vatom(eflag_atom,vflag_atom);
+
+  // run ev_setup option for USER-TALLY computes
+
+  if (num_tally_compute > 0) {
+    for (int k=0; k < num_tally_compute; ++k) {
+      Compute *c = list_tally_compute[k];
+      c->pair_setup_callback(eflag,vflag);
+    }
+  }
 }
 
 /* ----------------------------------------------------------------------
@@ -694,6 +935,14 @@ void Pair::ev_tally(int i, int j, int nlocal, int newton_pair,
         vatom[j][4] += 0.5*v[4];
         vatom[j][5] += 0.5*v[5];
       }
+    }
+  }
+
+  if (num_tally_compute > 0) {
+    for (int k=0; k < num_tally_compute; ++k) {
+      Compute *c = list_tally_compute[k];
+      c->pair_tally_callback(i, j, nlocal, newton_pair,
+                             evdwl, ecoul, fpair, delx, dely, delz);
     }
   }
 }
@@ -1002,7 +1251,7 @@ void Pair::ev_tally4(int i, int j, int k, int m, double evdwl,
 void Pair::ev_tally_tip4p(int key, int *list, double *v,
                           double ecoul, double alpha)
 {
-  int i,j;
+  int i;
 
   if (eflag_either) {
     if (eflag_global) eng_coul += ecoul;
@@ -1285,6 +1534,12 @@ void Pair::virial_fdotr_compute()
       virial[5] += f[i][2]*x[i][1];
     }
   }
+
+  // prevent multiple calls to update the virial
+  // when a hybrid pair style uses both a gpu and non-gpu pair style
+  // or when respa is used with gpu pair styles
+
+  vflag_fdotr = 0;
 }
 
 /* ----------------------------------------------------------------------
@@ -1293,27 +1548,27 @@ void Pair::virial_fdotr_compute()
 
 void Pair::write_file(int narg, char **arg)
 {
-  if (narg < 8) error->all(FLERR,"Illegal pair_write command");
+  if (narg != 8 && narg != 10) error->all(FLERR,"Illegal pair_write command");
   if (single_enable == 0)
     error->all(FLERR,"Pair style does not support pair_write");
 
   // parse arguments
 
-  int itype = atoi(arg[0]);
-  int jtype = atoi(arg[1]);
+  int itype = force->inumeric(FLERR,arg[0]);
+  int jtype = force->inumeric(FLERR,arg[1]);
   if (itype < 1 || itype > atom->ntypes || jtype < 1 || jtype > atom->ntypes)
     error->all(FLERR,"Invalid atom types in pair_write command");
 
-  int n = atoi(arg[2]);
+  int n = force->inumeric(FLERR,arg[2]);
 
-  int style;
+  int style = NONE;
   if (strcmp(arg[3],"r") == 0) style = RLINEAR;
   else if (strcmp(arg[3],"rsq") == 0) style = RSQ;
   else if (strcmp(arg[3],"bitmap") == 0) style = BMP;
   else error->all(FLERR,"Invalid style in pair_write command");
 
-  double inner = atof(arg[4]);
-  double outer = atof(arg[5]);
+  double inner = force->numeric(FLERR,arg[4]);
+  double outer = force->numeric(FLERR,arg[5]);
   if (inner <= 0.0 || inner >= outer)
     error->all(FLERR,"Invalid cutoffs in pair_write command");
 
@@ -1329,15 +1584,18 @@ void Pair::write_file(int narg, char **arg)
     fprintf(fp,"# Pair potential %s for atom types %d %d: i,r,energy,force\n",
             force->pair_style,itype,jtype);
     if (style == RLINEAR)
-      fprintf(fp,"\n%s\nN %d R %g %g\n\n",arg[7],n,inner,outer);
+      fprintf(fp,"\n%s\nN %d R %.15g %.15g\n\n",arg[7],n,inner,outer);
     if (style == RSQ)
-      fprintf(fp,"\n%s\nN %d RSQ %g %g\n\n",arg[7],n,inner,outer);
+      fprintf(fp,"\n%s\nN %d RSQ %.15g %.15g\n\n",arg[7],n,inner,outer);
   }
 
   // initialize potentials before evaluating pair potential
   // insures all pair coeffs are set and force constants
+  // also initialize neighbor so that neighbor requests are processed
+  // NOTE: might be safest to just do lmp->init()
 
   force->init();
+  neighbor->init();
 
   // if pair style = any of EAM, swap in dummy fp vector
 
@@ -1353,8 +1611,8 @@ void Pair::write_file(int narg, char **arg)
   double q[2];
   q[0] = q[1] = 1.0;
   if (narg == 10) {
-    q[0] = atof(arg[8]);
-    q[1] = atof(arg[9]);
+    q[0] = force->numeric(FLERR,arg[8]);
+    q[1] = force->numeric(FLERR,arg[9]);
   }
   double *q_hold;
 
@@ -1370,7 +1628,7 @@ void Pair::write_file(int narg, char **arg)
     init_bitmap(inner,outer,n,masklo,maskhi,nmask,nshiftbits);
     int ntable = 1 << n;
     if (me == 0)
-      fprintf(fp,"\n%s\nN %d BITMAP %g %g\n\n",arg[7],ntable,inner,outer);
+      fprintf(fp,"\n%s\nN %d BITMAP %.15g %.15g\n\n",arg[7],ntable,inner,outer);
     n = ntable;
   }
 
@@ -1399,7 +1657,7 @@ void Pair::write_file(int narg, char **arg)
       e = single(0,1,itype,jtype,rsq,1.0,1.0,f);
       f *= r;
     } else e = f = 0.0;
-    if (me == 0) fprintf(fp,"%d %g %g %g\n",i+1,r,e,f);
+    if (me == 0) fprintf(fp,"%d %.15g %.15g %.15g\n",i+1,r,e,f);
   }
 
   // restore original vecs that were swapped in for
@@ -1472,3 +1730,4 @@ double Pair::memory_usage()
   bytes += comm->nthreads*maxvatom*6 * sizeof(double);
   return bytes;
 }
+

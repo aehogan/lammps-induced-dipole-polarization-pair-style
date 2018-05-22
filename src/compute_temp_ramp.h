@@ -1,4 +1,4 @@
-/* ----------------------------------------------------------------------
+/* -*- c++ -*- ----------------------------------------------------------
    LAMMPS - Large-scale Atomic/Molecular Massively Parallel Simulator
    http://lammps.sandia.gov, Sandia National Laboratories
    Steve Plimpton, sjplimp@sandia.gov
@@ -28,13 +28,16 @@ class ComputeTempRamp : public Compute {
  public:
   ComputeTempRamp(class LAMMPS *, int, char **);
   ~ComputeTempRamp();
-  void init();
+  void init() {}
+  void setup();
   double compute_scalar();
   void compute_vector();
 
   void remove_bias(int, double *);
   void remove_bias_all();
+  void remove_bias_thr(int, double *, double *);
   void restore_bias(int, double *);
+  void restore_bias_thr(int, double *, double *);
   void restore_bias_all();
   double memory_usage();
 
@@ -43,7 +46,7 @@ class ComputeTempRamp : public Compute {
   double coord_lo,coord_hi;
   int v_dim;
   double v_lo,v_hi;
-  int scaleflag,fix_dof;
+  int scaleflag;
   double tfactor,xscale,yscale,zscale;
 
   void dof_compute();
@@ -62,9 +65,9 @@ Self-explanatory.  Check the input script syntax and compare to the
 documentation for the command.  You can use -echo screen as a
 command-line option when running LAMMPS to see the offending line.
 
-E: Use of compute temp/ramp with undefined lattice
+E: Temperature compute degrees of freedom < 0
 
-Must use lattice command with compute temp/ramp command if units
-option is set to lattice.
+This should not happen if you are calculating the temperature
+on a valid set of atoms.
 
 */

@@ -11,8 +11,8 @@
  See the README file in the top-level LAMMPS directory.
  ------------------------------------------------------------------------- */
 
-#include "math.h"
-#include "stdlib.h"
+#include <math.h>
+#include <stdlib.h>
 #include "pair_sph_taitwater_morris.h"
 #include "atom.h"
 #include "force.h"
@@ -243,13 +243,13 @@ void PairSPHTaitwaterMorris::coeff(int narg, char **arg) {
     allocate();
 
   int ilo, ihi, jlo, jhi;
-  force->bounds(arg[0], atom->ntypes, ilo, ihi);
-  force->bounds(arg[1], atom->ntypes, jlo, jhi);
+  force->bounds(FLERR,arg[0], atom->ntypes, ilo, ihi);
+  force->bounds(FLERR,arg[1], atom->ntypes, jlo, jhi);
 
-  double rho0_one = force->numeric(arg[2]);
-  double soundspeed_one = force->numeric(arg[3]);
-  double viscosity_one = force->numeric(arg[4]);
-  double cut_one = force->numeric(arg[5]);
+  double rho0_one = force->numeric(FLERR,arg[2]);
+  double soundspeed_one = force->numeric(FLERR,arg[3]);
+  double viscosity_one = force->numeric(FLERR,arg[4]);
+  double cut_one = force->numeric(FLERR,arg[5]);
   double B_one = soundspeed_one * soundspeed_one * rho0_one / 7.0;
 
   int count = 0;

@@ -1,5 +1,5 @@
-#!/usr/local/bin/python -i
-# preceeding line should have path for Python on your machine
+#!/usr/bin/env python -i
+# preceding line should have path for Python on your machine
 
 # viz_atomeye.py
 # Purpose: viz running LAMMPS simulation via AtomEye
@@ -8,6 +8,7 @@
 #          Nfreq = dump and viz shapshot every this many steps
 #          Nsteps = run for this many steps
 
+from __future__ import print_function
 import sys,os
 
 # set this to point to AtomEye version 3 executable
@@ -19,7 +20,7 @@ ATOMEYE3 = "/home/sjplimp/tools/atomeye3/A3.i686-20060530 > atomeye.out"
 
 argv = sys.argv
 if len(argv) != 4:
-  print "Syntax: viz_atomeye.py in.lammps Nfreq Nsteps"
+  print("Syntax: viz_atomeye.py in.lammps Nfreq Nsteps")
   sys.exit()
 
 infile = sys.argv[1]
@@ -41,7 +42,7 @@ lmp = lammps()
 
 lmp.file(infile)
 lmp.command("thermo %d" % nfreq)
-lmp.command("dump python all cfg %d tmp.cfg.* id type xs ys zs" % nfreq)
+lmp.command("dump python all cfg %d tmp.cfg.* mass type xs ys zs id" % nfreq)
 
 # initial 0-step run to generate dump file and image
 
@@ -68,5 +69,5 @@ while ntimestep < nsteps:
 lmp.command("run 0 pre no post yes")
 
 # uncomment if running in parallel via Pypar
-#print "Proc %d out of %d procs has" % (me,nprocs), lmp
+#print("Proc %d out of %d procs has" % (me,nprocs), lmp)
 #pypar.finalize()

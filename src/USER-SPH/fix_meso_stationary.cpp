@@ -11,12 +11,12 @@
  See the README file in the top-level LAMMPS directory.
  ------------------------------------------------------------------------- */
 
-#include "stdio.h"
-#include "string.h"
+#include <stdio.h>
+#include <string.h>
 #include "fix_meso_stationary.h"
-#include "math.h"
-#include "stdlib.h"
-#include "string.h"
+#include <math.h>
+#include <stdlib.h>
+#include <string.h>
 #include "atom.h"
 #include "comm.h"
 #include "force.h"
@@ -75,7 +75,6 @@ void FixMesoStationary::initial_integrate(int vflag) {
   double *e = atom->e;
   double *de = atom->de;
 
-  int *type = atom->type;
   int *mask = atom->mask;
   int nlocal = atom->nlocal;
   int i;
@@ -99,9 +98,7 @@ void FixMesoStationary::final_integrate() {
   double *de = atom->de;
   double *rho = atom->rho;
   double *drho = atom->drho;
-  int *type = atom->type;
   int *mask = atom->mask;
-  double *mass = atom->mass;
   int nlocal = atom->nlocal;
   if (igroup == atom->firstgroup)
     nlocal = atom->nfirst;

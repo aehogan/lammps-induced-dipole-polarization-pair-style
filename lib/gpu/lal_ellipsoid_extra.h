@@ -31,14 +31,13 @@ texture<int4,1> pos_tex, quat_tex;
 #endif
 
 #define nbor_info_e(nbor_mem, nbor_stride, t_per_atom, ii, offset,           \
-                    i, numj, stride, list_end, nbor)                         \
-    nbor=nbor_mem+ii;                                                        \
-    i=*nbor;                                                                 \
-    nbor+=nbor_stride;                                                       \
-    numj=*nbor;                                                              \
-    nbor+=nbor_stride;                                                       \
-    list_end=nbor+fast_mul(nbor_stride,numj);                                \
-    nbor+=fast_mul(offset,nbor_stride);                                      \
+                    i, numj, stride, nbor_end, nbor_begin)                   \
+    i=nbor_mem[ii];                                                          \
+    nbor_begin=ii+nbor_stride;                                               \
+    numj=nbor_mem[nbor_begin];                                               \
+    nbor_begin+=nbor_stride;                                                 \
+    nbor_end=nbor_begin+fast_mul(nbor_stride,numj);                          \
+    nbor_begin+=fast_mul(offset,nbor_stride);                                \
     stride=fast_mul(t_per_atom,nbor_stride);
 
 #if (ARCH < 300)
@@ -83,12 +82,12 @@ texture<int4,1> pos_tex, quat_tex;
   if (offset==0) {                                                          \
     __global acctyp *ap1=engv+ii;                                           \
     if (eflag>0) {                                                          \
-      *ap1=energy;                                                          \
+      *ap1=energy*(acctyp)0.5;                                              \
       ap1+=astride;                                                         \
     }                                                                       \
     if (vflag>0) {                                                          \
       for (int i=0; i<6; i++) {                                             \
-        *ap1=virial[i];                                                     \
+        *ap1=virial[i]*(acctyp)0.5;                                         \
         ap1+=astride;                                                       \
       }                                                                     \
     }                                                                       \
@@ -130,12 +129,12 @@ texture<int4,1> pos_tex, quat_tex;
   if (offset==0) {                                                          \
     engv+=ii;                                                               \
     if (eflag>0) {                                                          \
-      *engv+=energy;                                                        \
+      *engv+=energy*(acctyp)0.5;                                            \
       engv+=inum;                                                           \
     }                                                                       \
     if (vflag>0) {                                                          \
       for (int i=0; i<6; i++) {                                             \
-        *engv+=virial[i];                                                   \
+        *engv+=virial[i]*(acctyp)0.5;                                       \
         engv+=inum;                                                         \
       }                                                                     \
     }                                                                       \
@@ -170,12 +169,12 @@ texture<int4,1> pos_tex, quat_tex;
   if (offset==0) {                                                          \
     __global acctyp *ap1=engv+ii;                                           \
     if (eflag>0) {                                                          \
-      *ap1=energy;                                                          \
+      *ap1=energy*(acctyp)0.5;                                              \
       ap1+=astride;                                                         \
     }                                                                       \
     if (vflag>0) {                                                          \
       for (int i=0; i<6; i++) {                                             \
-        *ap1=virial[i];                                                     \
+        *ap1=virial[i]*(acctyp)0.5;                                         \
         ap1+=astride;                                                       \
       }                                                                     \
     }                                                                       \
@@ -202,12 +201,12 @@ texture<int4,1> pos_tex, quat_tex;
   if (offset==0) {                                                          \
     engv+=ii;                                                               \
     if (eflag>0) {                                                          \
-      *engv+=energy;                                                        \
+      *engv+=energy*(acctyp)0.5;                                            \
       engv+=inum;                                                           \
     }                                                                       \
     if (vflag>0) {                                                          \
       for (int i=0; i<6; i++) {                                             \
-        *engv+=virial[i];                                                   \
+        *engv+=virial[i]*(acctyp)0.5;                                       \
         engv+=inum;                                                         \
       }                                                                     \
     }                                                                       \
@@ -246,8 +245,8 @@ ucl_inline void gpu_cross3(const numtyp *v1, const numtyp *v2, numtyp *ans)
 
 ucl_inline numtyp gpu_det3(const numtyp m[9])
 {
-  numtyp ans = m[0]*m[4]*m[8] - m[0]*m[5]*m[7] - 
-    m[3]*m[1]*m[8] + m[3]*m[2]*m[7] + 
+  numtyp ans = m[0]*m[4]*m[8] - m[0]*m[5]*m[7] -
+    m[3]*m[1]*m[8] + m[3]*m[2]*m[7] +
     m[6]*m[1]*m[5] - m[6]*m[2]*m[4];
   return ans;
 };
@@ -256,7 +255,7 @@ ucl_inline numtyp gpu_det3(const numtyp m[9])
    diagonal matrix times a full matrix
 ------------------------------------------------------------------------- */
 
-ucl_inline void gpu_diag_times3(const numtyp4 shape, const numtyp m[9], 
+ucl_inline void gpu_diag_times3(const numtyp4 shape, const numtyp m[9],
                               numtyp ans[9])
 {
   ans[0] = shape.x*m[0];
@@ -422,7 +421,7 @@ ucl_inline void gpu_mldivide3(const numtyp m[9], const numtyp *v, numtyp *ans,
   t = aug[9]/aug[5];
   aug[10]-=t*aug[6];
   aug[11]-=t*aug[7];
-  
+
   if (aug[10] == (numtyp)0.0)
     *error_flag=2;
 
@@ -441,11 +440,11 @@ ucl_inline void gpu_mldivide3(const numtyp m[9], const numtyp *v, numtyp *ans,
    quat = [w i j k]
 ------------------------------------------------------------------------- */
 
-ucl_inline void gpu_quat_to_mat_trans(__global const numtyp4 *qif, const int qi, 
+ucl_inline void gpu_quat_to_mat_trans(__global const numtyp4 *qif, const int qi,
                                     numtyp mat[9])
 {
   numtyp4 q; fetch4(q,qi,quat_tex);
-  
+
   numtyp w2 = q.x*q.x;
   numtyp i2 = q.y*q.y;
   numtyp j2 = q.z*q.z;
@@ -464,7 +463,7 @@ ucl_inline void gpu_quat_to_mat_trans(__global const numtyp4 *qif, const int qi,
   mat[1] = twoij+twokw;
   mat[4] = w2-i2+j2-k2;
   mat[7] = twojk-twoiw;
-	
+
   mat[2] = twoik-twojw;
   mat[5] = twojk+twoiw;
   mat[8] = w2-i2-j2+k2;
@@ -562,7 +561,7 @@ ucl_inline void gpu_rotation_generator_z(const numtyp m[9], numtyp ans[9])
 ------------------------------------------------------------------------- */
 
 ucl_inline void gpu_times_column3(const numtyp m[9], const numtyp v[3],
-                                numtyp ans[3]) 
+                                numtyp ans[3])
 {
   ans[0] = m[0]*v[0] + m[1]*v[1] + m[2]*v[2];
   ans[1] = m[3]*v[0] + m[4]*v[1] + m[5]*v[2];

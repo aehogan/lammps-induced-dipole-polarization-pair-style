@@ -15,7 +15,7 @@
    Contributing authors: Amalie Frischknecht and Ahmed Ismail (SNL)
 ------------------------------------------------------------------------- */
 
-#include "math.h"
+#include <math.h>
 #include "pppm_tip4p.h"
 #include "atom.h"
 #include "domain.h"
@@ -42,6 +42,7 @@ using namespace MathConst;
 PPPMTIP4P::PPPMTIP4P(LAMMPS *lmp, int narg, char **arg) :
   PPPM(lmp, narg, arg)
 {
+  triclinic_support = 1;
   tip4pflag = 1;
 }
 
@@ -71,6 +72,9 @@ void PPPMTIP4P::particle_map()
   int *type = atom->type;
   double **x = atom->x;
   int nlocal = atom->nlocal;
+
+  if (!ISFINITE(boxlo[0]) || !ISFINITE(boxlo[1]) || !ISFINITE(boxlo[2]))
+    error->one(FLERR,"Non-numeric box dimensions - simulation unstable");
 
   int flag = 0;
   for (int i = 0; i < nlocal; i++) {
@@ -222,11 +226,11 @@ void PPPMTIP4P::fieldforce_ik()
 
     // convert E-field to force
 
-    const double qfactor = force->qqrd2e * scale * q[i];
+    const double qfactor = qqrd2e * scale * q[i];
     if (type[i] != typeO) {
       f[i][0] += qfactor*ekx;
       f[i][1] += qfactor*eky;
-      f[i][2] += qfactor*ekz;
+      if (slabflag != 2) f[i][2] += qfactor*ekz;
 
     } else {
       fx = qfactor * ekx;
@@ -236,15 +240,15 @@ void PPPMTIP4P::fieldforce_ik()
 
       f[i][0] += fx*(1 - alpha);
       f[i][1] += fy*(1 - alpha);
-      f[i][2] += fz*(1 - alpha);
+      if (slabflag != 2) f[i][2] += fz*(1 - alpha);
 
       f[iH1][0] += 0.5*alpha*fx;
       f[iH1][1] += 0.5*alpha*fy;
-      f[iH1][2] += 0.5*alpha*fz;
+      if (slabflag != 2) f[iH1][2] += 0.5*alpha*fz;
 
       f[iH2][0] += 0.5*alpha*fx;
       f[iH2][1] += 0.5*alpha*fy;
-      f[iH2][2] += 0.5*alpha*fz;
+      if (slabflag != 2) f[iH2][2] += 0.5*alpha*fz;
     }
   }
 }
@@ -256,7 +260,7 @@ void PPPMTIP4P::fieldforce_ik()
 void PPPMTIP4P::fieldforce_ad()
 {
   int i,l,m,n,nx,ny,nz,mx,my,mz;
-  FFT_SCALAR dx,dy,dz,x0,y0,z0,dx0,dy0,dz0;
+  FFT_SCALAR dx,dy,dz;
   FFT_SCALAR ekx,eky,ekz;
   double *xi;
   int iH1,iH2;
@@ -272,13 +276,10 @@ void PPPMTIP4P::fieldforce_ad()
   double xprd = prd[0];
   double yprd = prd[1];
   double zprd = prd[2];
-  double zprd_slab = zprd*slab_volfactor;
 
   double hx_inv = nx_pppm/xprd;
   double hy_inv = ny_pppm/yprd;
   double hz_inv = nz_pppm/zprd;
-  
-
 
   // loop over my charges, interpolate electric field from nearby grid points
   // (nx,ny,nz) = global coords of grid pt to "lower left" of charge
@@ -295,17 +296,17 @@ void PPPMTIP4P::fieldforce_ad()
 
   for (i = 0; i < nlocal; i++) {
     if (type[i] == typeO) {
-      find_M(i,iH1,iH2,xM);      
+      find_M(i,iH1,iH2,xM);
       xi = xM;
     } else xi = x[i];
 
     nx = part2grid[i][0];
     ny = part2grid[i][1];
     nz = part2grid[i][2];
-    dx = nx+shiftone - (x[i][0]-boxlo[0])*delxinv;
-    dy = ny+shiftone - (x[i][1]-boxlo[1])*delyinv;
-    dz = nz+shiftone - (x[i][2]-boxlo[2])*delzinv;
-    
+    dx = nx+shiftone - (xi[0]-boxlo[0])*delxinv;
+    dy = ny+shiftone - (xi[1]-boxlo[1])*delyinv;
+    dz = nz+shiftone - (xi[2]-boxlo[2])*delzinv;
+
     compute_rho1d(dx,dy,dz);
     compute_drho1d(dx,dy,dz);
 
@@ -326,54 +327,55 @@ void PPPMTIP4P::fieldforce_ad()
     ekx *= hx_inv;
     eky *= hy_inv;
     ekz *= hz_inv;
-    
-    // convert E-field to force and substract self forces
-    const double qfactor = force->qqrd2e * scale;
 
-    s1 = x[i][0]*hx_inv;
-    s2 = x[i][1]*hy_inv;
-    s3 = x[i][2]*hz_inv;
+    // convert E-field to force and substract self forces
+
+    const double qfactor = qqrd2e * scale;
+
+    s1 = xi[0]*hx_inv;
+    s2 = xi[1]*hy_inv;
+    s3 = xi[2]*hz_inv;
     sf = sf_coeff[0]*sin(2*MY_PI*s1);
     sf += sf_coeff[1]*sin(4*MY_PI*s1);
-    sf *= 2*q[i]*q[i];
+    sf *= 2.0*q[i]*q[i];
     fx = qfactor*(ekx*q[i] - sf);
 
     sf = sf_coeff[2]*sin(2*MY_PI*s2);
     sf += sf_coeff[3]*sin(4*MY_PI*s2);
-    sf *= 2*q[i]*q[i];
+    sf *= 2.0*q[i]*q[i];
     fy = qfactor*(eky*q[i] - sf);
 
     sf = sf_coeff[4]*sin(2*MY_PI*s3);
     sf += sf_coeff[5]*sin(4*MY_PI*s3);
-    sf *= 2*q[i]*q[i];
+    sf *= 2.0*q[i]*q[i];
     fz = qfactor*(ekz*q[i] - sf);
 
     if (type[i] != typeO) {
       f[i][0] += fx;
       f[i][1] += fy;
-      f[i][2] += fz;
+      if (slabflag != 2) f[i][2] += fz;
 
     } else {
       find_M(i,iH1,iH2,xM);
 
       f[i][0] += fx*(1 - alpha);
       f[i][1] += fy*(1 - alpha);
-      f[i][2] += fz*(1 - alpha);
+      if (slabflag != 2) f[i][2] += fz*(1 - alpha);
 
       f[iH1][0] += 0.5*alpha*fx;
       f[iH1][1] += 0.5*alpha*fy;
-      f[iH1][2] += 0.5*alpha*fz;
+      if (slabflag != 2) f[iH1][2] += 0.5*alpha*fz;
 
       f[iH2][0] += 0.5*alpha*fx;
       f[iH2][1] += 0.5*alpha*fy;
-      f[iH2][2] += 0.5*alpha*fz;
+      if (slabflag != 2) f[iH2][2] += 0.5*alpha*fz;
     }
   }
 }
 
 
 /* ----------------------------------------------------------------------
-   interpolate from grid to get electric field & force on my particles 
+   interpolate from grid to get electric field & force on my particles
 ------------------------------------------------------------------------- */
 
 void PPPMTIP4P::fieldforce_peratom()
@@ -390,16 +392,16 @@ void PPPMTIP4P::fieldforce_peratom()
   // (dx,dy,dz) = distance to "lower left" grid pt
   // (mx,my,mz) = global coords of moving stencil pt
   // ek = 3 components of E-field on particle
+
   double *q = atom->q;
   double **x = atom->x;
-  double **f = atom->f;
 
   int *type = atom->type;
   int nlocal = atom->nlocal;
 
   for (i = 0; i < nlocal; i++) {
     if (type[i] == typeO) {
-      find_M(i,iH1,iH2,xM);      
+      find_M(i,iH1,iH2,xM);
       xi = xM;
     } else xi = x[i];
 
@@ -422,7 +424,7 @@ void PPPMTIP4P::fieldforce_peratom()
         for (l = nlower; l <= nupper; l++) {
           mx = l+nx;
           x0 = y0*rho1d[0][l];
-          if (eflag_atom) u_pa += x0*u_brick[mz][my][mx];	
+          if (eflag_atom) u_pa += x0*u_brick[mz][my][mx];
           if (vflag_atom) {
             v0 += x0*v0_brick[mz][my][mx];
             v1 += x0*v1_brick[mz][my][mx];
@@ -434,7 +436,6 @@ void PPPMTIP4P::fieldforce_peratom()
         }
       }
     }
-
 
     if (eflag_atom) {
       if (type[i] != typeO) {
@@ -478,13 +479,15 @@ void PPPMTIP4P::fieldforce_peratom()
 }
 
 /* ----------------------------------------------------------------------
-  find 2 H atoms bonded to O atom i
-  compute position xM of fictitious charge site for O atom
-  also return local indices iH1,iH2 of H atoms
+   find 2 H atoms bonded to O atom i
+   compute position xM of fictitious charge site for O atom
+   also return local indices iH1,iH2 of H atoms
 ------------------------------------------------------------------------- */
 
 void PPPMTIP4P::find_M(int i, int &iH1, int &iH2, double *xM)
 {
+  double **x = atom->x;
+
   iH1 = atom->map(atom->tag[i] + 1);
   iH2 = atom->map(atom->tag[i] + 2);
 
@@ -492,19 +495,98 @@ void PPPMTIP4P::find_M(int i, int &iH1, int &iH2, double *xM)
   if (atom->type[iH1] != typeH || atom->type[iH2] != typeH)
     error->one(FLERR,"TIP4P hydrogen has incorrect atom type");
 
-  double **x = atom->x;
+  if (triclinic) {
 
-  double delx1 = x[iH1][0] - x[i][0];
-  double dely1 = x[iH1][1] - x[i][1];
-  double delz1 = x[iH1][2] - x[i][2];
-  domain->minimum_image(delx1,dely1,delz1);
+    // need to use custom code to find the closest image for triclinic,
+    // since local atoms are in lambda coordinates, but ghosts are not.
 
-  double delx2 = x[iH2][0] - x[i][0];
-  double dely2 = x[iH2][1] - x[i][1];
-  double delz2 = x[iH2][2] - x[i][2];
-  domain->minimum_image(delx2,dely2,delz2);
+    int *sametag = atom->sametag;
+    double xo[3],xh1[3],xh2[3];
 
-  xM[0] = x[i][0] + alpha * 0.5 * (delx1 + delx2);
-  xM[1] = x[i][1] + alpha * 0.5 * (dely1 + dely2);
-  xM[2] = x[i][2] + alpha * 0.5 * (delz1 + delz2);
+    domain->lamda2x(x[i],xo);
+    domain->lamda2x(x[iH1],xh1);
+    domain->lamda2x(x[iH2],xh2);
+
+    double delx = xo[0] - xh1[0];
+    double dely = xo[1] - xh1[1];
+    double delz = xo[2] - xh1[2];
+    double rsqmin = delx*delx + dely*dely + delz*delz;
+    double rsq;
+    int closest = iH1;
+
+    while (sametag[iH1] >= 0) {
+      iH1 = sametag[iH1];
+      delx = xo[0] - x[iH1][0];
+      dely = xo[1] - x[iH1][1];
+      delz = xo[2] - x[iH1][2];
+      rsq = delx*delx + dely*dely + delz*delz;
+      if (rsq < rsqmin) {
+        rsqmin = rsq;
+        closest = iH1;
+        xh1[0] = x[iH1][0];
+        xh1[1] = x[iH1][1];
+        xh1[2] = x[iH1][2];
+      }
+    }
+    iH1 = closest;
+
+    closest = iH2;
+    delx = xo[0] - xh2[0];
+    dely = xo[1] - xh2[1];
+    delz = xo[2] - xh2[2];
+    rsqmin = delx*delx + dely*dely + delz*delz;
+
+    while (sametag[iH2] >= 0) {
+      iH2 = sametag[iH2];
+      delx = xo[0] - x[iH2][0];
+      dely = xo[1] - x[iH2][1];
+      delz = xo[2] - x[iH2][2];
+      rsq = delx*delx + dely*dely + delz*delz;
+      if (rsq < rsqmin) {
+        rsqmin = rsq;
+        closest = iH2;
+        xh2[0] = x[iH2][0];
+        xh2[1] = x[iH2][1];
+        xh2[2] = x[iH2][2];
+      }
+    }
+    iH2 = closest;
+
+    // finally compute M in real coordinates ...
+
+    double delx1 = xh1[0] - xo[0];
+    double dely1 = xh1[1] - xo[1];
+    double delz1 = xh1[2] - xo[2];
+
+    double delx2 = xh2[0] - xo[0];
+    double dely2 = xh2[1] - xo[1];
+    double delz2 = xh2[2] - xo[2];
+
+    xM[0] = xo[0] + alpha * 0.5 * (delx1 + delx2);
+    xM[1] = xo[1] + alpha * 0.5 * (dely1 + dely2);
+    xM[2] = xo[2] + alpha * 0.5 * (delz1 + delz2);
+
+    // ... and convert M to lamda space for PPPM
+
+    domain->x2lamda(xM,xM);
+
+  } else {
+
+    // set iH1,iH2 to index of closest image to O
+
+    iH1 = domain->closest_image(i,iH1);
+    iH2 = domain->closest_image(i,iH2);
+
+    double delx1 = x[iH1][0] - x[i][0];
+    double dely1 = x[iH1][1] - x[i][1];
+    double delz1 = x[iH1][2] - x[i][2];
+
+    double delx2 = x[iH2][0] - x[i][0];
+    double dely2 = x[iH2][1] - x[i][1];
+    double delz2 = x[iH2][2] - x[i][2];
+
+    xM[0] = x[i][0] + alpha * 0.5 * (delx1 + delx2);
+    xM[1] = x[i][1] + alpha * 0.5 * (dely1 + dely2);
+    xM[2] = x[i][2] + alpha * 0.5 * (delz1 + delz2);
+  }
 }

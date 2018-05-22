@@ -12,8 +12,8 @@
    Contributing author: Axel Kohlmeyer (Temple U)
 ------------------------------------------------------------------------- */
 
-#include "math.h"
-#include "float.h"
+#include <math.h>
+#include <float.h>
 #include "pair_peri_lps_omp.h"
 #include "fix.h"
 #include "fix_peri_neigh.h"
@@ -71,6 +71,7 @@ void PairPeriLPSOMP::compute(int eflag, int vflag)
 
     loop_setup_thr(ifrom, ito, tid, inum, nthreads);
     ThrData *thr = fix->get_thr(tid);
+    thr->timer(Timer::START);
     ev_setup_thr(eflag, vflag, nall, eatom, vatom, thr);
 
     if (evflag) {
@@ -86,6 +87,7 @@ void PairPeriLPSOMP::compute(int eflag, int vflag)
       else eval<0,0,0>(ifrom, ito, thr);
     }
 
+    thr->timer(Timer::PAIR);
     reduce_thr(this, eflag, vflag, thr);
   } // end of omp parallel region
 }
@@ -112,7 +114,7 @@ void PairPeriLPSOMP::eval(int iifrom, int iito, ThrData * const thr)
   double *s0 = atom->s0;
   double **x0 = atom->x0;
   double **r0   = ((FixPeriNeigh *) modify->fix[ifix_peri])->r0;
-  int **partner = ((FixPeriNeigh *) modify->fix[ifix_peri])->partner;
+  tagint **partner = ((FixPeriNeigh *) modify->fix[ifix_peri])->partner;
   int *npartner = ((FixPeriNeigh *) modify->fix[ifix_peri])->npartner;
   double *wvolume = ((FixPeriNeigh *) modify->fix[ifix_peri])->wvolume;
 
@@ -308,12 +310,14 @@ void PairPeriLPSOMP::eval(int iifrom, int iito, ThrData * const thr)
 
       omega_plus  = influence_function(-1.0*delx0,-1.0*dely0,-1.0*delz0);
       omega_minus = influence_function(delx0,dely0,delz0);
-      rk = ( (3.0 * bulkmodulus[itype][itype]) -
-             (5.0 * shearmodulus[itype][itype]) ) * vfrac[j] * vfrac_scale *
-        ( (omega_plus * theta[i] / wvolume[i]) +
-          ( omega_minus * theta[j] / wvolume[j] ) ) * r0[i][jj];
-      rk +=  15.0 * ( shearmodulus[itype][itype] * vfrac[j] * vfrac_scale ) *
-        ( (omega_plus / wvolume[i]) + (omega_minus / wvolume[j]) ) * dr;
+      if ((wvolume[i] > 0.0) && (wvolume[j] > 0.0)) {
+        rk = ( (3.0 * bulkmodulus[itype][itype]) -
+               (5.0 * shearmodulus[itype][itype]) ) * vfrac[j] * vfrac_scale *
+          ( (omega_plus * theta[i] / wvolume[i]) +
+            ( omega_minus * theta[j] / wvolume[j] ) ) * r0[i][jj];
+        rk +=  15.0 * ( shearmodulus[itype][itype] * vfrac[j] * vfrac_scale ) *
+          ( (omega_plus / wvolume[i]) + (omega_minus / wvolume[j]) ) * dr;
+      } else rk = 0.0;
 
       if (r > 0.0) fbond = -(rk/r);
       else fbond = 0.0;
@@ -325,9 +329,11 @@ void PairPeriLPSOMP::eval(int iifrom, int iito, ThrData * const thr)
       // since I-J is double counted, set newton off & use 1/2 factor and I,I
 
       double deviatoric_extension = dr - (theta[i]* r0[i][jj] / 3.0);
-      if (EFLAG) evdwl = 0.5 * 15 * (shearmodulus[itype][itype]/wvolume[i]) *
+      if (EFLAG && (wvolume[i] > 0.0))
+        evdwl = 0.5 * 15 * (shearmodulus[itype][itype]/wvolume[i]) *
                    omega_plus*(deviatoric_extension * deviatoric_extension) *
                    vfrac[j] * vfrac_scale;
+      else evdwl = 0.0;
       if (EVFLAG) ev_tally_thr(this,i,i,nlocal,0,0.5*evdwl,0.0,
                                0.5*fbond*vfrac[i],delx,dely,delz,thr);
 
@@ -375,7 +381,7 @@ void PairPeriLPSOMP::compute_dilatation_thr(int ifrom, int ito)
   double half_lc = 0.5*lc;
 
   double **r0   = ((FixPeriNeigh *) modify->fix[ifix_peri])->r0;
-  int **partner = ((FixPeriNeigh *) modify->fix[ifix_peri])->partner;
+  tagint **partner = ((FixPeriNeigh *) modify->fix[ifix_peri])->partner;
   int *npartner = ((FixPeriNeigh *) modify->fix[ifix_peri])->npartner;
   double *wvolume = ((FixPeriNeigh *) modify->fix[ifix_peri])->wvolume;
 

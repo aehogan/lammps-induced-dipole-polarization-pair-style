@@ -30,18 +30,47 @@ class KSpace : protected Pointers {
   friend class ThrOMP;
   friend class FixOMP;
  public:
-  double energy;                  // accumulated energy
+  double energy;                 // accumulated energies
   double energy_1,energy_6;
-  double virial[6];               // accumlated virial
-  double *eatom,**vatom;          // accumulated per-atom energy/virial
-  double e2group;                 // accumulated group-group energy
-  double f2group[3];              // accumulated group-group force
+  double virial[6];              // accumulated virial
+  double *eatom,**vatom;         // accumulated per-atom energy/virial
+  double e2group;                // accumulated group-group energy
+  double f2group[3];             // accumulated group-group force
+  int triclinic_support;         // 1 if supports triclinic geometries
 
   int ewaldflag;                 // 1 if a Ewald solver
   int pppmflag;                  // 1 if a PPPM solver
   int msmflag;                   // 1 if a MSM solver
   int dispersionflag;            // 1 if a LJ/dispersion solver
   int tip4pflag;                 // 1 if a TIP4P solver
+  int dipoleflag;                // 1 if a dipole solver
+  int differentiation_flag;
+  int neighrequest_flag;         // used to avoid obsolete construction
+                                 // of neighbor lists
+  int mixflag;                   // 1 if geometric mixing rules are enforced
+                                 // for LJ coefficients
+  int slabflag;
+  int scalar_pressure_flag;      // 1 if using MSM fast scalar pressure
+  double slab_volfactor;
+
+  int warn_nonneutral;           // 0 = error if non-neutral system
+                                 // 1 = warn once if non-neutral system
+                                 // 2 = warn, but already warned
+  int warn_nocharge;             // 0 = already warned
+                                 // 1 = warn if zero charge
+
+  int order,order_6,order_allocated;
+  double accuracy;                  // accuracy of KSpace solver (force units)
+  double accuracy_absolute;         // user-specified accuracy in force units
+  double accuracy_relative;         // user-specified dimensionless accuracy
+                                    // accurary = acc_rel * two_charge_force
+  double accuracy_real_6;           // real space accuracy for
+                                    // dispersion solver (force units)
+  double accuracy_kspace_6;         // reciprocal space accuracy for
+                                    // dispersion solver (force units)
+  int auto_disp_flag;           // use automatic parameter generation for pppm/disp
+  double two_charge_force;          // force in user units of two point
+                                    // charges separated by 1 Angstrom
 
   double g_ewald,g_ewald_6;
   int nx_pppm,ny_pppm,nz_pppm;           // global FFT grid for Coulombics
@@ -50,16 +79,36 @@ class KSpace : protected Pointers {
 
   int group_group_enable;         // 1 if style supports group/group calculation
 
-  unsigned int datamask;
-  unsigned int datamask_ext;
+  // KOKKOS host/device flag and data masks
+
+  ExecutionSpace execution_space;
+  unsigned int datamask_read,datamask_modify;
+  int copymode;
 
   int compute_flag;               // 0 if skip compute()
+  int fftbench;                   // 0 if skip FFT timing
+  int collective_flag;            // 1 if use MPI collectives for FFT/remap
+  int stagger_flag;               // 1 if using staggered PPPM grids
+
+  double splittol;                // tolerance for when to truncate splitting
 
   KSpace(class LAMMPS *, int, char **);
   virtual ~KSpace();
+  void triclinic_check();
   void modify_params(int, char **);
   void *extract(const char *);
   void compute_dummy(int, int);
+
+  // triclinic
+
+  void x2lamdaT(double *, double *);
+  void lamda2xT(double *, double *);
+  void lamda2xvector(double *, double *);
+  void kspacebbox(double, double *);
+
+  // public so can be called by commands that change charge
+
+  void qsum_qsq();
 
   // general child-class methods
 
@@ -84,19 +133,19 @@ class KSpace : protected Pointers {
    see Eq 4 from Parallel Computing 35 (2009) 164177
 ------------------------------------------------------------------------- */
 
-  double gamma(const double &rho) const {
+  double gamma(const double &rho) const
+  {
     if (rho <= 1.0) {
       const int split_order = order/2;
       const double rho2 = rho*rho;
       double g = gcons[split_order][0];
       double rho_n = rho2;
-      for (int n=1; n<=split_order; n++) {
+      for (int n = 1; n <= split_order; n++) {
         g += gcons[split_order][n]*rho_n;
         rho_n *= rho2;
       }
       return g;
-    } else
-      return (1.0/rho);
+    } else return (1.0/rho);
   }
 
 /* ----------------------------------------------------------------------
@@ -104,48 +153,45 @@ class KSpace : protected Pointers {
    see Eq 4 from Parallel Computing 35 (2009) 164-177
 ------------------------------------------------------------------------- */
 
-  double dgamma(const double &rho) const {
+  double dgamma(const double &rho) const
+  {
     if (rho <= 1.0) {
       const int split_order = order/2;
       const double rho2 = rho*rho;
       double dg = dgcons[split_order][0]*rho;
       double rho_n = rho*rho2;
-      for (int n=1; n<split_order; n++) {
+      for (int n = 1; n < split_order; n++) {
         dg += dgcons[split_order][n]*rho_n;
         rho_n *= rho2;
       }
       return dg;
-    } else
-      return (-1.0/rho/rho);
+    } else return (-1.0/rho/rho);
   }
+
+  double **get_gcons() { return gcons; }
+  double **get_dgcons() { return dgcons; }
 
  protected:
   int gridflag,gridflag_6;
   int gewaldflag,gewaldflag_6;
-  int order,order_6;
   int minorder,overlap_allowed;
-  int differentiation_flag;
-  int slabflag;
   int adjust_cutoff_flag;
   int suffix_flag;                  // suffix compatibility flag
-  double scale;
-  double slab_volfactor;
+  bigint natoms_original;
+  double scale,qqrd2e;
+  double qsum,qsqsum,q2;
   double **gcons,**dgcons;          // accumulated per-atom energy/virial
-
-  double accuracy;                  // accuracy of KSpace solver (force units)
-  double accuracy_absolute;         // user-specifed accuracy in force units
-  double accuracy_relative;         // user-specified dimensionless accuracy
-                                    // accurary = acc_rel * two_charge_force
-  double two_charge_force;          // force in user units of two point
-                                    // charges separated by 1 Angstrom
 
   int evflag,evflag_atom;
   int eflag_either,eflag_global,eflag_atom;
   int vflag_either,vflag_global,vflag_atom;
   int maxeatom,maxvatom;
 
+  int kewaldflag;                   // 1 if kspace range set for Ewald sum
+  int kx_ewald,ky_ewald,kz_ewald;   // kspace settings for Ewald sum
+
   void pair_check();
-  void ev_setup(int, int);
+  void ev_setup(int, int, int alloc = 1);
   double estimate_table_accuracy(double, double);
 };
 
@@ -154,6 +200,39 @@ class KSpace : protected Pointers {
 #endif
 
 /* ERROR/WARNING messages:
+
+E: KSpace style does not yet support triclinic geometries
+
+The specified kspace style does not allow for non-orthogonal
+simulation boxes.
+
+E: KSpace solver requires a pair style
+
+No pair style is defined.
+
+E: KSpace style is incompatible with Pair style
+
+Setting a kspace style requires that a pair style with matching
+long-range Coulombic or dispersion components be used.
+
+W: Using kspace solver on system with no charge
+
+Self-explanatory.
+
+E: System is not charge neutral, net charge = %g
+
+The total charge on all atoms on the system is not 0.0.
+For some KSpace solvers this is an error.
+
+W: System is not charge neutral, net charge = %g
+
+The total charge on all atoms on the system is not 0.0.
+For some KSpace solvers this is only a warning.
+
+W: For better accuracy use 'pair_modify table 0'
+
+The user-specified force accuracy cannot be achieved unless the table
+feature is disabled by using 'pair_modify table 0'.
 
 E: Illegal ... command
 
@@ -170,9 +249,12 @@ W: Kspace_modify slab param < 2.0 may cause unphysical behavior
 The kspace_modify slab parameter should be larger to insure periodic
 grids padded with empty space do not overlap.
 
-W: For better accuracy use 'pair_modify table 0'
+E: Bad kspace_modify kmax/ewald parameter
 
-The user-specified force accuracy cannot be achieved unless the table
-feature is disabled by using 'pair_modify table 0'.
+Kspace_modify values for the kmax/ewald keyword must be integers > 0
+
+E: Kspace_modify eigtol must be smaller than one
+
+Self-explanatory.
 
 */

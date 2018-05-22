@@ -5,7 +5,7 @@
 
    Copyright (2003) Sandia Corporation.  Under the terms of Contract
    DE-AC04-94AL85000 with Sandia Corporation, the U.S. Government retains
-   certain rights in this software.  This software is distributed under 
+   certain rights in this software.  This software is distributed under
    the GNU General Public License.
 
    See the README file in the top-level LAMMPS directory.
@@ -16,8 +16,8 @@
    [ based on angle_harmonic.cpp]
 ------------------------------------------------------------------------- */
 
-#include "math.h"
-#include "stdlib.h"
+#include <math.h>
+#include <stdlib.h>
 #include "angle_quartic.h"
 #include "atom.h"
 #include "neighbor.h"
@@ -112,14 +112,15 @@ void AngleQuartic::compute(int eflag, int vflag)
     dtheta = acos(c) - theta0[type];
     dtheta2 = dtheta * dtheta;
     dtheta3 = dtheta2 * dtheta;
-    tk =  2.0 * k2[type] * dtheta + 3.0 * k3[type] * dtheta2 + 4.0 * k4[type] * dtheta3;
+    tk =  2.0 * k2[type] * dtheta + 3.0 * k3[type] * dtheta2 +
+      4.0 * k4[type] * dtheta3;
 
     if (eflag) {
       dtheta4 = dtheta3 * dtheta;
       eangle = k2[type] * dtheta2 + k3[type] * dtheta3 + k4[type] * dtheta4;
     }
 
-    a = -2.0 * tk * s;
+    a = -tk * s;
     a11 = a*c / rsq1;
     a12 = -a / (r1*r2);
     a22 = a*c / rsq2;
@@ -152,7 +153,7 @@ void AngleQuartic::compute(int eflag, int vflag)
     }
 
     if (evflag) ev_tally(i1,i2,i3,nlocal,newton_bond,eangle,f1,f3,
-			 delx1,dely1,delz1,delx2,dely2,delz2);
+                         delx1,dely1,delz1,delx2,dely2,delz2);
   }
 }
 
@@ -182,12 +183,12 @@ void AngleQuartic::coeff(int narg, char **arg)
   if (!allocated) allocate();
 
   int ilo,ihi;
-  force->bounds(arg[0],atom->nangletypes,ilo,ihi);
+  force->bounds(FLERR,arg[0],atom->nangletypes,ilo,ihi);
 
-  double theta0_one = force->numeric(arg[1]);
-  double k2_one = force->numeric(arg[2]);
-  double k3_one = force->numeric(arg[3]);
-  double k4_one = force->numeric(arg[4]);
+  double theta0_one = force->numeric(FLERR,arg[1]);
+  double k2_one = force->numeric(FLERR,arg[2]);
+  double k3_one = force->numeric(FLERR,arg[3]);
+  double k4_one = force->numeric(FLERR,arg[4]);
 
   // convert theta0 from degrees to radians
 
@@ -224,7 +225,7 @@ void AngleQuartic::write_restart(FILE *fp)
 }
 
 /* ----------------------------------------------------------------------
-   proc 0 reads coeffs from restart file, bcasts them 
+   proc 0 reads coeffs from restart file, bcasts them
 ------------------------------------------------------------------------- */
 
 void AngleQuartic::read_restart(FILE *fp)
@@ -243,6 +244,16 @@ void AngleQuartic::read_restart(FILE *fp)
   MPI_Bcast(&theta0[1],atom->nangletypes,MPI_DOUBLE,0,world);
 
   for (int i = 1; i <= atom->nangletypes; i++) setflag[i] = 1;
+}
+
+/* ----------------------------------------------------------------------
+   proc 0 writes to data file
+------------------------------------------------------------------------- */
+
+void AngleQuartic::write_data(FILE *fp)
+{
+  for (int i = 1; i <= atom->nangletypes; i++)
+    fprintf(fp,"%d %g %g %g %g\n",i,theta0[i]/MY_PI*180.0,k2[i],k3[i],k4[i]);
 }
 
 /* ---------------------------------------------------------------------- */
@@ -272,6 +283,5 @@ double AngleQuartic::single(int type, int i1, int i2, int i3)
   double dtheta2 = dtheta * dtheta;
   double dtheta3 = dtheta2 * dtheta;
   double dtheta4 = dtheta3 * dtheta;
-  double tk = 2.0 * k2[type] * dtheta + 3.0 * k3[type] * dtheta2 + 4.0 * k4[type] * dtheta3;
   return k2[type] * dtheta2 + k3[type] * dtheta3 + k4[type] * dtheta4;
 }

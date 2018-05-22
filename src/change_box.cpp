@@ -11,11 +11,10 @@
    See the README file in the top-level LAMMPS directory.
 ------------------------------------------------------------------------- */
 
-#include "lmptype.h"
-#include "mpi.h"
-#include "math.h"
-#include "stdlib.h"
-#include "string.h"
+#include <mpi.h>
+#include <math.h>
+#include <stdlib.h>
+#include <string.h>
 #include "change_box.h"
 #include "atom.h"
 #include "modify.h"
@@ -27,12 +26,13 @@
 #include "output.h"
 #include "group.h"
 #include "error.h"
+#include "force.h"
 
 using namespace LAMMPS_NS;
 
-enum{XYZ,TILT,BOUNDARY,ORTHO,TRICLINIC,SET,REMAP};
-enum{FINAL,DELTA,SCALE};
-enum{X,Y,Z,YZ,XZ,XY};
+enum{XYZ=0,TILT,BOUNDARY,ORTHO,TRICLINIC,SET,REMAP};
+enum{FINAL=0,DELTA,SCALE};
+enum{X=0,Y,Z,YZ,XZ,XY};
 
 /* ---------------------------------------------------------------------- */
 
@@ -66,9 +66,9 @@ void ChangeBox::command(int narg, char **arg)
   int dimension = domain->dimension;
 
   ops = new Operation[narg-1];
+  memset(ops,0,(narg-1)*sizeof(Operation));
   nops = 0;
 
-  int index;
   int iarg = 1;
   while (iarg < narg) {
     if (strcmp(arg[iarg],"x") == 0 || strcmp(arg[iarg],"y") == 0 ||
@@ -85,23 +85,23 @@ void ChangeBox::command(int narg, char **arg)
       if (strcmp(arg[iarg+1],"final") == 0) {
         if (iarg+4 > narg) error->all(FLERR,"Illegal change_box command");
         ops[nops].flavor = FINAL;
-        ops[nops].flo = atof(arg[iarg+2]);
-        ops[nops].fhi = atof(arg[iarg+3]);
+        ops[nops].flo = force->numeric(FLERR,arg[iarg+2]);
+        ops[nops].fhi = force->numeric(FLERR,arg[iarg+3]);
         ops[nops].vdim1 = ops[nops].vdim2 = -1;
         nops++;
         iarg += 4;
       } else if (strcmp(arg[iarg+1],"delta") == 0) {
         if (iarg+4 > narg) error->all(FLERR,"Illegal change_box command");
         ops[nops].flavor = DELTA;
-        ops[nops].dlo = atof(arg[iarg+2]);
-        ops[nops].dhi = atof(arg[iarg+3]);
+        ops[nops].dlo = force->numeric(FLERR,arg[iarg+2]);
+        ops[nops].dhi = force->numeric(FLERR,arg[iarg+3]);
         ops[nops].vdim1 = ops[nops].vdim2 = -1;
         nops++;
         iarg += 4;
       } else if (strcmp(arg[iarg+1],"scale") == 0) {
         if (iarg+3 > narg) error->all(FLERR,"Illegal change_box command");
         ops[nops].flavor = SCALE;
-        ops[nops].scale = atof(arg[iarg+2]);
+        ops[nops].scale = force->numeric(FLERR,arg[iarg+2]);
         ops[nops].vdim1 = ops[nops].vdim2 = -1;
         nops++;
         iarg += 3;
@@ -131,13 +131,13 @@ void ChangeBox::command(int narg, char **arg)
       if (strcmp(arg[iarg+1],"final") == 0) {
         if (iarg+3 > narg) error->all(FLERR,"Illegal change_box command");
         ops[nops].flavor = FINAL;
-        ops[nops].ftilt = atof(arg[iarg+2]);
+        ops[nops].ftilt = force->numeric(FLERR,arg[iarg+2]);
         nops++;
         iarg += 3;
       } else if (strcmp(arg[iarg+1],"delta") == 0) {
         if (iarg+3 > narg) error->all(FLERR,"Illegal change_box command");
         ops[nops].flavor = DELTA;
-        ops[nops].dtilt = atof(arg[iarg+2]);
+        ops[nops].dtilt = force->numeric(FLERR,arg[iarg+2]);
         nops++;
         iarg += 3;
       } else error->all(FLERR,"Illegal change_box command");
@@ -184,9 +184,6 @@ void ChangeBox::command(int narg, char **arg)
   int flag = 0;
   for (int i = 0; i < nops; i++)
     if (ops[i].style == FINAL || ops[i].style == DELTA) flag = 1;
-
-  if (flag && scaleflag && domain->lattice == NULL)
-    error->all(FLERR,"Use of change_box with undefined lattice");
 
   if (flag && scaleflag) {
     scale[0] = domain->lattice->xlattice;
@@ -319,6 +316,9 @@ void ChangeBox::command(int narg, char **arg)
 
     } else if (ops[m].style == REMAP) {
 
+      if (modify->check_rigid_group_overlap(groupbit))
+        error->warning(FLERR,"Attempting to remap atoms in rigid bodies");
+
       // convert atoms to lamda coords, using last box state
       // convert atoms back to box coords, using current box state
       // save current box state
@@ -345,7 +345,11 @@ void ChangeBox::command(int narg, char **arg)
 
   // apply shrink-wrap boundary conditions
 
-  if (domain->nonperiodic == 2) domain->reset_box();
+  if (domain->nonperiodic == 2) {
+    if (domain->triclinic) domain->x2lamda(atom->nlocal);
+    domain->reset_box();
+    if (domain->triclinic) domain->lamda2x(atom->nlocal);
+  }
 
   // move atoms back inside simulation box and to new processors
   // use remap() instead of pbc()
@@ -353,14 +357,14 @@ void ChangeBox::command(int narg, char **arg)
   // use irregular() in case box moved a long distance relative to atoms
 
   double **x = atom->x;
-  tagint *image = atom->image;
+  imageint *image = atom->image;
   int nlocal = atom->nlocal;
   for (i = 0; i < nlocal; i++) domain->remap(x[i],image[i]);
 
   if (domain->triclinic) domain->x2lamda(atom->nlocal);
   domain->reset_box();
   Irregular *irregular = new Irregular(lmp);
-  irregular->migrate_atoms();
+  irregular->migrate_atoms(1);
   delete irregular;
   if (domain->triclinic) domain->lamda2x(atom->nlocal);
 

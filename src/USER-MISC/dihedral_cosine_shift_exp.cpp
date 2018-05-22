@@ -15,10 +15,9 @@
    Contributing author: Carsten Svaneborg, science@zqex.dk
 ------------------------------------------------------------------------- */
 
-#include "lmptype.h"
-#include "mpi.h"
-#include "math.h"
-#include "stdlib.h"
+#include <mpi.h>
+#include <math.h>
+#include <stdlib.h>
 #include "dihedral_cosine_shift_exp.h"
 #include "atom.h"
 #include "comm.h"
@@ -58,13 +57,13 @@ DihedralCosineShiftExp::~DihedralCosineShiftExp()
 
 void DihedralCosineShiftExp::compute(int eflag, int vflag)
 {
-  int i1,i2,i3,i4,i,m,n,type;
+  int i1,i2,i3,i4,n,type;
   double vb1x,vb1y,vb1z,vb2x,vb2y,vb2z,vb3x,vb3y,vb3z,vb2xm,vb2ym,vb2zm;
   double edihedral,f1[3],f2[3],f3[3],f4[3];
   double ax,ay,az,bx,by,bz,rasq,rbsq,rgsq,rg,rginv,ra2inv,rb2inv,rabinv;
-  double df,df1,ddf1,fg,hg,fga,hgb,gaa,gbb;
+  double df,fg,hg,fga,hgb,gaa,gbb;
   double dtfx,dtfy,dtfz,dtgx,dtgy,dtgz,dthx,dthy,dthz;
-  double c,s,p,sx2,sy2,sz2;
+  double c,s,sx2,sy2,sz2;
   double cccpsss,cssmscc,exp2;
 
   edihedral = 0.0;
@@ -137,7 +136,9 @@ void DihedralCosineShiftExp::compute(int eflag, int vflag)
       MPI_Comm_rank(world,&me);
       if (screen) {
         char str[128];
-        sprintf(str,"Dihedral problem: %d " BIGINT_FORMAT " %d %d %d %d",
+        sprintf(str,"Dihedral problem: %d " BIGINT_FORMAT " "
+                TAGINT_FORMAT " " TAGINT_FORMAT " "
+                TAGINT_FORMAT " " TAGINT_FORMAT,
                 me,update->ntimestep,
                 atom->tag[i1],atom->tag[i2],atom->tag[i3],atom->tag[i4]);
         error->warning(FLERR,str,0);
@@ -273,11 +274,11 @@ void DihedralCosineShiftExp::coeff(int narg, char **arg)
   if (!allocated) allocate();
 
   int ilo,ihi;
-  force->bounds(arg[0],atom->ndihedraltypes,ilo,ihi);
+  force->bounds(FLERR,arg[0],atom->ndihedraltypes,ilo,ihi);
 
-  double umin_   = force->numeric(arg[1]);
-  double theta0_ = force->numeric(arg[2]);
-  double a_      = force->numeric(arg[3]);
+  double umin_   = force->numeric(FLERR,arg[1]);
+  double theta0_ = force->numeric(FLERR,arg[2]);
+  double a_      = force->numeric(FLERR,arg[3]);
 
   int count = 0;
   for (int i = ilo; i <= ihi; i++) {

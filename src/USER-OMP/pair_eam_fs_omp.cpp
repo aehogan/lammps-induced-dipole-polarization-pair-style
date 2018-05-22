@@ -15,12 +15,13 @@
    Contributing authors: Tim Lau (MIT)
 ------------------------------------------------------------------------- */
 
-#include "stdio.h"
-#include "stdlib.h"
-#include "string.h"
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
 #include "pair_eam_fs_omp.h"
 #include "atom.h"
 #include "comm.h"
+#include "force.h"
 #include "memory.h"
 #include "error.h"
 
@@ -97,9 +98,10 @@ void PairEAMFSOMP::coeff(int narg, char **arg)
     for (j = i; j <= n; j++) {
       if (map[i] >= 0 && map[j] >= 0) {
         setflag[i][j] = 1;
-        if (i == j) atom->set_mass(i,fs->mass[map[i]]);
+        if (i == j) atom->set_mass(FLERR,i,fs->mass[map[i]]);
         count++;
       }
+      scale[i][j] = 1.0;
     }
   }
 
@@ -121,7 +123,7 @@ void PairEAMFSOMP::read_file(char *filename)
   char line[MAXLINE];
 
   if (me == 0) {
-    fptr = fopen(filename,"r");
+    fptr = force->open_potential(filename);
     if (fptr == NULL) {
       char str[128];
       sprintf(str,"Cannot open EAM potential file %s",filename);
@@ -151,7 +153,7 @@ void PairEAMFSOMP::read_file(char *filename)
   char **words = new char*[file->nelements+1];
   nwords = 0;
   strtok(line," \t\n\r\f");
-  while (words[nwords++] = strtok(NULL," \t\n\r\f")) continue;
+  while ((words[nwords++] = strtok(NULL," \t\n\r\f"))) continue;
 
   file->elements = new char*[file->nelements];
   for (int i = 0; i < file->nelements; i++) {
@@ -224,6 +226,7 @@ void PairEAMFSOMP::file2array()
   nr = fs->nr;
   drho = fs->drho;
   dr = fs->dr;
+  rhomax = (nrho-1) * drho;
 
   // ------------------------------------------------------------------
   // setup frho arrays

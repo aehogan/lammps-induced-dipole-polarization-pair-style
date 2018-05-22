@@ -15,10 +15,10 @@
    Contributing author: Cassiano Aimoli (aimoli@gmail.com)
 ------------------------------------------------------------------------- */
 
-#include "math.h"
-#include "stdio.h"
-#include "stdlib.h"
-#include "string.h"
+#include <math.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
 #include "pair_mie_cut.h"
 #include "atom.h"
 #include "comm.h"
@@ -159,10 +159,10 @@ void PairMIECut::compute_inner()
   double *special_mie = force->special_lj;
   int newton_pair = force->newton_pair;
 
-  inum = listinner->inum;
-  ilist = listinner->ilist;
-  numneigh = listinner->numneigh;
-  firstneigh = listinner->firstneigh;
+  inum = list->inum_inner;
+  ilist = list->ilist_inner;
+  numneigh = list->numneigh_inner;
+  firstneigh = list->firstneigh_inner;
 
   double cut_out_on = cut_respa[0];
   double cut_out_off = cut_respa[1];
@@ -193,10 +193,10 @@ void PairMIECut::compute_inner()
       rsq = delx*delx + dely*dely + delz*delz;
 
       if (rsq < cut_out_off_sq) {
+        jtype = type[j];
         r2inv = 1.0/rsq;
         rgamA = pow(r2inv,(gamA[itype][jtype]/2.0));
         rgamR = pow(r2inv,(gamR[itype][jtype]/2.0));
-        jtype = type[j];
         forcemie =  (mie1[itype][jtype]*rgamR - mie2[itype][jtype]*rgamA);
         fpair = factor_mie*forcemie*r2inv;
         if (rsq > cut_out_on_sq) {
@@ -233,10 +233,10 @@ void PairMIECut::compute_middle()
   double *special_mie = force->special_lj;
   int newton_pair = force->newton_pair;
 
-  inum = listmiddle->inum;
-  ilist = listmiddle->ilist;
-  numneigh = listmiddle->numneigh;
-  firstneigh = listmiddle->firstneigh;
+  inum = list->inum_middle;
+  ilist = list->ilist_middle;
+  numneigh = list->numneigh_middle;
+  firstneigh = list->firstneigh_middle;
 
   double cut_in_off = cut_respa[0];
   double cut_in_on = cut_respa[1];
@@ -272,10 +272,10 @@ void PairMIECut::compute_middle()
       rsq = delx*delx + dely*dely + delz*delz;
 
       if (rsq < cut_out_off_sq && rsq > cut_in_off_sq) {
+        jtype = type[j];
         r2inv = 1.0/rsq;
         rgamA = pow(r2inv,(gamA[itype][jtype]/2.0));
         rgamR = pow(r2inv,(gamR[itype][jtype]/2.0));
-        jtype = type[j];
         forcemie =  (mie1[itype][jtype]*rgamR - mie2[itype][jtype]*rgamA);
         fpair = factor_mie*forcemie*r2inv;
         if (rsq < cut_in_on_sq) {
@@ -320,10 +320,10 @@ void PairMIECut::compute_outer(int eflag, int vflag)
   double *special_mie = force->special_lj;
   int newton_pair = force->newton_pair;
 
-  inum = listouter->inum;
-  ilist = listouter->ilist;
-  numneigh = listouter->numneigh;
-  firstneigh = listouter->firstneigh;
+  inum = list->inum;
+  ilist = list->ilist;
+  numneigh = list->numneigh;
+  firstneigh = list->firstneigh;
 
   double cut_in_off = cut_respa[2];
   double cut_in_on = cut_respa[3];
@@ -380,7 +380,7 @@ void PairMIECut::compute_outer(int eflag, int vflag)
           r2inv = 1.0/rsq;
         rgamA = pow(r2inv,(gamA[itype][jtype]/2.0));
         rgamR = pow(r2inv,(gamR[itype][jtype]/2.0));
-          evdwl = (mie3[itype][jtype]*rgamR - mie4[itype][jtype]*rgamA) - 
+          evdwl = (mie3[itype][jtype]*rgamR - mie4[itype][jtype]*rgamA) -
             offset[itype][jtype];
           evdwl *= factor_mie;
         }
@@ -440,14 +440,14 @@ void PairMIECut::settings(int narg, char **arg)
 {
   if (narg != 1) error->all(FLERR,"Illegal pair_style command");
 
-  cut_global = force->numeric(arg[0]);
+  cut_global = force->numeric(FLERR,arg[0]);
 
   // reset cutoffs that have been explicitly set
 
   if (allocated) {
     int i,j;
     for (i = 1; i <= atom->ntypes; i++)
-      for (j = i+1; j <= atom->ntypes; j++)
+      for (j = i; j <= atom->ntypes; j++)
         if (setflag[i][j]) cut[i][j] = cut_global;
   }
 }
@@ -463,16 +463,16 @@ void PairMIECut::coeff(int narg, char **arg)
   if (!allocated) allocate();
 
   int ilo,ihi,jlo,jhi;
-  force->bounds(arg[0],atom->ntypes,ilo,ihi);
-  force->bounds(arg[1],atom->ntypes,jlo,jhi);
+  force->bounds(FLERR,arg[0],atom->ntypes,ilo,ihi);
+  force->bounds(FLERR,arg[1],atom->ntypes,jlo,jhi);
 
-  double epsilon_one = force->numeric(arg[2]);
-  double sigma_one = force->numeric(arg[3]);
-  double gamR_one = force->numeric(arg[4]);
-  double gamA_one = force->numeric(arg[5]);
+  double epsilon_one = force->numeric(FLERR,arg[2]);
+  double sigma_one = force->numeric(FLERR,arg[3]);
+  double gamR_one = force->numeric(FLERR,arg[4]);
+  double gamA_one = force->numeric(FLERR,arg[5]);
 
   double cut_one = cut_global;
-  if (narg == 7) cut_one = force->numeric(arg[6]);
+  if (narg == 7) cut_one = force->numeric(FLERR,arg[6]);
 
   int count = 0;
   for (int i = ilo; i <= ihi; i++) {
@@ -496,41 +496,23 @@ void PairMIECut::coeff(int narg, char **arg)
 
 void PairMIECut::init_style()
 {
-  // request regular or rRESPA neighbor lists
+  // request regular or rRESPA neighbor list
 
   int irequest;
+  int respa = 0;
 
   if (update->whichflag == 1 && strstr(update->integrate_style,"respa")) {
-    int respa = 0;
     if (((Respa *) update->integrate)->level_inner >= 0) respa = 1;
     if (((Respa *) update->integrate)->level_middle >= 0) respa = 2;
+  }
 
-    if (respa == 0) irequest = neighbor->request(this);
-    else if (respa == 1) {
-      irequest = neighbor->request(this);
-      neighbor->requests[irequest]->id = 1;
-      neighbor->requests[irequest]->half = 0;
-      neighbor->requests[irequest]->respainner = 1;
-      irequest = neighbor->request(this);
-      neighbor->requests[irequest]->id = 3;
-      neighbor->requests[irequest]->half = 0;
-      neighbor->requests[irequest]->respaouter = 1;
-    } else {
-      irequest = neighbor->request(this);
-      neighbor->requests[irequest]->id = 1;
-      neighbor->requests[irequest]->half = 0;
-      neighbor->requests[irequest]->respainner = 1;
-      irequest = neighbor->request(this);
-      neighbor->requests[irequest]->id = 2;
-      neighbor->requests[irequest]->half = 0;
-      neighbor->requests[irequest]->respamiddle = 1;
-      irequest = neighbor->request(this);
-      neighbor->requests[irequest]->id = 3;
-      neighbor->requests[irequest]->half = 0;
-      neighbor->requests[irequest]->respaouter = 1;
-    }
+  irequest = neighbor->request(this,instance_me);
 
-  } else irequest = neighbor->request(this);
+  if (respa >= 1) {
+    neighbor->requests[irequest]->respaouter = 1;
+    neighbor->requests[irequest]->respainner = 1;
+  }
+  if (respa == 2) neighbor->requests[irequest]->respamiddle = 1;
 
   // set rRESPA cutoffs
 
@@ -538,19 +520,6 @@ void PairMIECut::init_style()
       ((Respa *) update->integrate)->level_inner >= 0)
     cut_respa = ((Respa *) update->integrate)->cutoff;
   else cut_respa = NULL;
-}
-
-/* ----------------------------------------------------------------------
-   neighbor callback to inform pair style of neighbor list to use
-   regular or rRESPA
-------------------------------------------------------------------------- */
-
-void PairMIECut::init_list(int id, NeighList *ptr)
-{
-  if (id == 0) list = ptr;
-  else if (id == 1) listinner = ptr;
-  else if (id == 2) listmiddle = ptr;
-  else if (id == 3) listouter = ptr;
 }
 
 /* ----------------------------------------------------------------------
@@ -567,22 +536,22 @@ double PairMIECut::init_one(int i, int j)
     gamA[i][j] = mix_distance(gamA[i][i],gamA[j][j]);
     cut[i][j] = mix_distance(cut[i][i],cut[j][j]);
   }
-  
+
   gamA[j][i] = gamA[i][j];
   gamR[j][i] = gamR[i][j];
-  Cmie[i][j] = (gamR[i][j]/(gamR[i][j]-gamA[i][j]) * 
+  Cmie[i][j] = (gamR[i][j]/(gamR[i][j]-gamA[i][j]) *
                 pow((gamR[i][j]/gamA[i][j]),
                     (gamA[i][j]/(gamR[i][j]-gamA[i][j]))));
-  mie1[i][j] = Cmie[i][j] * gamR[i][j]* epsilon[i][j] * 
+  mie1[i][j] = Cmie[i][j] * gamR[i][j]* epsilon[i][j] *
     pow(sigma[i][j],gamR[i][j]);
-  mie2[i][j] = Cmie[i][j] * gamA[i][j] * epsilon[i][j] * 
+  mie2[i][j] = Cmie[i][j] * gamA[i][j] * epsilon[i][j] *
     pow(sigma[i][j],gamA[i][j]);
   mie3[i][j] = Cmie[i][j] * epsilon[i][j] * pow(sigma[i][j],gamR[i][j]);
   mie4[i][j] = Cmie[i][j] * epsilon[i][j] * pow(sigma[i][j],gamA[i][j]);
 
-  if (offset_flag) {
+  if (offset_flag && (cut[i][j] > 0.0)) {
     double ratio = sigma[i][j] / cut[i][j];
-    offset[i][j] = Cmie[i][j] * epsilon[i][j] * 
+    offset[i][j] = Cmie[i][j] * epsilon[i][j] *
       (pow(ratio,gamR[i][j]) - pow(ratio,gamA[i][j]));
   } else offset[i][j] = 0.0;
 

@@ -9,7 +9,7 @@
     This file is part of the LAMMPS Accelerator Library (LAMMPS_AL)
  __________________________________________________________________________
 
-    begin                : 
+    begin                :
     email                : brownw@ornl.gov
  ***************************************************************************/
 
@@ -45,9 +45,10 @@ DeviceT::~Device() {
 
 template <class numtyp, class acctyp>
 int DeviceT::init_device(MPI_Comm world, MPI_Comm replica, const int first_gpu,
-                         const int last_gpu, const int gpu_mode, 
-                         const double p_split, const int nthreads, 
-                         const int t_per_atom, const double cell_size) {
+                         const int last_gpu, const int gpu_mode,
+                         const double p_split, const int nthreads,
+                         const int t_per_atom, const double cell_size,
+                         char *ocl_vendor, const int block_pair) {
   _nthreads=nthreads;
   #ifdef _OPENMP
   omp_set_num_threads(nthreads);
@@ -65,6 +66,7 @@ int DeviceT::init_device(MPI_Comm world, MPI_Comm replica, const int first_gpu,
   _gpu_mode=gpu_mode;
   _particle_split=p_split;
   _cell_size=cell_size;
+  _block_pair=block_pair;
 
   // Get the rank/size within the world
   MPI_Comm_rank(_comm_world,&_world_me);
@@ -81,8 +83,8 @@ int DeviceT::init_device(MPI_Comm world, MPI_Comm replica, const int first_gpu,
   MPI_Allgather(&node_name,MPI_MAX_PROCESSOR_NAME,MPI_CHAR,&node_names,
                 MPI_MAX_PROCESSOR_NAME,MPI_CHAR,_comm_world);
   std::string node_string=std::string(node_name);
-  
-  // Get the number of procs per node                
+
+  // Get the number of procs per node
   std::map<std::string,int> name_map;
   std::map<std::string,int>::iterator np;
   for (int i=0; i<_world_size; i++) {
@@ -102,12 +104,12 @@ int DeviceT::init_device(MPI_Comm world, MPI_Comm replica, const int first_gpu,
       split_id=split_num;
     split_num++;
   }
-  
+
   // Set up a per node communicator and find rank within
   MPI_Comm node_comm;
-  MPI_Comm_split(_comm_world, split_id, 0, &node_comm);  
+  MPI_Comm_split(_comm_world, split_id, 0, &node_comm);
   int node_rank;
-  MPI_Comm_rank(node_comm,&node_rank);                  
+  MPI_Comm_rank(node_comm,&node_rank);
 
   // set the device ID
   _procs_per_gpu=static_cast<int>(ceil(static_cast<double>(procs_per_node)/
@@ -118,7 +120,7 @@ int DeviceT::init_device(MPI_Comm world, MPI_Comm replica, const int first_gpu,
   _time_device=true;
   if (_procs_per_gpu>1)
     _time_device=false;
-  
+
   // Set up a per device communicator
   MPI_Comm_split(node_comm,my_gpu,0,&_comm_gpu);
   MPI_Comm_rank(_comm_gpu,&_gpu_rank);
@@ -126,12 +128,12 @@ int DeviceT::init_device(MPI_Comm world, MPI_Comm replica, const int first_gpu,
   gpu=new UCL_Device();
   if (my_gpu>=gpu->num_devices())
     return -2;
-    
+
   #ifndef CUDA_PROXY
   if (_procs_per_gpu>1 && gpu->sharing_supported(my_gpu)==false)
     return -7;
   #endif
-  
+
   if (gpu->set(my_gpu)!=UCL_SUCCESS)
     return -6;
 
@@ -139,6 +141,9 @@ int DeviceT::init_device(MPI_Comm world, MPI_Comm replica, const int first_gpu,
   gpu->set_command_queue(1);
 
   _long_range_precompute=0;
+
+  if (set_ocl_params(ocl_vendor)!=0)
+    return -11;
 
   int flag=0;
   for (int i=0; i<_procs_per_gpu; i++) {
@@ -150,13 +155,77 @@ int DeviceT::init_device(MPI_Comm world, MPI_Comm replica, const int first_gpu,
 }
 
 template <class numtyp, class acctyp>
+int DeviceT::set_ocl_params(char *ocl_vendor) {
+  #ifdef USE_OPENCL
+  std::string s_vendor=OCL_DEFAULT_VENDOR;
+  if (ocl_vendor!=NULL)
+    s_vendor=ocl_vendor;
+  if (s_vendor=="none")
+    s_vendor="generic";
+
+  if (s_vendor=="kepler") {
+    _ocl_vendor_name="NVIDIA Kepler";
+    #if defined (__APPLE__) || defined(MACOSX)
+    _ocl_vendor_string="-DKEPLER_OCL -DNO_OCL_PTX";
+    #else
+    _ocl_vendor_string="-DKEPLER_OCL";
+    #endif
+  } else if (s_vendor=="fermi") {
+    _ocl_vendor_name="NVIDIA Fermi";
+    _ocl_vendor_string="-DFERMI_OCL";
+  } else if (s_vendor=="cypress") {
+    _ocl_vendor_name="AMD Cypress";
+    _ocl_vendor_string="-DCYPRESS_OCL";
+  } else if (s_vendor=="phi") {
+    _ocl_vendor_name="Intel Phi";
+    _ocl_vendor_string="-DPHI_OCL";
+  } else if (s_vendor=="intel") {
+    _ocl_vendor_name="Intel CPU";
+    _ocl_vendor_string="-DINTEL_OCL";
+  } else if (s_vendor=="generic") {
+    _ocl_vendor_name="GENERIC";
+    _ocl_vendor_string="-DGENERIC_OCL";
+  } else {
+    _ocl_vendor_name="CUSTOM";
+    _ocl_vendor_string="-DUSE_OPENCL";
+    int token_count=0;
+    std::string params[13];
+    char *pch = strtok(ocl_vendor,"\" ");
+    while (pch != NULL) {
+      if (token_count==13)
+        return -11;
+      params[token_count]=pch;
+      token_count++;
+      pch = strtok(NULL,"\" ");
+    }
+    _ocl_vendor_string+=" -DMEM_THREADS="+params[0]+
+                        " -DTHREADS_PER_ATOM="+params[1]+
+                        " -DTHREADS_PER_CHARGE="+params[2]+
+                        " -DBLOCK_PAIR="+params[3]+
+                        " -DMAX_SHARED_TYPES="+params[4]+
+                        " -DBLOCK_NBOR_BUILD="+params[5]+
+                        " -DBLOCK_BIO_PAIR="+params[6]+
+                        " -DBLOCK_ELLIPSE="+params[7]+
+                        " -DWARP_SIZE="+params[8]+
+                        " -DPPPM_BLOCK_1D="+params[9]+
+                        " -DBLOCK_CELL_2D="+params[10]+
+                        " -DBLOCK_CELL_ID="+params[11]+
+                        " -DMAX_BIO_SHARED_TYPES="+params[12];
+  }
+  _ocl_compile_string="-cl-fast-relaxed-math -cl-mad-enable "+std::string(OCL_INT_TYPE)+" "+
+                      std::string(OCL_PRECISION_COMPILE)+" "+_ocl_vendor_string;
+  #endif
+  return 0;
+}
+
+template <class numtyp, class acctyp>
 int DeviceT::init(Answer<numtyp,acctyp> &ans, const bool charge,
-                         const bool rot, const int nlocal, 
-                         const int host_nlocal, const int nall,
-                         Neighbor *nbor, const int maxspecial,
-                         const int gpu_host, const int max_nbors, 
-                         const double cell_size, const bool pre_cut,
-                         const int threads_per_atom) {
+                  const bool rot, const int nlocal,
+                  const int host_nlocal, const int nall,
+                  Neighbor *nbor, const int maxspecial,
+                  const int gpu_host, const int max_nbors,
+                  const double cell_size, const bool pre_cut,
+                  const int threads_per_atom, const bool vel) {
   if (!_device_init)
     return -1;
   if (sizeof(acctyp)==sizeof(double) && gpu->double_precision()==false)
@@ -183,30 +252,34 @@ int DeviceT::init(Answer<numtyp,acctyp> &ans, const bool charge,
 
   if (_init_count==0) {
     // Initialize atom and nbor data
-    if (!atom.init(nall,charge,rot,*gpu,gpu_nbor,gpu_nbor>0 && maxspecial>0))
+    if (!atom.init(nall,charge,rot,*gpu,gpu_nbor,gpu_nbor>0 && maxspecial>0,vel))
       return -3;
-      
+
     _data_in_estimate++;
     if (charge)
       _data_in_estimate++;
     if (rot)
+      _data_in_estimate++;
+    if (vel)
       _data_in_estimate++;
   } else {
     if (atom.charge()==false && charge)
       _data_in_estimate++;
     if (atom.quaternion()==false && rot)
       _data_in_estimate++;
-    if (!atom.add_fields(charge,rot,gpu_nbor,gpu_nbor>0 && maxspecial))
+    if (atom.velocity()==false && vel)
+      _data_in_estimate++;
+    if (!atom.add_fields(charge,rot,gpu_nbor,gpu_nbor>0 && maxspecial,vel))
       return -3;
   }
-  
+
   if (!ans.init(ef_nlocal,charge,rot,*gpu))
     return -3;
 
   if (!nbor->init(&_neighbor_shared,ef_nlocal,host_nlocal,max_nbors,maxspecial,
-                  *gpu,gpu_nbor,gpu_host,pre_cut, _block_cell_2d, 
+                  *gpu,gpu_nbor,gpu_host,pre_cut, _block_cell_2d,
                   _block_cell_id, _block_nbor_build, threads_per_atom,
-                  _warp_size, _time_device))
+                  _warp_size, _time_device, compile_string()))
     return -3;
   if (_cell_size<0.0)
     nbor->cell_size(cell_size,cell_size);
@@ -221,7 +294,7 @@ template <class numtyp, class acctyp>
 int DeviceT::init(Answer<numtyp,acctyp> &ans, const int nlocal,
                          const int nall) {
   if (!_device_init)
-    return -1;                          
+    return -1;
   if (sizeof(acctyp)==sizeof(double) && gpu->double_precision()==false)
     return -5;
 
@@ -256,7 +329,7 @@ void DeviceT::set_double_precompute
 
 template <class numtyp, class acctyp>
 void DeviceT::init_message(FILE *screen, const char *name,
-                                  const int first_gpu, const int last_gpu) {
+                           const int first_gpu, const int last_gpu) {
   #if defined(USE_OPENCL)
   std::string fs="";
   #elif defined(USE_CUDART)
@@ -264,17 +337,18 @@ void DeviceT::init_message(FILE *screen, const char *name,
   #else
   std::string fs=toa(gpu->free_gigabytes())+"/";
   #endif
-  
+
   if (_replica_me == 0 && screen) {
     fprintf(screen,"\n-------------------------------------");
     fprintf(screen,"-------------------------------------\n");
-    fprintf(screen,"- Using GPGPU acceleration for %s:\n",name);
+    fprintf(screen,"- Using acceleration for %s:\n",name);
     fprintf(screen,"-  with %d proc(s) per device.\n",_procs_per_gpu);
     #ifdef _OPENMP
     fprintf(screen,"-  with %d thread(s) per proc.\n",_nthreads);
     #endif
     #ifdef USE_OPENCL
-    fprintf(screen,"-  with OpenCL Parameters for: %s\n",OCL_VENDOR);
+    fprintf(screen,"-  with OpenCL Parameters for: %s\n",
+            _ocl_vendor_name.c_str());
     #endif
     fprintf(screen,"-------------------------------------");
     fprintf(screen,"-------------------------------------\n");
@@ -285,10 +359,10 @@ void DeviceT::init_message(FILE *screen, const char *name,
     for (int i=first_gpu; i<last; i++) {
       std::string sname;
       if (i==first_gpu)
-        sname=gpu->name(i)+", "+toa(gpu->cores(i))+" cores, "+fs+
+        sname=gpu->name(i)+", "+toa(gpu->cus(i))+" CUs, "+fs+
               toa(gpu->gigabytes(i))+" GB, "+toa(gpu->clock_rate(i))+" GHZ (";
-      else              
-        sname=gpu->name(i)+", "+toa(gpu->cores(i))+" cores, "+fs+
+      else
+        sname=gpu->name(i)+", "+toa(gpu->cus(i))+" CUs, "+
               toa(gpu->clock_rate(i))+" GHZ (";
       if (sizeof(PRECISION)==4) {
         if (sizeof(ACC_PRECISION)==4)
@@ -298,7 +372,7 @@ void DeviceT::init_message(FILE *screen, const char *name,
       } else
         sname+="Double Precision)";
 
-      fprintf(screen,"GPU %d: %s\n",i,sname.c_str());
+      fprintf(screen,"Device %d: %s\n",i,sname.c_str());
     }
 
     fprintf(screen,"-------------------------------------");
@@ -307,9 +381,9 @@ void DeviceT::init_message(FILE *screen, const char *name,
 }
 
 template <class numtyp, class acctyp>
-void DeviceT::estimate_gpu_overhead(const int kernel_calls, 
-                                           double &gpu_overhead,
-                                           double &gpu_driver_overhead) {
+void DeviceT::estimate_gpu_overhead(const int kernel_calls,
+                                    double &gpu_overhead,
+                                    double &gpu_driver_overhead) {
   UCL_H_Vec<int> *host_data_in=NULL, *host_data_out=NULL;
   UCL_D_Vec<int> *dev_data_in=NULL, *dev_data_out=NULL, *kernel_data=NULL;
   UCL_Timer *timers_in=NULL, *timers_out=NULL, *timers_kernel=NULL;
@@ -320,38 +394,38 @@ void DeviceT::estimate_gpu_overhead(const int kernel_calls,
     dev_data_in=new UCL_D_Vec<int>[_data_in_estimate];
     timers_in=new UCL_Timer[_data_in_estimate];
   }
-  
+
   if (_data_out_estimate>0) {
     host_data_out=new UCL_H_Vec<int>[_data_out_estimate];
     dev_data_out=new UCL_D_Vec<int>[_data_out_estimate];
     timers_out=new UCL_Timer[_data_out_estimate];
   }
-  
+
   if (kernel_calls>0) {
     kernel_data=new UCL_D_Vec<int>[kernel_calls];
     timers_kernel=new UCL_Timer[kernel_calls];
   }
-  
+
   for (int i=0; i<_data_in_estimate; i++) {
     host_data_in[i].alloc(1,*gpu);
     dev_data_in[i].alloc(1,*gpu);
     timers_in[i].init(*gpu);
-  }  
-  
+  }
+
   for (int i=0; i<_data_out_estimate; i++) {
     host_data_out[i].alloc(1,*gpu);
     dev_data_out[i].alloc(1,*gpu);
     timers_out[i].init(*gpu);
-  }  
-  
+  }
+
   for (int i=0; i<kernel_calls; i++) {
     kernel_data[i].alloc(1,*gpu);
     timers_kernel[i].init(*gpu);
-  }  
-  
+  }
+
   gpu_overhead=0.0;
   gpu_driver_overhead=0.0;
-  
+
   for (int i=0; i<10; i++) {
     gpu->sync();
     gpu_barrier();
@@ -365,7 +439,7 @@ void DeviceT::estimate_gpu_overhead(const int kernel_calls,
       ucl_copy(dev_data_in[i],host_data_in[i],true);
       timers_in[i].stop();
     }
-    
+
     for (int i=0; i<kernel_calls; i++) {
       timers_kernel[i].start();
       zero(kernel_data[i],1);
@@ -381,7 +455,7 @@ void DeviceT::estimate_gpu_overhead(const int kernel_calls,
 
     double time=over_timer.seconds();
     driver_time=MPI_Wtime()-driver_time;
-     
+
     if (time_device()) {
       for (int i=0; i<_data_in_estimate; i++)
         timers_in[i].add_to_total();
@@ -390,7 +464,7 @@ void DeviceT::estimate_gpu_overhead(const int kernel_calls,
       for (int i=0; i<_data_out_estimate; i++)
         timers_out[i].add_to_total();
     }
-    
+
     double mpi_time, mpi_driver_time;
     MPI_Allreduce(&time,&mpi_time,1,MPI_DOUBLE,MPI_MAX,gpu_comm());
     MPI_Allreduce(&driver_time,&mpi_driver_time,1,MPI_DOUBLE,MPI_MAX,gpu_comm());
@@ -405,26 +479,27 @@ void DeviceT::estimate_gpu_overhead(const int kernel_calls,
     delete [] dev_data_in;
     delete [] timers_in;
   }
-  
+
   if (_data_out_estimate>0) {
     delete [] host_data_out;
     delete [] dev_data_out;
     delete [] timers_out;
   }
-  
+
   if (kernel_calls>0) {
     delete [] kernel_data;
     delete [] timers_kernel;
   }
-}              
+}
 
 template <class numtyp, class acctyp>
-void DeviceT::output_times(UCL_Timer &time_pair, Answer<numtyp,acctyp> &ans, 
-                           Neighbor &nbor, const double avg_split, 
+void DeviceT::output_times(UCL_Timer &time_pair, Answer<numtyp,acctyp> &ans,
+                           Neighbor &nbor, const double avg_split,
                            const double max_bytes, const double gpu_overhead,
-                           const double driver_overhead, 
+                           const double driver_overhead,
                            const int threads_per_atom, FILE *screen) {
   double single[9], times[9];
+  int post_final=0;
 
   single[0]=atom.transfer_time()+ans.transfer_time();
   single[1]=nbor.time_nbor.total_seconds()+nbor.time_hybrid1.total_seconds()+
@@ -437,22 +512,26 @@ void DeviceT::output_times(UCL_Timer &time_pair, Answer<numtyp,acctyp> &ans,
   single[7]=ans.cpu_idle_time();
   single[8]=nbor.bin_time();
 
+  MPI_Finalized(&post_final);
+  if (post_final) return;
+
   MPI_Reduce(single,times,9,MPI_DOUBLE,MPI_SUM,0,_comm_replica);
 
   double my_max_bytes=max_bytes+atom.max_gpu_bytes();
   double mpi_max_bytes;
   MPI_Reduce(&my_max_bytes,&mpi_max_bytes,1,MPI_DOUBLE,MPI_MAX,0,_comm_replica);
   double max_mb=mpi_max_bytes/(1024.0*1024.0);
+  double t_time=times[0]+times[1]+times[2]+times[3]+times[4];
 
   if (replica_me()==0)
     if (screen && times[5]>0.0) {
       fprintf(screen,"\n\n-------------------------------------");
       fprintf(screen,"--------------------------------\n");
-      fprintf(screen,"      GPU Time Info (average): ");
+      fprintf(screen,"      Device Time Info (average): ");
       fprintf(screen,"\n-------------------------------------");
       fprintf(screen,"--------------------------------\n");
 
-      if (time_device()) {
+      if (time_device() && t_time>0) {
         fprintf(screen,"Data Transfer:   %.4f s.\n",times[0]/_replica_size);
         fprintf(screen,"Data Cast/Pack:  %.4f s.\n",times[4]/_replica_size);
         fprintf(screen,"Neighbor copy:   %.4f s.\n",times[1]/_replica_size);
@@ -464,7 +543,8 @@ void DeviceT::output_times(UCL_Timer &time_pair, Answer<numtyp,acctyp> &ans,
       }
       if (nbor.gpu_nbor()==2)
         fprintf(screen,"Neighbor (CPU):  %.4f s.\n",times[8]/_replica_size);
-      fprintf(screen,"GPU Overhead:    %.4f s.\n",times[5]/_replica_size);
+      if (times[5]>0)
+        fprintf(screen,"Device Overhead: %.4f s.\n",times[5]/_replica_size);
       fprintf(screen,"Average split:   %.4f.\n",avg_split);
       fprintf(screen,"Threads / atom:  %d.\n",threads_per_atom);
       fprintf(screen,"Max Mem / Proc:  %.2f MB.\n",max_mb);
@@ -477,15 +557,15 @@ void DeviceT::output_times(UCL_Timer &time_pair, Answer<numtyp,acctyp> &ans,
 }
 
 template <class numtyp, class acctyp>
-void DeviceT::output_kspace_times(UCL_Timer &time_in, 
-                                         UCL_Timer &time_out,
-                                         UCL_Timer &time_map,
-                                         UCL_Timer &time_rho,
-                                         UCL_Timer &time_interp,
-                                         Answer<numtyp,acctyp> &ans, 
-                                         const double max_bytes, 
-                                         const double cpu_time, 
-                                         const double idle_time, FILE *screen) {
+void DeviceT::output_kspace_times(UCL_Timer &time_in,
+                                  UCL_Timer &time_out,
+                                  UCL_Timer &time_map,
+                                  UCL_Timer &time_rho,
+                                  UCL_Timer &time_interp,
+                                  Answer<numtyp,acctyp> &ans,
+                                  const double max_bytes,
+                                  const double cpu_time,
+                                  const double idle_time, FILE *screen) {
   double single[8], times[8];
 
   single[0]=time_out.total_seconds();
@@ -503,16 +583,17 @@ void DeviceT::output_kspace_times(UCL_Timer &time_in,
   double mpi_max_bytes;
   MPI_Reduce(&my_max_bytes,&mpi_max_bytes,1,MPI_DOUBLE,MPI_MAX,0,_comm_replica);
   double max_mb=mpi_max_bytes/(1024.0*1024.0);
+  double t_time=times[0]+times[1]+times[2]+times[3]+times[4]+times[5];
 
   if (replica_me()==0)
     if (screen && times[6]>0.0) {
       fprintf(screen,"\n\n-------------------------------------");
       fprintf(screen,"--------------------------------\n");
-      fprintf(screen,"      GPU Time Info (average): ");
+      fprintf(screen,"    Device Time Info (average): ");
       fprintf(screen,"\n-------------------------------------");
       fprintf(screen,"--------------------------------\n");
 
-      if (time_device()) {
+      if (time_device() && t_time>0) {
         fprintf(screen,"Data Out:        %.4f s.\n",times[0]/_replica_size);
         fprintf(screen,"Data In:         %.4f s.\n",times[1]/_replica_size);
         fprintf(screen,"Kernel (map):    %.4f s.\n",times[2]/_replica_size);
@@ -569,11 +650,10 @@ int DeviceT::compile_kernels() {
   int flag=0;
 
   if (_compiled)
-  	return flag;
-  	
-  std::string flags="-cl-mad-enable -D"+std::string(OCL_VENDOR);
+          return flag;
+
   dev_program=new UCL_Program(*gpu);
-  int success=dev_program->load_string(device,flags.c_str());
+  int success=dev_program->load_string(device,compile_string().c_str());
   if (success!=UCL_SUCCESS)
     return -4;
   k_zero.set_function(*dev_program,"kernel_zero");
@@ -584,7 +664,7 @@ int DeviceT::compile_kernels() {
   k_info.set_size(1,1);
   k_info.run(&gpu_lib_data);
   gpu_lib_data.update_host(false);
-  
+
   _ptx_arch=static_cast<double>(gpu_lib_data[0])/100.0;
   #ifndef USE_OPENCL
   if (_ptx_arch>gpu->arch() || floor(_ptx_arch)<floor(gpu->arch()))
@@ -599,7 +679,7 @@ int DeviceT::compile_kernels() {
     _threads_per_charge=gpu_lib_data[13];
   _pppm_max_spline=gpu_lib_data[4];
   _pppm_block=gpu_lib_data[5];
-  _block_pair=gpu_lib_data[6];
+  if (_block_pair == -1) _block_pair=gpu_lib_data[6];
   _max_shared_types=gpu_lib_data[7];
   _block_cell_2d=gpu_lib_data[8];
   _block_cell_id=gpu_lib_data[9];
@@ -625,7 +705,7 @@ int DeviceT::compile_kernels() {
   if (_threads_per_charge & (_threads_per_charge - 1))
     _threads_per_charge=1;
 
-  return flag;    
+  return flag;
 }
 
 template <class numtyp, class acctyp>
@@ -638,12 +718,13 @@ template class Device<PRECISION,ACC_PRECISION>;
 Device<PRECISION,ACC_PRECISION> global_device;
 
 int lmp_init_device(MPI_Comm world, MPI_Comm replica, const int first_gpu,
-                    const int last_gpu, const int gpu_mode, 
+                    const int last_gpu, const int gpu_mode,
                     const double particle_split, const int nthreads,
-                    const int t_per_atom, const double cell_size) {
+                    const int t_per_atom, const double cell_size,
+                    char *opencl_vendor, const int block_pair) {
   return global_device.init_device(world,replica,first_gpu,last_gpu,gpu_mode,
-                                   particle_split,nthreads,t_per_atom, 
-                                   cell_size);
+                                   particle_split,nthreads,t_per_atom,
+                                   cell_size,opencl_vendor,block_pair);
 }
 
 void lmp_clear_device() {
@@ -654,3 +735,4 @@ double lmp_gpu_forces(double **f, double **tor, double *eatom,
                       double **vatom, double *virial, double &ecoul) {
   return global_device.fix_gpu(f,tor,eatom,vatom,virial,ecoul);
 }
+

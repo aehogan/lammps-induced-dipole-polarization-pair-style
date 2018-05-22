@@ -11,10 +11,10 @@
    See the README file in the top-level LAMMPS directory.
 ------------------------------------------------------------------------- */
 
-#include "math.h"
-#include "stdio.h"
-#include "stdlib.h"
-#include "string.h"
+#include <math.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
 #include "pair_lj_cut_coul_cut.h"
 #include "atom.h"
 #include "comm.h"
@@ -30,7 +30,10 @@ using namespace MathConst;
 
 /* ---------------------------------------------------------------------- */
 
-PairLJCutCoulCut::PairLJCutCoulCut(LAMMPS *lmp) : Pair(lmp) {}
+PairLJCutCoulCut::PairLJCutCoulCut(LAMMPS *lmp) : Pair(lmp)
+{
+  writedata = 1;
+}
 
 /* ---------------------------------------------------------------------- */
 
@@ -186,16 +189,16 @@ void PairLJCutCoulCut::settings(int narg, char **arg)
 {
   if (narg < 1 || narg > 2) error->all(FLERR,"Illegal pair_style command");
 
-  cut_lj_global = force->numeric(arg[0]);
+  cut_lj_global = force->numeric(FLERR,arg[0]);
   if (narg == 1) cut_coul_global = cut_lj_global;
-  else cut_coul_global = force->numeric(arg[1]);
+  else cut_coul_global = force->numeric(FLERR,arg[1]);
 
   // reset cutoffs that have been explicitly set
 
   if (allocated) {
     int i,j;
     for (i = 1; i <= atom->ntypes; i++)
-      for (j = i+1; j <= atom->ntypes; j++)
+      for (j = i; j <= atom->ntypes; j++)
         if (setflag[i][j]) {
           cut_lj[i][j] = cut_lj_global;
           cut_coul[i][j] = cut_coul_global;
@@ -209,20 +212,21 @@ void PairLJCutCoulCut::settings(int narg, char **arg)
 
 void PairLJCutCoulCut::coeff(int narg, char **arg)
 {
-  if (narg < 4 || narg > 6) error->all(FLERR,"Incorrect args for pair coefficients");
+  if (narg < 4 || narg > 6)
+    error->all(FLERR,"Incorrect args for pair coefficients");
   if (!allocated) allocate();
 
   int ilo,ihi,jlo,jhi;
-  force->bounds(arg[0],atom->ntypes,ilo,ihi);
-  force->bounds(arg[1],atom->ntypes,jlo,jhi);
+  force->bounds(FLERR,arg[0],atom->ntypes,ilo,ihi);
+  force->bounds(FLERR,arg[1],atom->ntypes,jlo,jhi);
 
-  double epsilon_one = force->numeric(arg[2]);
-  double sigma_one = force->numeric(arg[3]);
+  double epsilon_one = force->numeric(FLERR,arg[2]);
+  double sigma_one = force->numeric(FLERR,arg[3]);
 
   double cut_lj_one = cut_lj_global;
   double cut_coul_one = cut_coul_global;
-  if (narg >= 5) cut_coul_one = cut_lj_one = force->numeric(arg[4]);
-  if (narg == 6) cut_coul_one = force->numeric(arg[5]);
+  if (narg >= 5) cut_coul_one = cut_lj_one = force->numeric(FLERR,arg[4]);
+  if (narg == 6) cut_coul_one = force->numeric(FLERR,arg[5]);
 
   int count = 0;
   for (int i = ilo; i <= ihi; i++) {
@@ -248,7 +252,7 @@ void PairLJCutCoulCut::init_style()
   if (!atom->q_flag)
     error->all(FLERR,"Pair style lj/cut/coul/cut requires atom attribute q");
 
-  neighbor->request(this);
+  neighbor->request(this,instance_me);
 }
 
 /* ----------------------------------------------------------------------
@@ -274,7 +278,7 @@ double PairLJCutCoulCut::init_one(int i, int j)
   lj3[i][j] = 4.0 * epsilon[i][j] * pow(sigma[i][j],12.0);
   lj4[i][j] = 4.0 * epsilon[i][j] * pow(sigma[i][j],6.0);
 
-  if (offset_flag) {
+  if (offset_flag && (cut_lj[i][j] > 0.0)) {
     double ratio = sigma[i][j] / cut_lj[i][j];
     offset[i][j] = 4.0 * epsilon[i][j] * (pow(ratio,12.0) - pow(ratio,6.0));
   } else offset[i][j] = 0.0;
@@ -400,6 +404,27 @@ void PairLJCutCoulCut::read_restart_settings(FILE *fp)
   MPI_Bcast(&tail_flag,1,MPI_INT,0,world);
 }
 
+/* ----------------------------------------------------------------------
+   proc 0 writes to data file
+------------------------------------------------------------------------- */
+
+void PairLJCutCoulCut::write_data(FILE *fp)
+{
+  for (int i = 1; i <= atom->ntypes; i++)
+    fprintf(fp,"%d %g %g\n",i,epsilon[i][i],sigma[i][i]);
+}
+
+/* ----------------------------------------------------------------------
+   proc 0 writes all pairs to data file
+------------------------------------------------------------------------- */
+
+void PairLJCutCoulCut::write_data_all(FILE *fp)
+{
+  for (int i = 1; i <= atom->ntypes; i++)
+    for (int j = i; j <= atom->ntypes; j++)
+      fprintf(fp,"%d %d %g %g %g\n",i,j,epsilon[i][j],sigma[i][j],cut_lj[i][j]);
+}
+
 /* ---------------------------------------------------------------------- */
 
 double PairLJCutCoulCut::single(int i, int j, int itype, int jtype,
@@ -441,5 +466,6 @@ void *PairLJCutCoulCut::extract(const char *str, int &dim)
   if (strcmp(str,"cut_coul") == 0) return (void *) &cut_coul;
   dim = 2;
   if (strcmp(str,"epsilon") == 0) return (void *) epsilon;
+  if (strcmp(str,"sigma") == 0) return (void *) sigma;
   return NULL;
 }

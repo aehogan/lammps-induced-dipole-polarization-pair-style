@@ -1,4 +1,4 @@
-/* ----------------------------------------------------------------------
+/* -*- c++ -*- ----------------------------------------------------------
    LAMMPS - Large-scale Atomic/Molecular Massively Parallel Simulator
    http://lammps.sandia.gov, Sandia National Laboratories
    Steve Plimpton, sjplimp@sandia.gov
@@ -28,8 +28,11 @@ class FixPeriNeigh : public Fix {
   friend class PairPeriPMB;
   friend class PairPeriPMBOMP;
   friend class PairPeriLPS;
+  friend class PairPeriVES;
+  friend class PairPeriEPS;
   friend class PairPeriLPSOMP;
   friend class ComputeDamageAtom;
+  friend class ComputePlasticityAtom;
 
  public:
   FixPeriNeigh(class LAMMPS *,int, char **);
@@ -42,7 +45,7 @@ class FixPeriNeigh : public Fix {
 
   double memory_usage();
   void grow_arrays(int);
-  void copy_arrays(int, int);
+  void copy_arrays(int, int, int);
   int pack_exchange(int, double *);
   int unpack_exchange(int, double *);
   void write_restart(FILE *);
@@ -51,18 +54,25 @@ class FixPeriNeigh : public Fix {
   void unpack_restart(int, int);
   int size_restart(int);
   int maxsize_restart();
-  int pack_comm(int, int *, double *, int, int *);
-  void unpack_comm(int, int, double *);
+  int pack_forward_comm(int, int *, double *, int, int *);
+  void unpack_forward_comm(int, int, double *);
 
 
  protected:
   int first;                 // flag for first time initialization
   int maxpartner;            // max # of peridynamic neighs for any atom
   int *npartner;             // # of neighbors for each atom
-  int **partner;             // neighs for each atom, stored as global IDs
+  tagint **partner;          // neighs for each atom, stored as global IDs
+  double **deviatorextention; // Deviatoric extention
+  double **deviatorBackextention; // Deviatoric back extention
+  double **deviatorPlasticextension; // Deviatoric plastic extension
+  double *lambdaValue;
   double **r0;               // initial distance to partners
+  double **r1;               // instanteneous distance to partners
+  double *thetaValue;        // dilatation
   double *vinter;            // sum of vfrac for bonded neighbors
   double *wvolume;           // weighted volume of particle
+  int isPMB,isLPS,isVES,isEPS;  // which flavor of PD
 
   class NeighList *list;
 };

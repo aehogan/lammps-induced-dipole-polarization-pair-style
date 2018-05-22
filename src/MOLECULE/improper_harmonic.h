@@ -1,4 +1,4 @@
-/* ----------------------------------------------------------------------
+/* -*- c++ -*- ----------------------------------------------------------
    LAMMPS - Large-scale Atomic/Molecular Massively Parallel Simulator
    http://lammps.sandia.gov, Sandia National Laboratories
    Steve Plimpton, sjplimp@sandia.gov
@@ -20,7 +20,7 @@ ImproperStyle(harmonic,ImproperHarmonic)
 #ifndef LMP_IMPROPER_HARMONIC_H
 #define LMP_IMPROPER_HARMONIC_H
 
-#include "stdio.h"
+#include <stdio.h>
 #include "improper.h"
 
 namespace LAMMPS_NS {
@@ -30,14 +30,15 @@ class ImproperHarmonic : public Improper {
   ImproperHarmonic(class LAMMPS *);
   virtual ~ImproperHarmonic();
   virtual void compute(int, int);
-  void coeff(int, char **);
+  virtual void coeff(int, char **);
   void write_restart(FILE *);
   void read_restart(FILE *);
+  void write_data(FILE *);
 
  protected:
   double *k,*chi;
 
-  void allocate();
+  virtual void allocate();
 };
 
 }

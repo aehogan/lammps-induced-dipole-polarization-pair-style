@@ -1,4 +1,4 @@
-/* ----------------------------------------------------------------------
+/* -*- c++ -*- ----------------------------------------------------------
    LAMMPS - Large-scale Atomic/Molecular Massively Parallel Simulator
    http://lammps.sandia.gov, Sandia National Laboratories
    Steve Plimpton, sjplimp@sandia.gov
@@ -37,6 +37,8 @@ class PairBornCoulLong : public Pair {
   void read_restart(FILE *);
   void write_restart_settings(FILE *);
   void read_restart_settings(FILE *);
+  void write_data(FILE *);
+  void write_data_all(FILE *);
   virtual double single(int, int, int, int, double, double, double, double &);
   virtual void *extract(const char *, int &);
 
@@ -78,9 +80,8 @@ E: Pair style born/coul/long requires atom attribute q
 
 An atom style that defines this attribute must be used.
 
-E: Pair style is incompatible with KSpace style
+E: Pair style requires a KSpace style
 
-If a pair style with a long-range Coulombic component is selected,
-then a kspace style must also be used.
+No kspace style is defined.
 
 */

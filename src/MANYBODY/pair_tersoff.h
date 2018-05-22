@@ -1,4 +1,4 @@
-/* ----------------------------------------------------------------------
+/* -*- c++ -*- ----------------------------------------------------------
    LAMMPS - Large-scale Atomic/Molecular Massively Parallel Simulator
    http://lammps.sandia.gov, Sandia National Laboratories
    Steve Plimpton, sjplimp@sandia.gov
@@ -31,7 +31,7 @@ class PairTersoff : public Pair {
   virtual void compute(int, int);
   void settings(int, char **);
   void coeff(int, char **);
-  void init_style();
+  virtual void init_style();
   double init_one(int, int);
 
  protected:
@@ -45,8 +45,11 @@ class PairTersoff : public Pair {
     double c1,c2,c3,c4;
     int ielement,jelement,kelement;
     int powermint;
-    double Z_i,Z_j;
+    double Z_i,Z_j;              // added for TersoffZBL
     double ZBLcut,ZBLexpscale;
+    double c5,ca1,ca4;           // added for TersoffMOD
+    double powern_del;
+    double c0;                   // added for TersoffMODC
   };
 
   Param *params;                // parameter set for an I-J-K interaction
@@ -57,25 +60,27 @@ class PairTersoff : public Pair {
   int nelements;                // # of unique elements
   int nparams;                  // # of stored parameter sets
   int maxparam;                 // max # of parameter sets
+  int maxshort;                 // size of short neighbor list array
+  int *neighshort;              // short neighbor list array
 
-  void allocate();
+  virtual void allocate();
   virtual void read_file(char *);
-  void setup();
+  virtual void setup_params();
   virtual void repulsive(Param *, double, double &, int, double &);
-  double zeta(Param *, double, double, double *, double *);
+  virtual double zeta(Param *, double, double, double *, double *);
   virtual void force_zeta(Param *, double, double, double &,
                           double &, int, double &);
   void attractive(Param *, double, double, double, double *, double *,
                   double *, double *, double *);
 
-  double ters_fc(double, Param *);
-  double ters_fc_d(double, Param *);
+  virtual double ters_fc(double, Param *);
+  virtual double ters_fc_d(double, Param *);
   virtual double ters_fa(double, Param *);
   virtual double ters_fa_d(double, Param *);
-  double ters_bij(double, Param *);
-  double ters_bij_d(double, Param *);
+  virtual double ters_bij(double, Param *);
+  virtual double ters_bij_d(double, Param *);
 
-  void ters_zetaterm_d(double, double *, double, double *, double,
+  virtual void ters_zetaterm_d(double, double *, double, double *, double,
                                double *, double *, double *, Param *);
   void costheta_d(double *, double, double *, double,
                   double *, double *, double *);
@@ -156,8 +161,8 @@ pair_coeff command before running a simulation.
 
 E: Cannot open Tersoff potential file %s
 
-The specified Tersoff potential file cannot be opened.  Check that the
-path and name are correct.
+The specified potential file cannot be opened.  Check that the path
+and name are correct.
 
 E: Incorrect format in Tersoff potential file
 
@@ -170,12 +175,10 @@ invalid.
 
 E: Potential file has duplicate entry
 
-The potential file for a SW or Tersoff potential has more than
-one entry for the same 3 ordered elements.
+The potential file has more than one entry for the same element.
 
 E: Potential file is missing an entry
 
-The potential file for a SW or Tersoff potential does not have a
-needed entry.
+The potential file does not have a needed entry.
 
 */

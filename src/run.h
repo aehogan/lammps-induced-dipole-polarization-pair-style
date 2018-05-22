@@ -1,4 +1,4 @@
-/* ----------------------------------------------------------------------
+/* -*- c++ -*- ----------------------------------------------------------
    LAMMPS - Large-scale Atomic/Molecular Massively Parallel Simulator
    http://lammps.sandia.gov, Sandia National Laboratories
    Steve Plimpton, sjplimp@sandia.gov
@@ -71,6 +71,6 @@ Self-explanatory.
 
 E: Too many timesteps
 
-The cummulative timesteps must fit in a 64-bit integer.
+The cumulative timesteps must fit in a 64-bit integer.
 
 */

@@ -1,3 +1,12 @@
+// -*- c++ -*-
+
+// This file is part of the Collective Variables module (Colvars).
+// The original version of Colvars and its updates are located at:
+// https://github.com/colvars/colvars
+// Please update all Colvars source files before making any changes.
+// If you wish to distribute your changes, please submit them to the
+// Colvars repository at GitHub.
+
 /* -*- c++ -*- ----------------------------------------------------------
    LAMMPS - Large-scale Atomic/Molecular Massively Parallel Simulator
    http://lammps.sandia.gov, Sandia National Laboratories
@@ -42,16 +51,17 @@ class FixColvars : public Fix {
   virtual int setmask();
   virtual void init();
   virtual void setup(int);
+  virtual void min_setup(int vflag) {setup(vflag);};
   virtual void min_post_force(int);
   virtual void post_force(int);
   virtual void post_force_respa(int, int, int);
-  virtual void post_run();
   virtual void end_of_step();
+  virtual void post_run();
   virtual double compute_scalar();
   virtual double memory_usage();
 
- protected:
-  void   deallocate();        // free internal buffers
+  virtual void write_restart(FILE *);
+  virtual void restart(char *);
 
  protected:
   class colvarproxy_lammps *proxy; // pointer to the colvars proxy class
@@ -65,10 +75,14 @@ class FixColvars : public Fix {
 
   int   me;            // my MPI rank in this "world".
   int   num_coords;    // total number of atoms controlled by this fix
-  int   *taglist;      // list of all atom IDs referenced by colvars.
-  std::vector<struct commdata> *coords; // coordinates of colvar atoms
-  std::vector<struct commdata> *forces; // received forces of colvar atoms
-  std::vector<struct commdata> *oforce; // old total forces of colvar atoms
+  tagint *taglist;     // list of all atom IDs referenced by colvars.
+
+  // TODO get rid of these
+  // std::vector<cvm::atom_pos> *coords; // coordinates of colvar atoms
+  // std::vector<cvm::rvector> *forces; // received forces of colvar atoms
+  // std::vector<cvm::rvector> *oforce; // old total forces of colvar atoms
+  // std::vector<cvm::real> *masses;
+  // std::vector<cvm::real> *charges;
 
   int   nmax;          // size of atom communication buffer.
   int   size_one;      // bytes per atom in communication buffer.
@@ -80,8 +94,12 @@ class FixColvars : public Fix {
 
   int nlevels_respa;   // flag to determine respa levels.
   int store_forces;    // flag to determine whether to store total forces
+  int unwrap_flag;     // 1 if atom coords are unwrapped, 0 if not
+  int init_flag;       // 1 if initialized, 0 if not
   static  int instances; // count fix instances, since colvars currently
                          // only supports one instance at a time
+  MPI_Comm root2root;   // inter-root communicator for multi-replica support
+  void one_time_init(); // one time initialization
 };
 
 }
@@ -89,10 +107,55 @@ class FixColvars : public Fix {
 #endif
 #endif
 
-// Local Variables:
-// mode: c++
-// compile-command: "make -j4 openmpi"
-// c-basic-offset: 2
-// fill-column: 76
-// indent-tabs-mode: nil
-// End:
+/* ERROR/WARNING messages:
+
+E: Illegal ... command
+
+Self-explanatory.  Check the input script syntax and compare to the
+documentation for the command.  You can use -echo screen as a
+command-line option when running LAMMPS to see the offending line.
+
+E: Cannot use fix colvars for atoms with rmass attribute
+
+The colvars library assigns atom masses per atom type, thus atom styles
+which allow setting individual per atom masses are not supported.
+
+E: Missing argument to keyword
+
+Self-explanatory. A keyword was recognized, but no corresponding value
+found. Check the input script syntax and compare to the documentation
+for the command.
+
+E: Incorrect fix colvars unwrap flag
+
+Self-explanatory. Check the input script syntax.
+
+E: Unknown fix colvars parameter
+
+Self-explanatory. Check your input script syntax.
+
+E: Cannot use fix colvars without atom IDs
+
+Atom IDs are not defined, but fix colvars needs them to identify an atom.
+
+E: Fix colvars requires an atom map, see atom_modify
+
+Use the atom_modify command to create an atom map.
+
+W: Using fix colvars with minimization
+
+Some of the functionality supported with the colvars library is not
+meaningful with minimization calculations.
+
+E: Could not find tstat fix ID
+
+Self-explanatory. The thermostat fix ID provided with the tstat keyword
+is not defined (yet or anymore). Check your input file.
+
+E: Run aborted on request from colvars module
+
+Some error condition happened inside the colvars library that prohibits
+it from continuing. Please examine the output for additional information.
+
+*/
+

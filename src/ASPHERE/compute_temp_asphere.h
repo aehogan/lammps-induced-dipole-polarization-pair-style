@@ -1,4 +1,4 @@
-/* ----------------------------------------------------------------------
+/* -*- c++ -*- ----------------------------------------------------------
    LAMMPS - Large-scale Atomic/Molecular Massively Parallel Simulator
    http://lammps.sandia.gov, Sandia National Laboratories
    Steve Plimpton, sjplimp@sandia.gov
@@ -29,14 +29,17 @@ class ComputeTempAsphere : public Compute {
   ComputeTempAsphere(class LAMMPS *, int, char **);
   ~ComputeTempAsphere();
   void init();
+  void setup();
   double compute_scalar();
   void compute_vector();
 
   void remove_bias(int, double *);
   void restore_bias(int, double *);
+  void remove_bias_thr(int, double *, double *);
+  void restore_bias_thr(int, double *, double *);
 
  private:
-  int fix_dof,mode;
+  int mode;
   double tfactor;
   char *id_bias;
   class Compute *tbias;              // ptr to additional bias compute
@@ -64,7 +67,7 @@ Self-explanatory.
 
 E: Compute temp/asphere requires extended particles
 
-This compute cannot be used with point paritlces.
+This compute cannot be used with point particles.
 
 E: Could not find compute ID for temperature bias
 
@@ -82,5 +85,10 @@ E: Bias compute group does not match compute group
 
 The specified compute must operate on the same group as the parent
 compute.
+
+E: Temperature compute degrees of freedom < 0
+
+This should not happen if you are calculating the temperature
+on a valid set of atoms.
 
 */

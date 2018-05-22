@@ -1,4 +1,4 @@
-/* ----------------------------------------------------------------------
+/* -*- c++ -*- ----------------------------------------------------------
    LAMMPS - Large-scale Atomic/Molecular Massively Parallel Simulator
    http://lammps.sandia.gov, Sandia National Laboratories
    Steve Plimpton, sjplimp@sandia.gov
@@ -18,15 +18,20 @@
 
 namespace LAMMPS_NS {
 
+class DumpNetCDF;
+class DumpNetCDFMPIIO;
+
 class Thermo : protected Pointers {
-  friend class WriteRestart;           // accesses lostflag
   friend class MinCG;                  // accesses compute_pe
+  friend class DumpNetCDF;             // accesses thermo properties
+  friend class DumpNetCDFMPIIO;        // accesses thermo properties
 
  public:
   char *style;
   int normflag;          // 0 if do not normalize by atoms, 1 if normalize
   int modified;          // 1 if thermo_modify has been used, else 0
-  int cudable;           // 1 if all computes used are cudable
+  int lostflag;          // IGNORE,WARN,ERROR
+  int lostbond;          // ditto for atoms in bonds
 
   Thermo(class LAMMPS *, int, char **);
   ~Thermo();
@@ -45,10 +50,13 @@ class Thermo : protected Pointers {
   int nfield,nfield_initial;
   int me;
 
-  char **format,**format_user;
+  char **format;
+  char *format_line_user;
+  char *format_float_user,*format_int_user,*format_bigint_user;
+  char **format_column_user;
+
   char *format_float_one_def,*format_float_multi_def;
   char *format_int_one_def,*format_int_multi_def;
-  char *format_float_user,*format_int_user,*format_bigint_user;
   char format_multi[128];
   char format_bigint_one_def[8],format_bigint_multi_def[8];
 
@@ -57,7 +65,7 @@ class Thermo : protected Pointers {
   int normuser;
 
   int firststep;
-  int lostflag,lostbefore;
+  int lostbefore;
   int flushflag,lineflag;
 
   double last_tpcpu,last_spcpu;
@@ -92,7 +100,7 @@ class Thermo : protected Pointers {
   char **id_fix;               // their IDs
   class Fix **fixes;           // list of ptrs to the Fix objects
 
-  int nvariable;               // # of variables evaulated by thermo
+  int nvariable;               // # of variables evaluated by thermo
   char **id_variable;          // list of variable names
   int *variables;              // list of Variable indices
 
@@ -109,6 +117,7 @@ class Thermo : protected Pointers {
   typedef void (Thermo::*FnPtr)();
   void addfield(const char *, FnPtr, int);
   FnPtr *vfunc;                // list of ptrs to functions
+  void call_vfunc(int ifield);
 
   void compute_compute();      // functions that compute a single value
   void compute_fix();          // via calls to  Compute,Fix,Variable classes
@@ -121,9 +130,13 @@ class Thermo : protected Pointers {
   void compute_elapsed();
   void compute_elapsed_long();
   void compute_dt();
+  void compute_time();
   void compute_cpu();
   void compute_tpcpu();
   void compute_spcpu();
+  void compute_cpuremain();
+  void compute_part();
+  void compute_timeremain();
 
   void compute_atoms();
   void compute_temp();
@@ -135,7 +148,6 @@ class Thermo : protected Pointers {
 
   void compute_evdwl();
   void compute_ecoul();
-  void compute_epol();
   void compute_epair();
   void compute_ebond();
   void compute_eangle();
@@ -144,8 +156,12 @@ class Thermo : protected Pointers {
   void compute_emol();
   void compute_elong();
   void compute_etail();
+  /* polarization stuff */
+  void compute_epol();
+  /* end polarization stuff */
 
   void compute_vol();
+  void compute_density();
   void compute_lx();
   void compute_ly();
   void compute_lz();
@@ -165,6 +181,11 @@ class Thermo : protected Pointers {
   void compute_ylat();
   void compute_zlat();
 
+  void compute_bonds();
+  void compute_angles();
+  void compute_dihedrals();
+  void compute_impropers();
+
   void compute_pxx();
   void compute_pyy();
   void compute_pzz();
@@ -174,6 +195,9 @@ class Thermo : protected Pointers {
 
   void compute_fmax();
   void compute_fnorm();
+
+  void compute_nbuild();
+  void compute_ndanger();
 
   void compute_cella();
   void compute_cellb();
@@ -221,7 +245,7 @@ E: Lost atoms: original %ld current %ld
 Lost atoms are checked for each time thermo output is done.  See the
 thermo_modify lost command for options.  Lost atoms usually indicate
 bad dynamics, e.g. atoms have been blown far out of the simulation
-box, or moved futher than one processor's sub-domain away before
+box, or moved further than one processor's sub-domain away before
 reneighboring.
 
 W: Lost atoms: original %ld current %ld
@@ -229,7 +253,7 @@ W: Lost atoms: original %ld current %ld
 Lost atoms are checked for each time thermo output is done.  See the
 thermo_modify lost command for options.  Lost atoms usually indicate
 bad dynamics, e.g. atoms have been blown far out of the simulation
-box, or moved futher than one processor's sub-domain away before
+box, or moved further than one processor's sub-domain away before
 reneighboring.
 
 E: Thermo style does not use temp
@@ -276,10 +300,6 @@ The specified compute ID does not compute pressure.
 E: Thermo_modify int format does not contain d character
 
 Self-explanatory.
-
-E: Thermo keyword requires lattice be defined
-
-The xlat, ylat, zlat keywords refer to lattice properties.
 
 E: Could not find thermo custom compute ID
 
@@ -344,7 +364,7 @@ E: Thermo custom variable cannot be indexed
 
 Self-explanatory.
 
-E: Invalid keyword in thermo_style custom command
+E: Unknown keyword in thermo_style custom command
 
 One or more specified keywords are not recognized.
 
@@ -384,9 +404,5 @@ E: Energy was not tallied on needed timestep
 You are using a thermo keyword that requires potentials to
 have tallied energy, but they didn't on this timestep.  See the
 variable doc page for ideas on how to make this work.
-
-E: Thermo keyword in variable requires lattice be defined
-
-The xlat, ylat, zlat keywords refer to lattice properties.
 
 */

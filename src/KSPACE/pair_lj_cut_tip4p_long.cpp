@@ -16,10 +16,10 @@
    simpler force assignment added by Rolf Isele-Holder (Aachen University)
 ------------------------------------------------------------------------- */
 
-#include "math.h"
-#include "stdio.h"
-#include "stdlib.h"
-#include "string.h"
+#include <math.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
 #include "pair_lj_cut_tip4p_long.h"
 #include "angle.h"
 #include "atom.h"
@@ -51,9 +51,12 @@ using namespace LAMMPS_NS;
 PairLJCutTIP4PLong::PairLJCutTIP4PLong(LAMMPS *lmp) :
   PairLJCutCoulLong(lmp)
 {
+  tip4pflag = 1;
+  ewaldflag = pppmflag = 1;  // for clarity, though inherited from parent class
+
   single_enable = 0;
   respa_enable = 0;
-  tip4pflag = 1;
+  writedata = 1;
 
   nmax = 0;
   hneigh = NULL;
@@ -82,12 +85,11 @@ void PairLJCutTIP4PLong::compute(int eflag, int vflag)
   int iH1,iH2,jH1,jH2;
   double qtmp,xtmp,ytmp,ztmp,delx,dely,delz,evdwl,ecoul;
   double fraction,table;
-  double delxOM, delyOM, delzOM;
   double r,r2inv,r6inv,forcecoul,forcelj,cforce;
   double factor_coul,factor_lj;
-  double grij,expm2,prefactor,t,erfc,ddotf;
-  double xiM[3],xjM[3],fO[3],fH[3],fd[3],f1[3],v[6],xH1[3],xH2[3];
-  double *x1,*x2;
+  double grij,expm2,prefactor,t,erfc;
+  double fO[3],fH[3],fd[3],v[6];
+  double *x1,*x2,*xH1,*xH2;
   int *ilist,*jlist,*numneigh,**firstneigh;
   double rsq;
 
@@ -116,6 +118,7 @@ void PairLJCutTIP4PLong::compute(int eflag, int vflag)
   double **f = atom->f;
   double **x = atom->x;
   double *q = atom->q;
+  tagint *tag = atom->tag;
   int *type = atom->type;
   double *special_coul = force->special_coul;
   double *special_lj = force->special_lj;
@@ -143,14 +146,20 @@ void PairLJCutTIP4PLong::compute(int eflag, int vflag)
 
     if (itype == typeO) {
       if (hneigh[i][0] < 0) {
-        hneigh[i][0] = iH1 = atom->map(atom->tag[i] + 1);
-        hneigh[i][1] = iH2 = atom->map(atom->tag[i] + 2);
-        hneigh[i][2] = 1;
+        iH1 = atom->map(tag[i] + 1);
+        iH2 = atom->map(tag[i] + 2);
         if (iH1 == -1 || iH2 == -1)
           error->one(FLERR,"TIP4P hydrogen is missing");
         if (atom->type[iH1] != typeH || atom->type[iH2] != typeH)
           error->one(FLERR,"TIP4P hydrogen has incorrect atom type");
+        // set iH1,iH2 to closest image to O
+        iH1 = domain->closest_image(i,iH1);
+        iH2 = domain->closest_image(i,iH2);
         compute_newsite(x[i],x[iH1],x[iH2],newsite[i]);
+        hneigh[i][0] = iH1;
+        hneigh[i][1] = iH2;
+        hneigh[i][2] = 1;
+
       } else {
         iH1 = hneigh[i][0];
         iH2 = hneigh[i][1];
@@ -213,14 +222,20 @@ void PairLJCutTIP4PLong::compute(int eflag, int vflag)
 
           if (jtype == typeO) {
             if (hneigh[j][0] < 0) {
-              hneigh[j][0] = jH1 = atom->map(atom->tag[j] + 1);
-              hneigh[j][1] = jH2 = atom->map(atom->tag[j] + 2);
-              hneigh[j][2] = 1;
+              jH1 = atom->map(tag[j] + 1);
+              jH2 = atom->map(tag[j] + 2);
               if (jH1 == -1 || jH2 == -1)
                 error->one(FLERR,"TIP4P hydrogen is missing");
               if (atom->type[jH1] != typeH || atom->type[jH2] != typeH)
                 error->one(FLERR,"TIP4P hydrogen has incorrect atom type");
+              // set jH1,jH2 to closest image to O
+              jH1 = domain->closest_image(j,jH1);
+              jH2 = domain->closest_image(j,jH2);
               compute_newsite(x[j],x[jH1],x[jH2],newsite[j]);
+              hneigh[j][0] = jH1;
+              hneigh[j][1] = jH2;
+              hneigh[j][2] = 1;
+
             } else {
               jH1 = hneigh[j][0];
               jH2 = hneigh[j][1];
@@ -324,9 +339,8 @@ void PairLJCutTIP4PLong::compute(int eflag, int vflag)
             f[iH2][2] += fH[2];
 
             if (vflag) {
-              domain->closest_image(x[i],x[iH1],xH1);
-              domain->closest_image(x[i],x[iH2],xH2);
-
+              xH1 = x[iH1];
+              xH2 = x[iH2];
               v[0] = x[i][0]*fO[0] + xH1[0]*fH[0] + xH2[0]*fH[0];
               v[1] = x[i][1]*fO[1] + xH1[1]*fH[1] + xH2[1]*fH[1];
               v[2] = x[i][2]*fO[2] + xH1[2]*fH[2] + xH2[2]*fH[2];
@@ -382,9 +396,8 @@ void PairLJCutTIP4PLong::compute(int eflag, int vflag)
             f[jH2][2] += fH[2];
 
             if (vflag) {
-              domain->closest_image(x[j],x[jH1],xH1);
-              domain->closest_image(x[j],x[jH2],xH2);
-
+              xH1 = x[jH1];
+              xH2 = x[jH2];
               v[0] += x[j][0]*fO[0] + xH1[0]*fH[0] + xH2[0]*fH[0];
               v[1] += x[j][1]*fO[1] + xH1[1]*fH[1] + xH2[1]*fH[1];
               v[2] += x[j][2]*fO[2] + xH1[2]*fH[2] + xH2[2]*fH[2];
@@ -422,22 +435,22 @@ void PairLJCutTIP4PLong::settings(int narg, char **arg)
 {
   if (narg < 6 || narg > 7) error->all(FLERR,"Illegal pair_style command");
 
-  typeO = force->inumeric(arg[0]);
-  typeH = force->inumeric(arg[1]);
-  typeB = force->inumeric(arg[2]);
-  typeA = force->inumeric(arg[3]);
-  qdist = force->numeric(arg[4]);
+  typeO = force->inumeric(FLERR,arg[0]);
+  typeH = force->inumeric(FLERR,arg[1]);
+  typeB = force->inumeric(FLERR,arg[2]);
+  typeA = force->inumeric(FLERR,arg[3]);
+  qdist = force->numeric(FLERR,arg[4]);
 
-  cut_lj_global = force->numeric(arg[5]);
+  cut_lj_global = force->numeric(FLERR,arg[5]);
   if (narg == 6) cut_coul = cut_lj_global;
-  else cut_coul = force->numeric(arg[6]);
+  else cut_coul = force->numeric(FLERR,arg[6]);
 
   // reset cutoffs that have been explicitly set
 
   if (allocated) {
     int i,j;
     for (i = 1; i <= atom->ntypes; i++)
-      for (j = i+1; j <= atom->ntypes; j++)
+      for (j = i; j <= atom->ntypes; j++)
         if (setflag[i][j]) cut_lj[i][j] = cut_lj_global;
   }
 }
@@ -449,13 +462,13 @@ void PairLJCutTIP4PLong::settings(int narg, char **arg)
 void PairLJCutTIP4PLong::init_style()
 {
   if (atom->tag_enable == 0)
-    error->all(FLERR,"Pair style lj/cut/coul/long/tip4p requires atom IDs");
+    error->all(FLERR,"Pair style lj/cut/tip4p/long requires atom IDs");
   if (!force->newton_pair)
     error->all(FLERR,
-               "Pair style lj/cut/coul/long/tip4p requires newton pair on");
+               "Pair style lj/cut/tip4p/long requires newton pair on");
   if (!atom->q_flag)
     error->all(FLERR,
-               "Pair style lj/cut/coul/long/tip4p requires atom attribute q");
+               "Pair style lj/cut/tip4p/long requires atom attribute q");
   if (force->bond == NULL)
     error->all(FLERR,"Must use a bond style with TIP4P potential");
   if (force->angle == NULL)
@@ -485,7 +498,7 @@ double PairLJCutTIP4PLong::init_one(int i, int j)
   if ((i == typeH && epsilon[i][i] != 0.0) ||
       (j == typeH && epsilon[j][j] != 0.0))
     error->all(FLERR,"Water H epsilon must be 0.0 for "
-               "pair style lj/cut/coul/long/tip4p");
+               "pair style lj/cut/tip4p/long");
 
   if (i == typeH || j == typeH)
     cut_ljsq[j][i] = cut_ljsq[i][j] = 0.0;
@@ -557,17 +570,15 @@ void PairLJCutTIP4PLong::read_restart_settings(FILE *fp)
 ------------------------------------------------------------------------- */
 
 void PairLJCutTIP4PLong::compute_newsite(double *xO, double *xH1,
-                                             double *xH2, double *xM)
+                                         double *xH2, double *xM)
 {
   double delx1 = xH1[0] - xO[0];
   double dely1 = xH1[1] - xO[1];
   double delz1 = xH1[2] - xO[2];
-  domain->minimum_image(delx1,dely1,delz1);
 
   double delx2 = xH2[0] - xO[0];
   double dely2 = xH2[1] - xO[1];
   double delz2 = xH2[2] - xO[2];
-  domain->minimum_image(delx2,dely2,delz2);
 
   xM[0] = xO[0] + alpha * 0.5 * (delx1 + delx2);
   xM[1] = xO[1] + alpha * 0.5 * (dely1 + dely2);
@@ -585,6 +596,9 @@ void *PairLJCutTIP4PLong::extract(const char *str, int &dim)
   if (strcmp(str,"typeA") == 0) return (void *) &typeA;
   if (strcmp(str,"typeB") == 0) return (void *) &typeB;
   if (strcmp(str,"cut_coul") == 0) return (void *) &cut_coul;
+  dim = 2;
+  if (strcmp(str,"epsilon") == 0) return (void *) epsilon;
+  if (strcmp(str,"sigma") == 0) return (void *) sigma;
   return NULL;
 }
 
@@ -599,4 +613,3 @@ double PairLJCutTIP4PLong::memory_usage()
   bytes += 2 * nmax * sizeof(double);
   return bytes;
 }
-

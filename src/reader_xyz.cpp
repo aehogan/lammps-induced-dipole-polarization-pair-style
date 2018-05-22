@@ -15,12 +15,13 @@
    Contributing author: Axel Kohlmeyer (Temple U)
 ------------------------------------------------------------------------- */
 
-#include "string.h"
-#include "stdlib.h"
+#include <string.h>
+#include <stdlib.h>
 #include "reader_xyz.h"
 #include "atom.h"
 #include "memory.h"
 #include "error.h"
+#include "force.h"
 
 using namespace LAMMPS_NS;
 
@@ -57,8 +58,16 @@ int ReaderXYZ::read_time(bigint &ntimestep)
   if (eof == NULL) return 1;
 
   // first line has to have the number of atoms
+  // truncate the string to the first whitespace,
+  //   so force->bnumeric() does not hiccup
 
-  natoms = ATOBIGINT(line);
+  for (int i=0; (i < MAXLINE) && (eof[i] != '\0'); ++i) {
+    if (eof[i] == '\n' || eof[i] == '\r' || eof[i] == ' ' || eof[i] == '\t') {
+      eof[i] = '\0';
+      break;
+    }
+  }
+  natoms = force->bnumeric(FLERR,line);
   if (natoms < 1)
     error->one(FLERR,"Dump file is incorrectly formatted");
 
@@ -98,7 +107,7 @@ void ReaderXYZ::skip()
    read remaining header info:
      return natoms
      box bounds, triclinic (inferred), fieldflag (1 if any fields not found),
-     xyz flag = UNSET (not a requested field), SCALED, UNSCALED
+     xyz flags = from input scaleflag & wrapflag
    if fieldflag set:
      match Nfield fields to per-atom column labels
      allocate and set fieldindex = which column each field maps to
@@ -111,7 +120,7 @@ void ReaderXYZ::skip()
 bigint ReaderXYZ::read_header(double box[3][3], int &triclinic,
                               int fieldinfo, int nfield,
                               int *fieldtype, char **fieldlabel,
-                              int scaledflag, int &fieldflag,
+                              int scaleflag, int wrapflag, int &fieldflag,
                               int &xflag, int &yflag, int &zflag)
 {
 
@@ -128,11 +137,11 @@ bigint ReaderXYZ::read_header(double box[3][3], int &triclinic,
   memory->create(fieldindex,nfield,"read_dump:fieldindex");
 
   // for xyz we know nothing about the style of coordinates,
-  // so the caller has to set the proper flag.
+  // so caller has to set the proper flags
 
-  xflag = scaledflag;
-  yflag = scaledflag;
-  zflag = scaledflag;
+  xflag = 2*scaleflag + wrapflag + 1;
+  yflag = 2*scaleflag + wrapflag + 1;
+  zflag = 2*scaleflag + wrapflag + 1;
 
   // copy fieldtype list for supported fields
 
@@ -203,13 +212,13 @@ void ReaderXYZ::read_atoms(int n, int nfield, double **fields)
 /* ----------------------------------------------------------------------
    read N lines from dump file
    only last one is saved in line
-   return NULL if end-of-file error, else non-NULL
    only called by proc 0
 ------------------------------------------------------------------------- */
 
 void ReaderXYZ::read_lines(int n)
 {
-  char *eof;
+  char *eof = NULL;
+  if (n <= 0) return;
   for (int i = 0; i < n; i++) eof = fgets(line,MAXLINE,fp);
-  if (eof == NULL) error->all(FLERR,"Unexpected end of dump file");
+  if (eof == NULL) error->one(FLERR,"Unexpected end of dump file");
 }

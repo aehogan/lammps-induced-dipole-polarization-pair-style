@@ -1,4 +1,4 @@
-/* ----------------------------------------------------------------------
+/* -*- c++ -*- ----------------------------------------------------------
    LAMMPS - Large-scale Atomic/Molecular Massively Parallel Simulator
    http://lammps.sandia.gov, Sandia National Laboratories
    Steve Plimpton, sjplimp@sandia.gov
@@ -39,3 +39,15 @@ class FixNVEBody : public FixNVE {
 }
 #endif
 #endif
+
+/* ERROR/WARNING messages:
+
+E: Fix nve/body requires atom style body
+
+Self-explanatory.
+
+E: Fix nve/body requires bodies
+
+This fix can only be used for particles that are bodies.
+
+*/

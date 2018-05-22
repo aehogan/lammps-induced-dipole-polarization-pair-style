@@ -15,10 +15,14 @@
    Contributing author: Timothy Sirk (ARL)
 ------------------------------------------------------------------------- */
 
+// lmptype.h must be first b/c this file uses MAXBIGINT and includes mpi.h
+// due to OpenMPI bug which sets INT64_MAX via its mpi.h
+//   before lmptype.h can set flags to insure it is done correctly
+
 #include "lmptype.h"
-#include "mpi.h"
-#include "string.h"
-#include "stdlib.h"
+#include <mpi.h>
+#include <string.h>
+#include <stdlib.h>
 #include "read_dump.h"
 #include "reader.h"
 #include "style_reader.h"
@@ -27,9 +31,13 @@
 #include "update.h"
 #include "modify.h"
 #include "fix.h"
+#include "compute.h"
 #include "domain.h"
 #include "comm.h"
+#include "force.h"
 #include "irregular.h"
+#include "input.h"
+#include "variable.h"
 #include "error.h"
 #include "memory.h"
 
@@ -38,8 +46,10 @@ using namespace LAMMPS_NS;
 #define CHUNK 1024
 #define EPSILON 1.0e-6
 
-enum{ID,TYPE,X,Y,Z,VX,VY,VZ,IX,IY,IZ};
-enum{UNSET,UNSCALED,SCALED};
+// also in reader_native.cpp
+
+enum{ID,TYPE,X,Y,Z,VX,VY,VZ,Q,IX,IY,IZ,FX,FY,FZ};
+enum{UNSET,NOSCALE_NOWRAP,NOSCALE_WRAP,SCALE_NOWRAP,SCALE_WRAP};
 
 /* ---------------------------------------------------------------------- */
 
@@ -92,7 +102,7 @@ void ReadDump::command(int narg, char **arg)
   if (narg < 2) error->all(FLERR,"Illegal read_dump command");
 
   store_files(1,&arg[0]);
-  bigint nstep = ATOBIGINT(arg[1]);
+  bigint nstep = force->bnumeric(FLERR,arg[1]);
 
   int nremain = narg - 2;
   if (nremain) nremain = fields_and_keywords(nremain,&arg[narg-nremain]);
@@ -198,7 +208,7 @@ void ReadDump::setup_reader(int narg, char **arg)
 
   // unrecognized style
 
-  else error->all(FLERR,"Invalid dump reader style");
+  else error->all(FLERR,"Unknown dump reader style");
 
   // pass any arguments to reader
 
@@ -298,7 +308,6 @@ bigint ReadDump::next(bigint ncurrent, bigint nlast, int nevery, int nskip)
 /* ----------------------------------------------------------------------
    read and broadcast and store snapshot header info
    set nsnapatoms = # of atoms in snapshot
-   set yindex,zindex
 ------------------------------------------------------------------------- */
 
 void ReadDump::header(int fieldinfo)
@@ -309,7 +318,8 @@ void ReadDump::header(int fieldinfo)
   if (me == 0)
     nsnapatoms = reader->read_header(box,triclinic_snap,
                                      fieldinfo,nfield,fieldtype,fieldlabel,
-                                     scaledflag,fieldflag,xflag,yflag,zflag);
+                                     scaleflag,wrapflag,fieldflag,
+                                     xflag,yflag,zflag);
 
   MPI_Bcast(&nsnapatoms,1,MPI_LMP_BIGINT,0,world);
   MPI_Bcast(&triclinic_snap,1,MPI_INT,0,world);
@@ -363,30 +373,51 @@ void ReadDump::header(int fieldinfo)
       error->one(FLERR,"Read_dump triclinic status does not match simulation");
   }
 
-  // error check field and scaling info
+  // error check on requested fields exisiting in dump file
 
   if (fieldflag < 0)
     error->one(FLERR,"Read_dump field not found in dump file");
 
-  // set overall scaling of coordinates
-  // error if x,y,z scaling are not the same
+  // all explicitly requested x,y,z must have consistent scaling & wrapping
 
-  scaled = MAX(xflag,yflag);
-  scaled = MAX(zflag,scaled);
-  if ((xflag != UNSET && xflag != scaled) ||
-      (yflag != UNSET && yflag != scaled) ||
-      (zflag != UNSET && zflag != scaled))
-    error->one(FLERR,"Read_dump x,y,z fields do not have consistent scaling");
+  int value = MAX(xflag,yflag);
+  value = MAX(zflag,value);
+  if ((xflag != UNSET && xflag != value) ||
+      (yflag != UNSET && yflag != value) ||
+      (zflag != UNSET && zflag != value))
+    error->one(FLERR,
+               "Read_dump xyz fields do not have consistent scaling/wrapping");
+
+  // set scaled/wrapped based on xyz flags
+
+  value = UNSET;
+  if (xflag != UNSET) value = xflag;
+  if (yflag != UNSET) value = yflag;
+  if (zflag != UNSET) value = zflag;
+
+  if (value == UNSET) {
+    scaled = wrapped = 0;
+  } else if (value == NOSCALE_NOWRAP) {
+    scaled = wrapped = 0;
+  } else if (value == NOSCALE_WRAP) {
+    scaled = 0;
+    wrapped = 1;
+  } else if (value == SCALE_NOWRAP) {
+    scaled = 1;
+    wrapped = 0;
+  } else if (value == SCALE_WRAP) {
+    scaled = wrapped = 1;
+  }
 
   // scaled, triclinic coords require all 3 x,y,z fields, to perform unscaling
   // set yindex,zindex = column index of Y and Z fields in fields array
   // needed for unscaling to absolute coords in xfield(), yfield(), zfield()
 
-  if (scaled == SCALED && triclinic == 1) {
+  if (scaled && triclinic == 1) {
     int flag = 0;
-    if (xflag != scaled) flag = 1;
-    if (yflag != scaled) flag = 1;
-    if (dimension == 3 && zflag != scaled) flag = 1;
+    if (xflag == UNSET) flag = 1;
+    if (yflag == UNSET) flag = 1;
+    if (dimension == 3 && zflag == UNSET) flag = 1;
     if (flag)
       error->one(FLERR,"All read_dump x,y,z fields must be specified for "
                  "scaled, triclinic coords");
@@ -421,7 +452,6 @@ void ReadDump::atoms()
   int mapflag = 0;
   if (atom->map_style == 0) {
     mapflag = 1;
-    atom->map_style = 1;
     atom->map_init();
     atom->map_set();
   }
@@ -454,11 +484,9 @@ void ReadDump::atoms()
   if (addflag) {
     bigint nblocal = atom->nlocal;
     MPI_Allreduce(&nblocal,&atom->natoms,1,MPI_LMP_BIGINT,MPI_SUM,world);
-    if (atom->natoms < 0 || atom->natoms > MAXBIGINT)
+    if (atom->natoms < 0 || atom->natoms >= MAXBIGINT)
       error->all(FLERR,"Too many total atoms");
-    // change these to MAXTAGINT when allow tagint = bigint
-    if (atom->natoms > MAXSMALLINT) atom->tag_enable = 0;
-    if (atom->natoms <= MAXSMALLINT) atom->tag_extend();
+    if (atom->tag_enable) atom->tag_extend();
   }
 
   // if trimflag set, delete atoms not replaced by snapshot atoms
@@ -520,16 +548,20 @@ void ReadDump::atoms()
   // use irregular() in case atoms moved a long distance
 
   double **x = atom->x;
-  tagint *image = atom->image;
+  imageint *image = atom->image;
   nlocal = atom->nlocal;
   for (int i = 0; i < nlocal; i++) domain->remap(x[i],image[i]);
 
   if (triclinic) domain->x2lamda(atom->nlocal);
   domain->reset_box();
   Irregular *irregular = new Irregular(lmp);
-  irregular->migrate_atoms();
+  irregular->migrate_atoms(1);
   delete irregular;
   if (triclinic) domain->lamda2x(atom->nlocal);
+
+  // check that atom IDs are valid
+
+  atom->tag_check();
 }
 
 /* ----------------------------------------------------------------------
@@ -560,16 +592,11 @@ int ReadDump::fields_and_keywords(int narg, char **arg)
 
   iarg = 0;
   while (iarg < narg) {
-    if (strcmp(arg[iarg],"x") == 0) fieldtype[nfield++] = X;
-    else if (strcmp(arg[iarg],"y") == 0) fieldtype[nfield++] = Y;
-    else if (strcmp(arg[iarg],"z") == 0) fieldtype[nfield++] = Z;
-    else if (strcmp(arg[iarg],"vx") == 0) fieldtype[nfield++] = VX;
-    else if (strcmp(arg[iarg],"vy") == 0) fieldtype[nfield++] = VY;
-    else if (strcmp(arg[iarg],"vz") == 0) fieldtype[nfield++] = VZ;
-    else if (strcmp(arg[iarg],"ix") == 0) fieldtype[nfield++] = IX;
-    else if (strcmp(arg[iarg],"iy") == 0) fieldtype[nfield++] = IY;
-    else if (strcmp(arg[iarg],"iz") == 0) fieldtype[nfield++] = IZ;
-    else break;
+    int type = whichtype(arg[iarg]);
+    if (type < 0) break;
+    if (type == Q && !atom->q_flag)
+      error->all(FLERR,"Read dump of atom property that isn't allocated");
+    fieldtype[nfield++] = type;
     iarg++;
   }
 
@@ -580,7 +607,8 @@ int ReadDump::fields_and_keywords(int narg, char **arg)
 
   if (dimension == 2) {
     for (int i = 0; i < nfield; i++)
-      if (fieldtype[i] == Z || fieldtype[i] == VZ || fieldtype[i] == IZ)
+      if (fieldtype[i] == Z || fieldtype[i] == VZ ||
+          fieldtype[i] == IZ || fieldtype[i] == FZ)
         error->all(FLERR,"Illegal read_dump command");
   }
 
@@ -597,7 +625,8 @@ int ReadDump::fields_and_keywords(int narg, char **arg)
   trimflag = 0;
   addflag = 0;
   for (int i = 0; i < nfield; i++) fieldlabel[i] = NULL;
-  scaledflag = UNSCALED;
+  scaleflag = 0;
+  wrapflag = 1;
 
   while (iarg < narg) {
     if (strcmp(arg[iarg],"box") == 0) {
@@ -632,9 +661,10 @@ int ReadDump::fields_and_keywords(int narg, char **arg)
       iarg += 2;
     } else if (strcmp(arg[iarg],"label") == 0) {
       if (iarg+3 > narg) error->all(FLERR,"Illegal read_dump command");
+      int type = whichtype(arg[iarg+1]);
       int i;
       for (i = 0; i < nfield; i++)
-        if (fieldlabel[i] && strcmp(arg[iarg+1],fieldlabel[i]) == 0) break;
+        if (type == fieldtype[i]) break;
       if (i == nfield) error->all(FLERR,"Illegal read_dump command");
       int n = strlen(arg[iarg+2]) + 1;
       fieldlabel[i] = new char[n];
@@ -642,8 +672,14 @@ int ReadDump::fields_and_keywords(int narg, char **arg)
       iarg += 3;
     } else if (strcmp(arg[iarg],"scaled") == 0) {
       if (iarg+2 > narg) error->all(FLERR,"Illegal read_dump command");
-      if (strcmp(arg[iarg+1],"yes") == 0) scaledflag = SCALED;
-      else if (strcmp(arg[iarg+1],"no") == 0) scaledflag = UNSCALED;
+      if (strcmp(arg[iarg+1],"yes") == 0) scaleflag = 1;
+      else if (strcmp(arg[iarg+1],"no") == 0) scaleflag = 0;
+      else error->all(FLERR,"Illegal read_dump command");
+      iarg += 2;
+    } else if (strcmp(arg[iarg],"wrapped") == 0) {
+      if (iarg+2 > narg) error->all(FLERR,"Illegal read_dump command");
+      if (strcmp(arg[iarg+1],"yes") == 0) wrapflag = 1;
+      else if (strcmp(arg[iarg+1],"no") == 0) wrapflag = 0;
       else error->all(FLERR,"Illegal read_dump command");
       iarg += 2;
     } else if (strcmp(arg[iarg],"format") == 0) {
@@ -664,6 +700,33 @@ int ReadDump::fields_and_keywords(int narg, char **arg)
 }
 
 /* ----------------------------------------------------------------------
+   check if str is a field argument
+   if yes, return index of which
+   if not, return -1
+------------------------------------------------------------------------- */
+
+int ReadDump::whichtype(char *str)
+{
+  int type = -1;
+  if (strcmp(str,"id") == 0) type = ID;
+  else if (strcmp(str,"type") == 0) type = TYPE;
+  else if (strcmp(str,"x") == 0) type = X;
+  else if (strcmp(str,"y") == 0) type = Y;
+  else if (strcmp(str,"z") == 0) type = Z;
+  else if (strcmp(str,"vx") == 0) type = VX;
+  else if (strcmp(str,"vy") == 0) type = VY;
+  else if (strcmp(str,"vz") == 0) type = VZ;
+  else if (strcmp(str,"q") == 0) type = Q;
+  else if (strcmp(str,"ix") == 0) type = IX;
+  else if (strcmp(str,"iy") == 0) type = IY;
+  else if (strcmp(str,"iz") == 0) type = IZ;
+  else if (strcmp(str,"fx") == 0) type = FX;
+  else if (strcmp(str,"fy") == 0) type = FY;
+  else if (strcmp(str,"fz") == 0) type = FZ;
+  return type;
+}
+
+/* ----------------------------------------------------------------------
    process each of N atoms in chunk read from dump file
    if in replace mode and atom ID matches current atom,
      overwrite atom info with fields from dump file
@@ -675,23 +738,28 @@ int ReadDump::fields_and_keywords(int narg, char **arg)
 
 void ReadDump::process_atoms(int n)
 {
-  int i,m,ifield,itype,itag;;
+  int i,m,ifield,itype;
   int xbox,ybox,zbox;
+  tagint tag;
 
   double **x = atom->x;
   double **v = atom->v;
-  tagint *image = atom->image;
+  double *q = atom->q;
+  double **f = atom->f;
+  imageint *image = atom->image;
   int nlocal = atom->nlocal;
-  int map_tag_max = atom->map_tag_max;
+  tagint map_tag_max = atom->map_tag_max;
 
   for (i = 0; i < n; i++) {
     ucflag[i] = 0;
 
     // check if new atom matches one I own
     // setting m = -1 forces new atom not to match
+    // NOTE: atom ID in fields is stored as double, not as ubuf
+    //       so can only cast it to tagint, thus cannot be full 64-bit ID
 
-    itag = static_cast<int> (fields[i][0]);
-    if (itag <= map_tag_max) m = atom->map(static_cast<int> (fields[i][0]));
+    tag = static_cast<tagint> (fields[i][0]);
+    if (tag <= map_tag_max) m = atom->map(tag);
     else m = -1;
     if (m < 0 || m >= nlocal) continue;
 
@@ -724,6 +792,9 @@ void ReadDump::process_atoms(int n)
         case VX:
           v[m][0] = fields[i][ifield];
           break;
+        case Q:
+          q[m] = fields[i][ifield];
+          break;
         case VY:
           v[m][1] = fields[i][ifield];
           break;
@@ -739,14 +810,25 @@ void ReadDump::process_atoms(int n)
         case IZ:
           zbox = static_cast<int> (fields[i][ifield]);
           break;
+        case FX:
+          f[m][0] = fields[i][ifield];
+          break;
+        case FY:
+          f[m][1] = fields[i][ifield];
+          break;
+        case FZ:
+          f[m][2] = fields[i][ifield];
+          break;
         }
       }
 
-      // replace image flag in case changed by ix,iy,iz fields
+      // replace image flag in case changed by ix,iy,iz fields or unwrapping
 
-      image[m] = ((tagint) (xbox + IMGMAX) & IMGMASK) | 
-        (((tagint) (ybox + IMGMAX) & IMGMASK) << IMGBITS) | 
-        (((tagint) (zbox + IMGMAX) & IMGMASK) << IMG2BITS);
+      if (!wrapped) xbox = ybox = zbox = 0;
+
+      image[m] = ((imageint) (xbox + IMGMAX) & IMGMASK) |
+        (((imageint) (ybox + IMGMAX) & IMGMASK) << IMGBITS) |
+        (((imageint) (zbox + IMGMAX) & IMGMASK) << IMG2BITS);
     }
   }
 
@@ -773,6 +855,7 @@ void ReadDump::process_atoms(int n)
     // create type and coord fields from dump file
     // coord = 0.0 unless corresponding dump file field was specified
 
+    itype = 0;
     one[0] = one[1] = one[2] = 0.0;
     for (ifield = 1; ifield < nfield; ifield++) {
       switch (fieldtype[ifield]) {
@@ -794,12 +877,13 @@ void ReadDump::process_atoms(int n)
     // create the atom on proc that owns it
     // reset v,image ptrs in case they are reallocated
 
+    m = atom->nlocal;
     atom->avec->create_atom(itype,one);
     nadd++;
 
     v = atom->v;
+    q = atom->q;
     image = atom->image;
-    m = atom->nlocal;
 
     // set atom attributes from other dump file fields
 
@@ -816,6 +900,9 @@ void ReadDump::process_atoms(int n)
       case VZ:
         v[m][2] = fields[i][ifield];
         break;
+      case Q:
+        q[m] = fields[i][ifield];
+        break;
       case IX:
         xbox = static_cast<int> (fields[i][ifield]);
         break;
@@ -829,22 +916,15 @@ void ReadDump::process_atoms(int n)
 
       // replace image flag in case changed by ix,iy,iz fields
 
-      image[m] = ((tagint) (xbox + IMGMAX) & IMGMASK) | 
-        (((tagint) (ybox + IMGMAX) & IMGMASK) << IMGBITS) | 
-        (((tagint) (zbox + IMGMAX) & IMGMASK) << IMG2BITS);
+      image[m] = ((imageint) (xbox + IMGMAX) & IMGMASK) |
+        (((imageint) (ybox + IMGMAX) & IMGMASK) << IMGBITS) |
+        (((imageint) (zbox + IMGMAX) & IMGMASK) << IMG2BITS);
     }
   }
 
-  // invoke set_arrays() for fixes that need initialization of new atoms
-  // same as in CreateAtoms
+  // init per-atom fix/compute/variable values for created atoms
 
-  nlocal = atom->nlocal;
-  for (m = 0; m < modify->nfix; m++) {
-    Fix *fix = modify->fix[m];
-    if (fix->create_attribute)
-      for (i = nlocal_previous; i < nlocal; i++)
-        fix->set_arrays(i);
-  }
+  atom->data_fix_compute_variable(nlocal_previous,atom->nlocal);
 }
 
 /* ----------------------------------------------------------------------
@@ -877,7 +957,7 @@ void ReadDump::delete_atoms()
 
 double ReadDump::xfield(int i, int j)
 {
-  if (scaled == UNSCALED) return fields[i][j];
+  if (!scaled) return fields[i][j];
   else if (!triclinic) return fields[i][j]*xprd + xlo;
   else if (dimension == 2)
     return xprd*fields[i][j] + xy*fields[i][yindex] + xlo;
@@ -886,7 +966,7 @@ double ReadDump::xfield(int i, int j)
 
 double ReadDump::yfield(int i, int j)
 {
-  if (scaled == UNSCALED) return fields[i][j];
+  if (!scaled) return fields[i][j];
   else if (!triclinic) return fields[i][j]*yprd + ylo;
   else if (dimension == 2) return yprd*fields[i][j] + ylo;
   return yprd*fields[i][j] + yz*fields[i][zindex] + ylo;
@@ -894,6 +974,6 @@ double ReadDump::yfield(int i, int j)
 
 double ReadDump::zfield(int i, int j)
 {
-  if (scaled == UNSCALED) return fields[i][j];
+  if (!scaled) return fields[i][j];
   return fields[i][j]*zprd + zlo;
 }

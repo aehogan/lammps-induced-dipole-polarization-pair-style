@@ -12,12 +12,13 @@
    Contributing author: Axel Kohlmeyer (Temple U)
 ------------------------------------------------------------------------- */
 
-#include "math.h"
+#include <math.h>
 #include "pair_gran_hooke_omp.h"
 #include "atom.h"
 #include "comm.h"
 #include "fix.h"
 #include "force.h"
+#include "memory.h"
 #include "neighbor.h"
 #include "neigh_list.h"
 
@@ -45,12 +46,23 @@ void PairGranHookeOMP::compute(int eflag, int vflag)
   const int nthreads = comm->nthreads;
   const int inum = list->inum;
 
-  // update body ptr and values for ghost atoms if using FixRigid masses
+  // update rigid body info for owned & ghost atoms if using FixRigid masses
+  // body[i] = which body atom I is in, -1 if none
+  // mass_body = mass of each rigid body
 
   if (fix_rigid && neighbor->ago == 0) {
     int tmp;
-    body = (int *) fix_rigid->extract("body",tmp);
-    mass_rigid = (double *) fix_rigid->extract("masstotal",tmp);
+    int *body = (int *) fix_rigid->extract("body",tmp);
+    double *mass_body = (double *) fix_rigid->extract("masstotal",tmp);
+    if (atom->nmax > nmax) {
+      memory->destroy(mass_rigid);
+      nmax = atom->nmax;
+      memory->create(mass_rigid,nmax,"pair:mass_rigid");
+    }
+    int nlocal = atom->nlocal;
+    for (int i = 0; i < nlocal; i++)
+      if (body[i] >= 0) mass_rigid[i] = mass_body[body[i]];
+      else mass_rigid[i] = 0.0;
     comm->forward_comm_pair(this);
   }
 
@@ -62,6 +74,7 @@ void PairGranHookeOMP::compute(int eflag, int vflag)
 
     loop_setup_thr(ifrom, ito, tid, inum, nthreads);
     ThrData *thr = fix->get_thr(tid);
+    thr->timer(Timer::START);
     ev_setup_thr(eflag, vflag, nall, eatom, vatom, thr);
 
     if (evflag)
@@ -71,6 +84,7 @@ void PairGranHookeOMP::compute(int eflag, int vflag)
       if (force->newton_pair) eval<0,1>(ifrom, ito, thr);
       else eval<0,0>(ifrom, ito, thr);
 
+    thr->timer(Timer::PAIR);
     reduce_thr(this, eflag, vflag, thr);
   } // end of omp parallel region
 }
@@ -78,7 +92,7 @@ void PairGranHookeOMP::compute(int eflag, int vflag)
 template <int EVFLAG, int NEWTON_PAIR>
 void PairGranHookeOMP::eval(int iifrom, int iito, ThrData * const thr)
 {
-  int i,j,ii,jj,jnum,itype,jtype;
+  int i,j,ii,jj,jnum;
   double xtmp,ytmp,ztmp,delx,dely,delz,fx,fy,fz;
   double radi,radj,radsum,rsq,r,rinv,rsqinv;
   double vr1,vr2,vr3,vnnr,vn1,vn2,vn3,vt1,vt2,vt3;
@@ -172,8 +186,8 @@ void PairGranHookeOMP::eval(int iifrom, int iito, ThrData * const thr)
           mj = mass[type[j]];
         }
         if (fix_rigid) {
-          if (body[i] >= 0) mi = mass_rigid[body[i]];
-          if (body[j] >= 0) mj = mass_rigid[body[j]];
+          if (mass_rigid[i] > 0.0) mi = mass_rigid[i];
+          if (mass_rigid[j] > 0.0) mj = mass_rigid[j];
         }
 
         meff = mi*mj / (mi+mj);

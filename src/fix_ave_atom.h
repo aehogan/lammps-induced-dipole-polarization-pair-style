@@ -1,4 +1,4 @@
-/* ----------------------------------------------------------------------
+/* -*- c++ -*- ----------------------------------------------------------
    LAMMPS - Large-scale Atomic/Molecular Massively Parallel Simulator
    http://lammps.sandia.gov, Sandia National Laboratories
    Steve Plimpton, sjplimp@sandia.gov
@@ -20,7 +20,7 @@ FixStyle(ave/atom,FixAveAtom)
 #ifndef LMP_FIX_AVE_ATOM_H
 #define LMP_FIX_AVE_ATOM_H
 
-#include "stdio.h"
+#include <stdio.h>
 #include "fix.h"
 
 namespace LAMMPS_NS {
@@ -36,15 +36,14 @@ class FixAveAtom : public Fix {
 
   double memory_usage();
   void grow_arrays(int);
-  void copy_arrays(int, int);
+  void copy_arrays(int, int, int);
   int pack_exchange(int, double *);
   int unpack_exchange(int, double *);
-  void reset_timestep(bigint);
 
  private:
   int nvalues;
   int nrepeat,irepeat;
-  bigint nvalid;
+  bigint nvalid,nvalid_last;
   int *which,*argindex,*value2index;
   char **ids;
   double **array;
@@ -118,9 +117,9 @@ E: Fix ave/atom variable is not atom-style variable
 
 A variable used by fix ave/atom must generate per-atom values.
 
-E: Fix ave/atom missed timestep
+E: Invalid timestep reset for fix ave/atom
 
-You cannot reset the timestep to a value beyond where the fix
-expects to next perform averaging.
+Resetting the timestep has invalidated the sequence of timesteps this
+fix needs to process.
 
 */

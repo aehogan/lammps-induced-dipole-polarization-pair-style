@@ -15,7 +15,7 @@
    Contributing author: Axel Kohlmeyer (Temple U)
 ------------------------------------------------------------------------- */
 
-#include "math.h"
+#include <math.h>
 #include "improper_ring_omp.h"
 #include "atom.h"
 #include "comm.h"
@@ -24,9 +24,11 @@
 #include "force.h"
 #include "update.h"
 #include "error.h"
+#include "math_special.h"
 
 #include "suffix.h"
 using namespace LAMMPS_NS;
+using namespace MathSpecial;
 
 #define TOLERANCE 0.05
 #define SMALL     0.001
@@ -60,22 +62,25 @@ void ImproperRingOMP::compute(int eflag, int vflag)
 
     loop_setup_thr(ifrom, ito, tid, inum, nthreads);
     ThrData *thr = fix->get_thr(tid);
+    thr->timer(Timer::START);
     ev_setup_thr(eflag, vflag, nall, eatom, vatom, thr);
 
-    if (evflag) {
-      if (eflag) {
-        if (force->newton_bond) eval<1,1,1>(ifrom, ito, thr);
-        else eval<1,1,0>(ifrom, ito, thr);
+    if (inum > 0) {
+      if (evflag) {
+        if (eflag) {
+          if (force->newton_bond) eval<1,1,1>(ifrom, ito, thr);
+          else eval<1,1,0>(ifrom, ito, thr);
+        } else {
+          if (force->newton_bond) eval<1,0,1>(ifrom, ito, thr);
+          else eval<1,0,0>(ifrom, ito, thr);
+        }
       } else {
-        if (force->newton_bond) eval<1,0,1>(ifrom, ito, thr);
-        else eval<1,0,0>(ifrom, ito, thr);
+        if (force->newton_bond) eval<0,0,1>(ifrom, ito, thr);
+        else eval<0,0,0>(ifrom, ito, thr);
       }
-    } else {
-      if (force->newton_bond) eval<0,0,1>(ifrom, ito, thr);
-      else eval<0,0,0>(ifrom, ito, thr);
+    thr->timer(Timer::BOND);
+      reduce_thr(this, eflag, vflag, thr);
     }
-
-    reduce_thr(this, eflag, vflag, thr);
   } // end of omp parallel region
 }
 
@@ -167,7 +172,7 @@ void ImproperRingOMP::eval(int nfrom, int nto, ThrData * const thr)
       /* Append the current angle to the sum of angle differences. */
       angle_summer += (bend_angle[icomb] - chi[type]);
     }
-    if (EFLAG) eimproper = (1.0/6.0) *k[type] * pow(angle_summer,6.0);
+    if (EFLAG) eimproper = (1.0/6.0) *k[type] * powint(angle_summer,6);
     /*
       printf("The tags: %d-%d-%d-%d, of type %d .\n",atom->tag[i1],atom->tag[i2],atom->tag[i3],atom->tag[i4],type);
       // printf("The coordinates of the first: %f, %f, %f.\n", x[i1][0], x[i1][1], x[i1][2]);
@@ -181,7 +186,7 @@ void ImproperRingOMP::eval(int nfrom, int nto, ThrData * const thr)
 
     /* Force calculation acting on all atoms.
        Calculate the derivatives of the potential. */
-    angfac = k[type] * pow(angle_summer,5.0);
+    angfac = k[type] * powint(angle_summer,5);
 
     f1[0] = 0.0; f1[1] = 0.0; f1[2] = 0.0;
     f3[0] = 0.0; f3[1] = 0.0; f3[2] = 0.0;
@@ -201,7 +206,7 @@ void ImproperRingOMP::eval(int nfrom, int nto, ThrData * const thr)
         cfact2 = ckjji / ckjkj;
         cfact3 = ckjji / cjiji;
 
-        /* Calculate the force acted on the thrid atom of the angle. */
+        /* Calculate the force acted on the third atom of the angle. */
         fkx = cfact2 * bvec2x[icomb] - bvec1x[icomb];
         fky = cfact2 * bvec2y[icomb] - bvec1y[icomb];
         fkz = cfact2 * bvec2z[icomb] - bvec1z[icomb];

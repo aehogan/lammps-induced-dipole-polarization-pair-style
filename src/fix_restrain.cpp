@@ -16,9 +16,9 @@
      support for bond and angle restraints by Andres Jaramillo-Botero (Caltech)
 ------------------------------------------------------------------------- */
 
-#include "math.h"
-#include "string.h"
-#include "stdlib.h"
+#include <math.h>
+#include <string.h>
+#include <stdlib.h>
 #include "fix_restrain.h"
 #include "atom.h"
 #include "force.h"
@@ -44,21 +44,21 @@ enum{BOND,ANGLE,DIHEDRAL};
 /* ---------------------------------------------------------------------- */
 
 FixRestrain::FixRestrain(LAMMPS *lmp, int narg, char **arg) :
-  Fix(lmp, narg, arg)
+  Fix(lmp, narg, arg),
+  rstyle(NULL), ids(NULL), kstart(NULL), kstop(NULL), target(NULL),
+  cos_target(NULL), sin_target(NULL)
 {
   if (narg < 4) error->all(FLERR,"Illegal fix restrain command");
 
   scalar_flag = 1;
   global_freq = 1;
   extscalar = 1;
+  respa_level_support = 1;
+  ilevel_respa = 0;
 
   // parse args
 
   nrestrain = maxrestrain = 0;
-  rstyle = NULL;
-  ids = NULL;
-  kstart = kstop = NULL;
-  target = cos_target = sin_target = NULL;
 
   int iarg = 3;
   while (iarg < narg) {
@@ -76,33 +76,33 @@ FixRestrain::FixRestrain(LAMMPS *lmp, int narg, char **arg) :
     if (strcmp(arg[iarg],"bond") == 0) {
       if (iarg+6 > narg) error->all(FLERR,"Illegal fix restrain command");
       rstyle[nrestrain] = BOND;
-      ids[nrestrain][0] = atoi(arg[iarg+1]);
-      ids[nrestrain][1] = atoi(arg[iarg+2]);
-      kstart[nrestrain] = force->numeric(arg[iarg+3]);
-      kstop[nrestrain] = force->numeric(arg[iarg+4]);
-      target[nrestrain] = force->numeric(arg[iarg+5]);
+      ids[nrestrain][0] = force->inumeric(FLERR,arg[iarg+1]);
+      ids[nrestrain][1] = force->inumeric(FLERR,arg[iarg+2]);
+      kstart[nrestrain] = force->numeric(FLERR,arg[iarg+3]);
+      kstop[nrestrain] = force->numeric(FLERR,arg[iarg+4]);
+      target[nrestrain] = force->numeric(FLERR,arg[iarg+5]);
       iarg += 6;
     } else if (strcmp(arg[iarg],"angle") == 0) {
       if (iarg+7 > narg) error->all(FLERR,"Illegal fix restrain command");
       rstyle[nrestrain] = ANGLE;
-      ids[nrestrain][0] = atoi(arg[iarg+1]);
-      ids[nrestrain][1] = atoi(arg[iarg+2]);
-      ids[nrestrain][2] = atoi(arg[iarg+3]);
-      kstart[nrestrain] = force->numeric(arg[iarg+4]);
-      kstop[nrestrain] = force->numeric(arg[iarg+5]);
-      target[nrestrain] = force->numeric(arg[iarg+6]);
+      ids[nrestrain][0] = force->inumeric(FLERR,arg[iarg+1]);
+      ids[nrestrain][1] = force->inumeric(FLERR,arg[iarg+2]);
+      ids[nrestrain][2] = force->inumeric(FLERR,arg[iarg+3]);
+      kstart[nrestrain] = force->numeric(FLERR,arg[iarg+4]);
+      kstop[nrestrain] = force->numeric(FLERR,arg[iarg+5]);
+      target[nrestrain] = force->numeric(FLERR,arg[iarg+6]);
       target[nrestrain] *= MY_PI / 180.0;
       iarg += 7;
     } else if (strcmp(arg[iarg],"dihedral") == 0) {
       if (iarg+8 > narg) error->all(FLERR,"Illegal fix restrain command");
       rstyle[nrestrain] = DIHEDRAL;
-      ids[nrestrain][0] = atoi(arg[iarg+1]);
-      ids[nrestrain][1] = atoi(arg[iarg+2]);
-      ids[nrestrain][2] = atoi(arg[iarg+3]);
-      ids[nrestrain][3] = atoi(arg[iarg+4]);
-      kstart[nrestrain] = force->numeric(arg[iarg+5]);
-      kstop[nrestrain] = force->numeric(arg[iarg+6]);
-      target[nrestrain] = force->numeric(arg[iarg+7]);
+      ids[nrestrain][0] = force->inumeric(FLERR,arg[iarg+1]);
+      ids[nrestrain][1] = force->inumeric(FLERR,arg[iarg+2]);
+      ids[nrestrain][2] = force->inumeric(FLERR,arg[iarg+3]);
+      ids[nrestrain][3] = force->inumeric(FLERR,arg[iarg+4]);
+      kstart[nrestrain] = force->numeric(FLERR,arg[iarg+5]);
+      kstop[nrestrain] = force->numeric(FLERR,arg[iarg+6]);
+      target[nrestrain] = force->numeric(FLERR,arg[iarg+7]);
       target[nrestrain] *= MY_PI / 180.0;
       cos_target[nrestrain] = cos(target[nrestrain]);
       sin_target[nrestrain] = sin(target[nrestrain]);
@@ -147,8 +147,10 @@ int FixRestrain::setmask()
 
 void FixRestrain::init()
 {
-  if (strcmp(update->integrate_style,"respa") == 0)
-    nlevels_respa = ((Respa *) update->integrate)->nlevels;
+  if (strstr(update->integrate_style,"respa")) {
+    ilevel_respa = ((Respa *) update->integrate)->nlevels-1;
+    if (respa_level >= 0) ilevel_respa = MIN(respa_level,ilevel_respa);
+  }
 }
 
 /* ---------------------------------------------------------------------- */
@@ -158,9 +160,9 @@ void FixRestrain::setup(int vflag)
   if (strcmp(update->integrate_style,"verlet") == 0)
     post_force(vflag);
   else {
-    ((Respa *) update->integrate)->copy_flevel_f(nlevels_respa-1);
-    post_force_respa(vflag,nlevels_respa-1,0);
-    ((Respa *) update->integrate)->copy_f_flevel(nlevels_respa-1);
+    ((Respa *) update->integrate)->copy_flevel_f(ilevel_respa);
+    post_force_respa(vflag,ilevel_respa,0);
+    ((Respa *) update->integrate)->copy_f_flevel(ilevel_respa);
   }
 }
 
@@ -187,7 +189,7 @@ void FixRestrain::post_force(int vflag)
 
 void FixRestrain::post_force_respa(int vflag, int ilevel, int iloop)
 {
-  if (ilevel == nlevels_respa-1) post_force(vflag);
+  if (ilevel == ilevel_respa) post_force(vflag);
 }
 
 /* ---------------------------------------------------------------------- */
@@ -512,7 +514,9 @@ void FixRestrain::restrain_dihedral(int m)
     MPI_Comm_rank(world,&me);
     if (screen) {
       char str[128];
-      sprintf(str,"Restrain problem: %d " BIGINT_FORMAT " %d %d %d %d",
+      sprintf(str,"Restrain problem: %d " BIGINT_FORMAT " "
+              TAGINT_FORMAT " " TAGINT_FORMAT " "
+              TAGINT_FORMAT " " TAGINT_FORMAT,
               me,update->ntimestep,
               atom->tag[i1],atom->tag[i2],atom->tag[i3],atom->tag[i4]);
       error->warning(FLERR,str);

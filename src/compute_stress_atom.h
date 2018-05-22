@@ -1,4 +1,4 @@
-/* ----------------------------------------------------------------------
+/* -*- c++ -*- ----------------------------------------------------------
    LAMMPS - Large-scale Atomic/Molecular Massively Parallel Simulator
    http://lammps.sandia.gov, Sandia National Laboratories
    Steve Plimpton, sjplimp@sandia.gov
@@ -28,7 +28,7 @@ class ComputeStressAtom : public Compute {
  public:
   ComputeStressAtom(class LAMMPS *, int, char **);
   ~ComputeStressAtom();
-  void init() {}
+  void init();
   void compute_peratom();
   int pack_reverse_comm(int, int, double *);
   void unpack_reverse_comm(int, int *, double *);
@@ -36,7 +36,10 @@ class ComputeStressAtom : public Compute {
 
  private:
   int keflag,pairflag,bondflag,angleflag,dihedralflag,improperflag;
-  int kspaceflag,fixflag;
+  int kspaceflag,fixflag,biasflag;
+  Compute *temperature;
+  char *id_temp;
+
   int nmax;
   double **stress;
 };
@@ -53,6 +56,14 @@ E: Illegal ... command
 Self-explanatory.  Check the input script syntax and compare to the
 documentation for the command.  You can use -echo screen as a
 command-line option when running LAMMPS to see the offending line.
+
+E: Could not find compute stress/atom temperature ID
+
+Self-explanatory.
+
+E: Compute stress/atom temperature ID does not compute temperature
+
+The specified compute must compute temperature.
 
 E: Per-atom virial was not tallied on needed timestep
 

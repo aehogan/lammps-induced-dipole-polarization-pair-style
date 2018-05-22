@@ -1,4 +1,4 @@
-/* ----------------------------------------------------------------------
+/* -*- c++ -*- ----------------------------------------------------------
    LAMMPS - Large-scale Atomic/Molecular Massively Parallel Simulator
    http://lammps.sandia.gov, Sandia National Laboratories
    Steve Plimpton, sjplimp@sandia.gov
@@ -29,18 +29,19 @@ class ComputeTempCOM : public Compute {
   ComputeTempCOM(class LAMMPS *, int, char **);
   ~ComputeTempCOM();
   void init();
+  void setup();
   double compute_scalar();
   void compute_vector();
 
   void remove_bias(int, double *);
+  void remove_bias_thr(int, double *, double *);
   void remove_bias_all();
   void restore_bias(int, double *);
   void restore_bias_all();
+  void restore_bias_thr(int, double *, double *);
 
  private:
-  int fix_dof;
   double tfactor,masstotal;
-  double vbias[3];    // stored velocity bias for one atom
 
   void dof_compute();
 
@@ -58,5 +59,10 @@ E: Illegal ... command
 Self-explanatory.  Check the input script syntax and compare to the
 documentation for the command.  You can use -echo screen as a
 command-line option when running LAMMPS to see the offending line.
+
+E: Temperature compute degrees of freedom < 0
+
+This should not happen if you are calculating the temperature
+on a valid set of atoms.
 
 */

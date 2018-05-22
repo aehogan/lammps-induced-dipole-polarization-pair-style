@@ -7,9 +7,9 @@
 #include <stdexcept>
 #include <string>
 
-# ifndef _WIN32
+#if !defined(_WIN32) || defined(__MINGW32__)
 # include <typeinfo>
-# endif
+#endif
 
 
 /// this specifies whether to put file/line info in error messages
@@ -208,7 +208,7 @@ public:
   virtual void log_text(int level, const char *messtype, const char *messtext){
     if(descriptor!="") // descriptor is used as header
       printf("%s:\n",descriptor.c_str());
-    if(messtype!="")
+    if(string(messtype)!=string(""))
       printf("%s: ",messtype);
     printf("%s\n",messtext);
   }

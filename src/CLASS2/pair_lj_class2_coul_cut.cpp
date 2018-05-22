@@ -11,9 +11,9 @@
    See the README file in the top-level LAMMPS directory.
 ------------------------------------------------------------------------- */
 
-#include "math.h"
-#include "stdio.h"
-#include "stdlib.h"
+#include <math.h>
+#include <stdio.h>
+#include <stdlib.h>
 #include "pair_lj_class2_coul_cut.h"
 #include "atom.h"
 #include "comm.h"
@@ -29,27 +29,32 @@ using namespace MathConst;
 
 /* ---------------------------------------------------------------------- */
 
-PairLJClass2CoulCut::PairLJClass2CoulCut(LAMMPS *lmp) : Pair(lmp) {}
+PairLJClass2CoulCut::PairLJClass2CoulCut(LAMMPS *lmp) : Pair(lmp)
+{
+  writedata = 1;
+}
 
 /* ---------------------------------------------------------------------- */
 
 PairLJClass2CoulCut::~PairLJClass2CoulCut()
 {
-  if (allocated) {
-    memory->destroy(setflag);
-    memory->destroy(cutsq);
+  if (!copymode) {
+    if (allocated) {
+      memory->destroy(setflag);
+      memory->destroy(cutsq);
 
-    memory->destroy(cut_lj);
-    memory->destroy(cut_ljsq);
-    memory->destroy(cut_coul);
-    memory->destroy(cut_coulsq);
-    memory->destroy(epsilon);
-    memory->destroy(sigma);
-    memory->destroy(lj1);
-    memory->destroy(lj2);
-    memory->destroy(lj3);
-    memory->destroy(lj4);
-    memory->destroy(offset);
+      memory->destroy(cut_lj);
+      memory->destroy(cut_ljsq);
+      memory->destroy(cut_coul);
+      memory->destroy(cut_coulsq);
+      memory->destroy(epsilon);
+      memory->destroy(sigma);
+      memory->destroy(lj1);
+      memory->destroy(lj2);
+      memory->destroy(lj3);
+      memory->destroy(lj4);
+      memory->destroy(offset);
+    }
   }
 }
 
@@ -188,16 +193,16 @@ void PairLJClass2CoulCut::settings(int narg, char **arg)
 {
   if (narg < 1 || narg > 2) error->all(FLERR,"Illegal pair_style command");
 
-  cut_lj_global = force->numeric(arg[0]);
+  cut_lj_global = force->numeric(FLERR,arg[0]);
   if (narg == 1) cut_coul_global = cut_lj_global;
-  else cut_coul_global = force->numeric(arg[1]);
+  else cut_coul_global = force->numeric(FLERR,arg[1]);
 
   // reset cutoffs that have been explicitly set
 
   if (allocated) {
     int i,j;
     for (i = 1; i <= atom->ntypes; i++)
-      for (j = i+1; j <= atom->ntypes; j++)
+      for (j = i; j <= atom->ntypes; j++)
         if (setflag[i][j]) {
           cut_lj[i][j] = cut_lj_global;
           cut_coul[i][j] = cut_coul_global;
@@ -215,16 +220,16 @@ void PairLJClass2CoulCut::coeff(int narg, char **arg)
   if (!allocated) allocate();
 
   int ilo,ihi,jlo,jhi;
-  force->bounds(arg[0],atom->ntypes,ilo,ihi);
-  force->bounds(arg[1],atom->ntypes,jlo,jhi);
+  force->bounds(FLERR,arg[0],atom->ntypes,ilo,ihi);
+  force->bounds(FLERR,arg[1],atom->ntypes,jlo,jhi);
 
-  double epsilon_one = force->numeric(arg[2]);
-  double sigma_one = force->numeric(arg[3]);
+  double epsilon_one = force->numeric(FLERR,arg[2]);
+  double sigma_one = force->numeric(FLERR,arg[3]);
 
   double cut_lj_one = cut_lj_global;
   double cut_coul_one = cut_coul_global;
-  if (narg >= 5) cut_coul_one = cut_lj_one = force->numeric(arg[4]);
-  if (narg == 6) cut_coul_one = force->numeric(arg[5]);
+  if (narg >= 5) cut_coul_one = cut_lj_one = force->numeric(FLERR,arg[4]);
+  if (narg == 6) cut_coul_one = force->numeric(FLERR,arg[5]);
 
   int count = 0;
   for (int i = ilo; i <= ihi; i++) {
@@ -250,7 +255,7 @@ void PairLJClass2CoulCut::init_style()
   if (!atom->q_flag)
     error->all(FLERR,"Pair style lj/class2/coul/cut requires atom attribute q");
 
-  neighbor->request(this);
+  neighbor->request(this,instance_me);
 }
 
 /* ----------------------------------------------------------------------
@@ -281,7 +286,7 @@ double PairLJClass2CoulCut::init_one(int i, int j)
   lj3[i][j] = 2.0 * epsilon[i][j] * pow(sigma[i][j],9.0);
   lj4[i][j] = 3.0 * epsilon[i][j] * pow(sigma[i][j],6.0);
 
-  if (offset_flag) {
+  if (offset_flag && (cut_lj[i][j] > 0.0)) {
     double ratio = sigma[i][j] / cut_lj[i][j];
     offset[i][j] = epsilon[i][j] * (2.0*pow(ratio,9.0) - 3.0*pow(ratio,6.0));
   } else offset[i][j] = 0.0;
@@ -404,6 +409,27 @@ void PairLJClass2CoulCut::read_restart_settings(FILE *fp)
   MPI_Bcast(&offset_flag,1,MPI_INT,0,world);
   MPI_Bcast(&mix_flag,1,MPI_INT,0,world);
   MPI_Bcast(&tail_flag,1,MPI_INT,0,world);
+}
+
+/* ----------------------------------------------------------------------
+   proc 0 writes to data file
+------------------------------------------------------------------------- */
+
+void PairLJClass2CoulCut::write_data(FILE *fp)
+{
+  for (int i = 1; i <= atom->ntypes; i++)
+    fprintf(fp,"%d %g %g\n",i,epsilon[i][i],sigma[i][i]);
+}
+
+/* ----------------------------------------------------------------------
+   proc 0 writes all pairs to data file
+------------------------------------------------------------------------- */
+
+void PairLJClass2CoulCut::write_data_all(FILE *fp)
+{
+  for (int i = 1; i <= atom->ntypes; i++)
+    for (int j = i; j <= atom->ntypes; j++)
+      fprintf(fp,"%d %d %g %g %g\n",i,j,epsilon[i][j],sigma[i][j],cut_lj[i][j]);
 }
 
 /* ---------------------------------------------------------------------- */

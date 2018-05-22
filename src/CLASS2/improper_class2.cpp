@@ -15,9 +15,9 @@
    Contributing author: Eric Simon (Cray)
 ------------------------------------------------------------------------- */
 
-#include "math.h"
-#include "string.h"
-#include "stdlib.h"
+#include <math.h>
+#include <string.h>
+#include <stdlib.h>
 #include "improper_class2.h"
 #include "atom.h"
 #include "neighbor.h"
@@ -36,12 +36,17 @@ using namespace MathConst;
 
 /* ---------------------------------------------------------------------- */
 
-ImproperClass2::ImproperClass2(LAMMPS *lmp) : Improper(lmp) {}
+ImproperClass2::ImproperClass2(LAMMPS *lmp) : Improper(lmp)
+{
+  writedata = 1;
+}
 
 /* ---------------------------------------------------------------------- */
 
 ImproperClass2::~ImproperClass2()
 {
+  if (copymode) return;
+
   if (allocated) {
     memory->destroy(setflag);
     memory->destroy(setflag_i);
@@ -153,8 +158,9 @@ void ImproperClass2::compute(int eflag, int vflag)
         MPI_Comm_rank(world,&me);
         if (screen) {
           char str[128];
-          sprintf(str,
-                  "Improper problem: %d " BIGINT_FORMAT " %d %d %d %d",
+          sprintf(str,"Improper problem: %d " BIGINT_FORMAT " "
+                  TAGINT_FORMAT " " TAGINT_FORMAT " "
+                  TAGINT_FORMAT " " TAGINT_FORMAT,
                   me,update->ntimestep,
                   atom->tag[i1],atom->tag[i2],atom->tag[i3],atom->tag[i4]);
           error->warning(FLERR,str,0);
@@ -525,19 +531,19 @@ void ImproperClass2::coeff(int narg, char **arg)
   if (!allocated) allocate();
 
   int ilo,ihi;
-  force->bounds(arg[0],atom->nimpropertypes,ilo,ihi);
+  force->bounds(FLERR,arg[0],atom->nimpropertypes,ilo,ihi);
 
   int count = 0;
 
   if (strcmp(arg[1],"aa") == 0) {
     if (narg != 8) error->all(FLERR,"Incorrect args for improper coefficients");
 
-    double k1_one = force->numeric(arg[2]);
-    double k2_one = force->numeric(arg[3]);
-    double k3_one = force->numeric(arg[4]);
-    double theta0_1_one = force->numeric(arg[5]);
-    double theta0_2_one = force->numeric(arg[6]);
-    double theta0_3_one = force->numeric(arg[7]);
+    double k1_one = force->numeric(FLERR,arg[2]);
+    double k2_one = force->numeric(FLERR,arg[3]);
+    double k3_one = force->numeric(FLERR,arg[4]);
+    double theta0_1_one = force->numeric(FLERR,arg[5]);
+    double theta0_2_one = force->numeric(FLERR,arg[6]);
+    double theta0_3_one = force->numeric(FLERR,arg[7]);
 
     // convert theta0's from degrees to radians
 
@@ -555,8 +561,8 @@ void ImproperClass2::coeff(int narg, char **arg)
   } else {
     if (narg != 3) error->all(FLERR,"Incorrect args for improper coefficients");
 
-    double k0_one = force->numeric(arg[1]);
-    double chi0_one = force->numeric(arg[2]);
+    double k0_one = force->numeric(FLERR,arg[1]);
+    double chi0_one = force->numeric(FLERR,arg[2]);
 
     // convert chi0 from degrees to radians
 
@@ -652,6 +658,9 @@ void ImproperClass2::angleangle(int eflag, int vflag)
     i3 = improperlist[n][2];
     i4 = improperlist[n][3];
     type = improperlist[n][4];
+
+    if ((aa_k1[type] == 0.0) && (aa_k2[type] == 0.0)
+        && (aa_k3[type] == 0.0)) continue;
 
     // difference vectors
 
@@ -812,7 +821,8 @@ void ImproperClass2::angleangle(int eflag, int vflag)
     if (evflag)
       ev_tally(i1,i2,i3,i4,nlocal,newton_bond,eimproper,
                fabcd[0],fabcd[2],fabcd[3],
-               delxAB,delyAB,delzAB,delxBC,delyBC,delzBC,delxBD,delyBD,delzBD);
+               delxAB,delyAB,delzAB,delxBC,delyBC,delzBC,
+               delxBD-delxBC,delyBD-delyBC,delzBD-delzBC);
   }
 }
 
@@ -834,4 +844,20 @@ void ImproperClass2::cross(double *a, double *b, double *c)
 double ImproperClass2::dot(double *a, double *b)
 {
   return (a[0]*b[0] + a[1]*b[1] + a[2]*b[2]);
+}
+
+/* ----------------------------------------------------------------------
+   proc 0 writes to data file
+------------------------------------------------------------------------- */
+
+void ImproperClass2::write_data(FILE *fp)
+{
+  for (int i = 1; i <= atom->nimpropertypes; i++)
+    fprintf(fp,"%d %g %g\n",i,k0[i],chi0[i]);
+
+  fprintf(fp,"\nAngleAngle Coeffs\n\n");
+  for (int i = 1; i <= atom->nimpropertypes; i++)
+    fprintf(fp,"%d %g %g %g %g %g %g\n",i,aa_k1[i],aa_k2[i],aa_k3[i],
+            aa_theta0_1[i]*180.0/MY_PI,aa_theta0_2[i]*180.0/MY_PI,
+            aa_theta0_3[i]*180.0/MY_PI);
 }

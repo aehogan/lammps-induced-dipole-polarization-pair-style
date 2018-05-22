@@ -11,10 +11,10 @@
    See the README file in the top-level LAMMPS directory.
 ------------------------------------------------------------------------- */
 
-#include "math.h"
-#include "stdio.h"
-#include "stdlib.h"
-#include "string.h"
+#include <math.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
 #include "pair_buck.h"
 #include "atom.h"
 #include "comm.h"
@@ -29,12 +29,17 @@ using namespace MathConst;
 
 /* ---------------------------------------------------------------------- */
 
-PairBuck::PairBuck(LAMMPS *lmp) : Pair(lmp) {}
+PairBuck::PairBuck(LAMMPS *lmp) : Pair(lmp)
+{
+  writedata = 1;
+}
 
 /* ---------------------------------------------------------------------- */
 
 PairBuck::~PairBuck()
 {
+  if (copymode) return;
+
   if (allocated) {
     memory->destroy(setflag);
     memory->destroy(cutsq);
@@ -164,14 +169,14 @@ void PairBuck::settings(int narg, char **arg)
 {
   if (narg != 1) error->all(FLERR,"Illegal pair_style command");
 
-  cut_global = force->numeric(arg[0]);
+  cut_global = force->numeric(FLERR,arg[0]);
 
   // reset cutoffs that have been explicitly set
 
   if (allocated) {
     int i,j;
     for (i = 1; i <= atom->ntypes; i++)
-      for (j = i+1; j <= atom->ntypes; j++)
+      for (j = i; j <= atom->ntypes; j++)
         if (setflag[i][j]) cut[i][j] = cut_global;
   }
 }
@@ -182,20 +187,21 @@ void PairBuck::settings(int narg, char **arg)
 
 void PairBuck::coeff(int narg, char **arg)
 {
-  if (narg < 5 || narg > 6) error->all(FLERR,"Incorrect args for pair coefficients");
+  if (narg < 5 || narg > 6)
+    error->all(FLERR,"Incorrect args for pair coefficients");
   if (!allocated) allocate();
 
   int ilo,ihi,jlo,jhi;
-  force->bounds(arg[0],atom->ntypes,ilo,ihi);
-  force->bounds(arg[1],atom->ntypes,jlo,jhi);
+  force->bounds(FLERR,arg[0],atom->ntypes,ilo,ihi);
+  force->bounds(FLERR,arg[1],atom->ntypes,jlo,jhi);
 
-  double a_one = force->numeric(arg[2]);
-  double rho_one = force->numeric(arg[3]);
+  double a_one = force->numeric(FLERR,arg[2]);
+  double rho_one = force->numeric(FLERR,arg[3]);
   if (rho_one <= 0) error->all(FLERR,"Incorrect args for pair coefficients");
-  double c_one = force->numeric(arg[4]);
+  double c_one = force->numeric(FLERR,arg[4]);
 
   double cut_one = cut_global;
-  if (narg == 6) cut_one = force->numeric(arg[5]);
+  if (narg == 6) cut_one = force->numeric(FLERR,arg[5]);
 
   int count = 0;
   for (int i = ilo; i <= ihi; i++) {
@@ -224,7 +230,7 @@ double PairBuck::init_one(int i, int j)
   buck1[i][j] = a[i][j]/rho[i][j];
   buck2[i][j] = 6.0*c[i][j];
 
-  if (offset_flag) {
+  if (offset_flag && (cut[i][j] > 0.0)) {
     double rexp = exp(-cut[i][j]/rho[i][j]);
     offset[i][j] = a[i][j]*rexp - c[i][j]/pow(cut[i][j],6.0);
   } else offset[i][j] = 0.0;
@@ -348,6 +354,28 @@ void PairBuck::read_restart_settings(FILE *fp)
   MPI_Bcast(&offset_flag,1,MPI_INT,0,world);
   MPI_Bcast(&mix_flag,1,MPI_INT,0,world);
   MPI_Bcast(&tail_flag,1,MPI_INT,0,world);
+}
+
+/* ----------------------------------------------------------------------
+   proc 0 writes to data file
+------------------------------------------------------------------------- */
+
+void PairBuck::write_data(FILE *fp)
+{
+  for (int i = 1; i <= atom->ntypes; i++)
+    fprintf(fp,"%d %g %g %g\n",i,a[i][i],rho[i][i],c[i][i]);
+}
+
+/* ----------------------------------------------------------------------
+   proc 0 writes all pairs to data file
+------------------------------------------------------------------------- */
+
+void PairBuck::write_data_all(FILE *fp)
+{
+  for (int i = 1; i <= atom->ntypes; i++)
+    for (int j = i; j <= atom->ntypes; j++)
+      fprintf(fp,"%d %d %g %g %g %g\n",i,j,
+              a[i][j],rho[i][j],c[i][j],cut[i][j]);
 }
 
 /* ---------------------------------------------------------------------- */

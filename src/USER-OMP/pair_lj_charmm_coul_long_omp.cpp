@@ -12,7 +12,7 @@
    Contributing author: Axel Kohlmeyer (Temple U)
 ------------------------------------------------------------------------- */
 
-#include "math.h"
+#include <math.h>
 #include "pair_lj_charmm_coul_long_omp.h"
 #include "atom.h"
 #include "comm.h"
@@ -53,6 +53,7 @@ void PairLJCharmmCoulLongOMP::compute(int eflag, int vflag)
 
     loop_setup_thr(ifrom, ito, tid, inum, nthreads);
     ThrData *thr = fix->get_thr(tid);
+    thr->timer(Timer::START);
     ev_setup_thr(eflag, vflag, nall, eatom, vatom, thr);
 
     if (evflag) {
@@ -68,6 +69,7 @@ void PairLJCharmmCoulLongOMP::compute(int eflag, int vflag)
       else eval<0,0,0>(ifrom, ito, thr);
     }
 
+    thr->timer(Timer::PAIR);
     reduce_thr(this, eflag, vflag, thr);
   } // end of omp parallel region
 }
@@ -78,12 +80,12 @@ template <int EVFLAG, int EFLAG, int NEWTON_PAIR>
 void PairLJCharmmCoulLongOMP::eval(int iifrom, int iito, ThrData * const thr)
 {
 
-  const double * const * const x = atom->x;
-  double * const * const f = thr->get_f();
-  const double * const q = atom->q;
-  const int * const type = atom->type;
-  const double * const special_coul = force->special_coul;
-  const double * const special_lj = force->special_lj;
+  const dbl3_t * _noalias const x = (dbl3_t *) atom->x[0];
+  dbl3_t * _noalias const f = (dbl3_t *) thr->get_f()[0];
+  const double * _noalias const q = atom->q;
+  const int * _noalias const type = atom->type;
+  const double * _noalias const special_coul = force->special_coul;
+  const double * _noalias const special_lj = force->special_lj;
   const double qqrd2e = force->qqrd2e;
   const double inv_denom_lj = 1.0/denom_lj;
 
@@ -99,14 +101,18 @@ void PairLJCharmmCoulLongOMP::eval(int iifrom, int iito, ThrData * const thr)
     const int i = ilist[ii];
     const int itype = type[i];
     const double qtmp = q[i];
-    const double xtmp = x[i][0];
-    const double ytmp = x[i][1];
-    const double ztmp = x[i][2];
+    const double xtmp = x[i].x;
+    const double ytmp = x[i].y;
+    const double ztmp = x[i].z;
     double fxtmp,fytmp,fztmp;
     fxtmp=fytmp=fztmp=0.0;
 
     const int * const jlist = firstneigh[i];
     const int jnum = numneigh[i];
+    const double * _noalias const lj1i = lj1[itype];
+    const double * _noalias const lj2i = lj2[itype];
+    const double * _noalias const lj3i = lj3[itype];
+    const double * _noalias const lj4i = lj4[itype];
 
     for (int jj = 0; jj < jnum; jj++) {
       double forcecoul, forcelj, evdwl, ecoul;
@@ -115,13 +121,13 @@ void PairLJCharmmCoulLongOMP::eval(int iifrom, int iito, ThrData * const thr)
       const int sbindex = sbmask(jlist[jj]);
       const int j = jlist[jj] & NEIGHMASK;
 
-      const double delx = xtmp - x[j][0];
-      const double dely = ytmp - x[j][1];
-      const double delz = ztmp - x[j][2];
+      const double delx = xtmp - x[j].x;
+      const double dely = ytmp - x[j].y;
+      const double delz = ztmp - x[j].z;
       const double rsq = delx*delx + dely*dely + delz*delz;
       const int jtype = type[j];
 
-      if (rsq < cutsq[itype][jtype]) {
+      if (rsq < cut_bothsq) {
         const double r2inv = 1.0/rsq;
 
         if (rsq < cut_coulsq) {
@@ -167,21 +173,17 @@ void PairLJCharmmCoulLongOMP::eval(int iifrom, int iito, ThrData * const thr)
 
         if (rsq < cut_ljsq) {
           const double r6inv = r2inv*r2inv*r2inv;
-          forcelj = r6inv * (lj1[itype][jtype]*r6inv - lj2[itype][jtype]);
-          if (EFLAG) evdwl = r6inv*(lj3[itype][jtype]*r6inv-lj4[itype][jtype]);
+          forcelj = r6inv * (lj1i[jtype]*r6inv - lj2i[jtype]);
+          const double philj = r6inv*(lj3i[jtype]*r6inv-lj4i[jtype]);
+          if (EFLAG) evdwl = philj;
 
           if (rsq > cut_lj_innersq) {
             const double drsq = cut_ljsq - rsq;
             const double cut2 = (rsq - cut_lj_innersq) * drsq;
             const double switch1 = drsq * (drsq*drsq + 3.0*cut2) * inv_denom_lj;
             const double switch2 = 12.0*rsq * cut2 * inv_denom_lj;
-            if (EFLAG) {
-              forcelj = forcelj*switch1 + evdwl*switch2;
-              evdwl *= switch1;
-            } else {
-              const double philj = r6inv * (lj3[itype][jtype]*r6inv - lj4[itype][jtype]);
-              forcelj =  forcelj*switch1 + philj*switch2;
-            }
+            forcelj = forcelj*switch1 + philj*switch2;
+            if (EFLAG) evdwl *= switch1;
           }
 
           if (sbindex) {
@@ -189,7 +191,6 @@ void PairLJCharmmCoulLongOMP::eval(int iifrom, int iito, ThrData * const thr)
             forcelj *= factor_lj;
             if (EFLAG) evdwl *= factor_lj;
           }
-
         }
         const double fpair = (forcecoul + forcelj) * r2inv;
 
@@ -197,18 +198,18 @@ void PairLJCharmmCoulLongOMP::eval(int iifrom, int iito, ThrData * const thr)
         fytmp += dely*fpair;
         fztmp += delz*fpair;
         if (NEWTON_PAIR || j < nlocal) {
-          f[j][0] -= delx*fpair;
-          f[j][1] -= dely*fpair;
-          f[j][2] -= delz*fpair;
+          f[j].x -= delx*fpair;
+          f[j].y -= dely*fpair;
+          f[j].z -= delz*fpair;
         }
 
         if (EVFLAG) ev_tally_thr(this,i,j,nlocal,NEWTON_PAIR,
                                  evdwl,ecoul,fpair,delx,dely,delz,thr);
       }
     }
-    f[i][0] += fxtmp;
-    f[i][1] += fytmp;
-    f[i][2] += fztmp;
+    f[i].x += fxtmp;
+    f[i].y += fytmp;
+    f[i].z += fztmp;
   }
 }
 

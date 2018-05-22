@@ -107,7 +107,7 @@ extern "C" {
    * J. Phys. Chem., 68, 441 - 452, 1964,
    * except the value for H, which is taken from R.S. Rowland & R. Taylor,
    * J.Phys.Chem., 100, 7384 - 7391, 1996. Radii that are not available in
-   * either of these publications have RvdW = 2.00 Å.
+   * either of these publications have RvdW = 2.00 \AA.
    * The radii for Ions (Na, K, Cl, Ca, Mg, and Cs are based on the CHARMM27
    * Rmin/2 parameters for (SOD, POT, CLA, CAL, MG, CES) by default.
    */
@@ -171,33 +171,6 @@ extern "C" {
 #endif
 
     return pte_vdw_radius[idx];
-  }
-
-  static int get_pte_idx(const char *label)
-  {
-    int i;
-    char atom[3];
-
-    /* zap string */
-    atom[0] = (char) 0;
-    atom[1] = (char) 0;
-    atom[2] = (char) 0;
-    /* if we don't have a null-pointer, there must be at least two
-     * chars, which is all we need. we convert to the capitalization
-     * convention of the table above during assignment. */
-    if (label != NULL) {
-      atom[0] = (char) toupper((int) label[0]);
-      atom[1] = (char) tolower((int) label[1]);
-    }
-    /* discard numbers in atom label */
-    if (isdigit(atom[1])) atom[1] = (char) 0;
-
-    for (i=0; i < nr_pte_entries; ++i) {
-      if ( (pte_label[i][0] == atom[0])
-           && (pte_label[i][1] == atom[1]) ) return i;
-    }
-
-    return 0;
   }
 
   static int get_pte_idx_from_string(const char *label) {
@@ -296,15 +269,6 @@ extern "C" {
     return (void *)LoadLibrary(fname);
   }
 
-  // report error message from dlopen
-  static const char *my_dlerror(void) {
-    static CHAR szBuf[80];
-    DWORD dw = GetLastError();
-
-    sprintf(szBuf, "my_dlopen failed: GetLastError returned %u\n", dw);
-    return szBuf;
-  }
-
   // resolve a symbol in shared object
   static void *my_dlsym(void *h, const char *sym) {
     return (void *)GetProcAddress((HINSTANCE)h, sym);
@@ -375,11 +339,6 @@ extern "C" {
   // open a shared object file
   static void *my_dlopen(const char *fname) {
     return dlopen(fname, RTLD_NOW);
-  }
-
-  // report error message from dlopen
-  static const char *my_dlerror(void) {
-    return dlerror();
   }
 
   // resolve a symbol in shared object
@@ -505,7 +464,7 @@ int MolfileInterface::load_plugin(const char *filename)
     return E_SYMBOL;
   }
 
-  // intialize plugin. skip plugin if it fails.
+  // initialize plugin. skip plugin if it fails.
   if (((initfunc)(ifunc))()) {
     my_dlclose(dso);
     return E_SYMBOL;
@@ -797,10 +756,13 @@ int MolfileInterface::timestep(float *coords, float *vels,
         *simtime = t->physical_time;
     }
 
-    if (rv == MOLFILE_EOF)
+    if (rv == MOLFILE_EOF) {
+      delete t;
       return 1;
+    }
   }
 
+  delete t;
   return 0;
 }
 

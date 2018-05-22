@@ -11,9 +11,9 @@
    See the README file in the top-level LAMMPS directory.
 ------------------------------------------------------------------------- */
 
-#include "math.h"
-#include "string.h"
-#include "ctype.h"
+#include <math.h>
+#include <string.h>
+#include <ctype.h>
 #include "angle_hybrid.h"
 #include "atom.h"
 #include "neighbor.h"
@@ -31,6 +31,7 @@ using namespace LAMMPS_NS;
 
 AngleHybrid::AngleHybrid(LAMMPS *lmp) : Angle(lmp)
 {
+  writedata = 0;
   nstyles = 0;
 }
 
@@ -103,7 +104,7 @@ void AngleHybrid::compute(int eflag, int vflag)
   // accumulate sub-style global/peratom energy/virial in hybrid
 
   if (eflag || vflag) ev_setup(eflag,vflag);
-  else evflag = 0;
+  else evflag = eflag_global = vflag_global = eflag_atom = vflag_atom = 0;
 
   for (m = 0; m < nstyles; m++) {
     neighbor->nanglelist = nanglelist[m];
@@ -203,6 +204,8 @@ void AngleHybrid::settings(int narg, char **arg)
   keywords = new char*[nstyles];
 
   // allocate each sub-style and call its settings() with subset of args
+  // allocate uses suffix, but don't store suffix version in keywords,
+  //   else syntax in coeff() will not match
   // define subset of args for a sub-style by skipping numeric args
   // one exception is 1st arg of style "table", which is non-numeric
   // need a better way to skip these exceptions
@@ -220,9 +223,10 @@ void AngleHybrid::settings(int narg, char **arg)
       error->all(FLERR,"Angle style hybrid cannot have hybrid as an argument");
     if (strcmp(arg[i],"none") == 0)
       error->all(FLERR,"Angle style hybrid cannot have none as an argument");
-    styles[nstyles] = force->new_angle(arg[i],lmp->suffix,dummy);
-    keywords[nstyles] = new char[strlen(arg[i])+1];
-    strcpy(keywords[nstyles],arg[i]);
+
+    styles[nstyles] = force->new_angle(arg[i],1,dummy);
+    force->store_style(keywords[nstyles],arg[i],0);
+
     istyle = i;
     if (strcmp(arg[i],"table") == 0) i++;
     i++;
@@ -241,7 +245,7 @@ void AngleHybrid::coeff(int narg, char **arg)
   if (!allocated) allocate();
 
   int ilo,ihi;
-  force->bounds(arg[0],atom->nangletypes,ilo,ihi);
+  force->bounds(FLERR,arg[0],atom->nangletypes,ilo,ihi);
 
   // 2nd arg = angle sub-style name
   // allow for "none" or "skip" as valid sub-style name
@@ -255,6 +259,10 @@ void AngleHybrid::coeff(int narg, char **arg)
   if (m == nstyles) {
     if (strcmp(arg[1],"none") == 0) none = 1;
     else if (strcmp(arg[1],"skip") == 0) none = skip = 1;
+    else if (strcmp(arg[1],"ba") == 0)
+      error->all(FLERR,"BondAngle coeff for hybrid angle has invalid format");
+    else if (strcmp(arg[1],"bb") == 0)
+      error->all(FLERR,"BondBond coeff for hybrid angle has invalid format");
     else error->all(FLERR,"Angle coeff for hybrid has invalid style");
   }
 
@@ -341,7 +349,7 @@ void AngleHybrid::read_restart(FILE *fp)
     keywords[m] = new char[n];
     if (me == 0) fread(keywords[m],sizeof(char),n,fp);
     MPI_Bcast(keywords[m],n,MPI_CHAR,0,world);
-    styles[m] = force->new_angle(keywords[m],lmp->suffix,dummy);
+    styles[m] = force->new_angle(keywords[m],0,dummy);
   }
 }
 

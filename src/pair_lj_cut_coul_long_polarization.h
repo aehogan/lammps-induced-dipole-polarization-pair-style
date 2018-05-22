@@ -1,11 +1,11 @@
-/* ----------------------------------------------------------------------
+/* -*- c++ -*- ----------------------------------------------------------
    LAMMPS - Large-scale Atomic/Molecular Massively Parallel Simulator
    http://lammps.sandia.gov, Sandia National Laboratories
    Steve Plimpton, sjplimp@sandia.gov
 
    Copyright (2003) Sandia Corporation.  Under the terms of Contract
    DE-AC04-94AL85000 with Sandia Corporation, the U.S. Government retains
-   certain rights in this software.  This software is distributed under 
+   certain rights in this software.  This software is distributed under
    the GNU General Public License.
 
    See the README file in the top-level LAMMPS directory.
@@ -25,6 +25,7 @@ PairStyle(lj/cut/coul/long/polarization,PairLJCutCoulLongPolarization)
 namespace LAMMPS_NS {
 
 class PairLJCutCoulLongPolarization : public Pair {
+
  public:
   PairLJCutCoulLongPolarization(class LAMMPS *);
   virtual ~PairLJCutCoulLongPolarization();
@@ -32,23 +33,24 @@ class PairLJCutCoulLongPolarization : public Pair {
   virtual void settings(int, char **);
   void coeff(int, char **);
   virtual void init_style();
-  void init_list(int, class NeighList *);
-  double init_one(int, int);
+  virtual double init_one(int, int);
   void write_restart(FILE *);
   void read_restart(FILE *);
   virtual void write_restart_settings(FILE *);
   virtual void read_restart_settings(FILE *);
+  void write_data(FILE *);
+  void write_data_all(FILE *);
   virtual double single(int, int, int, int, double, double, double, double &);
 
-  /*void compute_inner();
-  void compute_middle();
-  void compute_outer(int, int);*/
-  void *extract(const char *, int &);
+  //void compute_inner();
+  //void compute_middle();
+  //virtual void compute_outer(int, int);
+  virtual void *extract(const char *, int &);
 
   /* polarization stuff */
   int pack_comm(int, int *, double *,int, int *);
   void unpack_comm(int, int, double *);
-  /* ------------------ */
+  /* end polarization stuff */
 
  protected:
   double cut_lj_global;
@@ -57,16 +59,10 @@ class PairLJCutCoulLongPolarization : public Pair {
   double **epsilon,**sigma;
   double **lj1,**lj2,**lj3,**lj4,**offset;
   double *cut_respa;
+  double qdist;             // TIP4P distance from O site to negative charge
   double g_ewald;
 
-  double tabinnersq;
-  double *rtable,*drtable,*ftable,*dftable,*ctable,*dctable;
-  double *etable,*detable,*ptable,*dptable,*vtable,*dvtable;
-  int ncoulshiftbits,ncoulmask;
-
-  void allocate();
-  void init_tables();
-  void free_tables();
+  virtual void allocate();
 
   /* polarization stuff */
   double **ef_induced;
@@ -88,7 +84,7 @@ class PairLJCutCoulLongPolarization : public Pair {
   int polar_gs,polar_gs_ranked;
   int use_previous;
   double polar_gamma;
-  /* ------------------ */
+  /* end polarization stuff */
 };
 
 }
@@ -108,13 +104,17 @@ E: Incorrect args for pair coefficients
 
 Self-explanatory.  Check the input script or data file.
 
-E: Pair style lj/cut/coul/long/polarization requires atom attribute q
+E: Pair style lj/cut/coul/long requires atom attribute q
 
 The atom style defined does not have this attribute.
 
-E: Pair style is incompatible with KSpace style
+E: Pair style requires a KSpace style
 
-If a pair style with a long-range Coulombic component is selected,
-then a kspace style must also be used.
+No kspace style is defined.
+
+E: Pair cutoff < Respa interior cutoff
+
+One or more pairwise cutoffs are too short to use with the specified
+rRESPA cutoffs.
 
 */

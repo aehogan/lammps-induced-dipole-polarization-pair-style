@@ -15,7 +15,7 @@
    Contributing author: Mike Parks (SNL)
 ------------------------------------------------------------------------- */
 
-#include "string.h"
+#include <string.h>
 #include "compute_damage_atom.h"
 #include "atom.h"
 #include "update.h"
@@ -32,7 +32,7 @@ using namespace LAMMPS_NS;
 /* ---------------------------------------------------------------------- */
 
 ComputeDamageAtom::ComputeDamageAtom(LAMMPS *lmp, int narg, char **arg) :
-  Compute(lmp, narg, arg)
+  Compute(lmp, narg, arg), damage(NULL)
 {
   if (narg != 3) error->all(FLERR,"Illegal compute damage/atom command");
 
@@ -40,7 +40,6 @@ ComputeDamageAtom::ComputeDamageAtom(LAMMPS *lmp, int narg, char **arg) :
   size_peratom_cols = 0;
 
   nmax = 0;
-  damage = NULL;
 }
 
 /* ---------------------------------------------------------------------- */
@@ -77,7 +76,7 @@ void ComputeDamageAtom::compute_peratom()
 
   // grow damage array if necessary
 
-  if (atom->nlocal > nmax) {
+  if (atom->nmax > nmax) {
     memory->destroy(damage);
     nmax = atom->nmax;
     memory->create(damage,nmax,"damage/atom:damage");
@@ -90,7 +89,7 @@ void ComputeDamageAtom::compute_peratom()
   int *mask = atom->mask;
   double *vfrac = atom->vfrac;
   double *vinter = ((FixPeriNeigh *) modify->fix[ifix_peri])->vinter;
-  int **partner = ((FixPeriNeigh *) modify->fix[ifix_peri])->partner;
+  tagint **partner = ((FixPeriNeigh *) modify->fix[ifix_peri])->partner;
   int *npartner = ((FixPeriNeigh *) modify->fix[ifix_peri])->npartner;
   int i,j,jj,jnum;
 
@@ -100,7 +99,6 @@ void ComputeDamageAtom::compute_peratom()
     if (mask[i] & groupbit) {
       jnum = npartner[i];
       damage_temp = 0.0;
-
       for (jj = 0; jj < jnum; jj++) {
         if (partner[i][jj] == 0) continue;
 
@@ -112,11 +110,11 @@ void ComputeDamageAtom::compute_peratom()
 
         damage_temp += vfrac[j];
       }
-    }
-    else damage_temp = vinter[i];
 
-    if (vinter[i] != 0.0) damage[i] = 1.0 - damage_temp/vinter[i];
-    else damage[i] = 0.0;
+      if (vinter[i] != 0.0) damage[i] = 1.0 - damage_temp/vinter[i];
+      else damage[i] = 0.0;
+
+    } else damage[i] = 0.0;
   }
 }
 

@@ -11,9 +11,9 @@
    See the README file in the top-level LAMMPS directory.
 ------------------------------------------------------------------------- */
 
-#include "math.h"
-#include "string.h"
-#include "stdlib.h"
+#include <math.h>
+#include <string.h>
+#include <stdlib.h>
 #include "compute_pair_local.h"
 #include "atom.h"
 #include "update.h"
@@ -31,11 +31,13 @@ using namespace LAMMPS_NS;
 #define DELTA 10000
 
 enum{DIST,ENG,FORCE,FX,FY,FZ,PN};
+enum{TYPE,RADIUS};
 
 /* ---------------------------------------------------------------------- */
 
 ComputePairLocal::ComputePairLocal(LAMMPS *lmp, int narg, char **arg) :
-  Compute(lmp, narg, arg)
+  Compute(lmp, narg, arg),
+  pstyle(NULL), pindex(NULL), vlocal(NULL), alocal(NULL)
 {
   if (narg < 4) error->all(FLERR,"Illegal compute pair/local command");
 
@@ -48,7 +50,8 @@ ComputePairLocal::ComputePairLocal(LAMMPS *lmp, int narg, char **arg) :
   pindex = new int[nvalues];
 
   nvalues = 0;
-  for (int iarg = 3; iarg < narg; iarg++) {
+  int iarg = 3;
+  while (iarg < narg) {
     if (strcmp(arg[iarg],"dist") == 0) pstyle[nvalues++] = DIST;
     else if (strcmp(arg[iarg],"eng") == 0) pstyle[nvalues++] = ENG;
     else if (strcmp(arg[iarg],"force") == 0) pstyle[nvalues++] = FORCE;
@@ -61,8 +64,31 @@ ComputePairLocal::ComputePairLocal(LAMMPS *lmp, int narg, char **arg) :
                              "Invalid keyword in compute pair/local command");
       pstyle[nvalues] = PN;
       pindex[nvalues++] = n-1;
-    } else error->all(FLERR,"Invalid keyword in compute pair/local command");
+
+    } else break;
+
+    iarg++;
   }
+
+  // optional args
+
+  cutstyle = TYPE;
+
+  while (iarg < narg) {
+    if (strcmp(arg[iarg],"cutoff") == 0) {
+      if (iarg+2 > narg)
+        error->all(FLERR,"Illegal compute pair/local command");
+      if (strcmp(arg[iarg+1],"type") == 0) cutstyle = TYPE;
+      else if (strcmp(arg[iarg+1],"radius") == 0) cutstyle = RADIUS;
+      else error->all(FLERR,"Illegal compute pair/local command");
+      iarg += 2;
+    } else error->all(FLERR,"Illegal compute pair/local command");
+  }
+
+  // error check
+
+  if (cutstyle == RADIUS && !atom->radius_flag)
+    error->all(FLERR,"Compute pair/local requires atom attribute radius");
 
   // set singleflag if need to call pair->single()
 
@@ -71,16 +97,16 @@ ComputePairLocal::ComputePairLocal(LAMMPS *lmp, int narg, char **arg) :
     if (pstyle[i] != DIST) singleflag = 1;
 
   nmax = 0;
-  vector = NULL;
-  array = NULL;
+  vlocal = NULL;
+  alocal = NULL;
 }
 
 /* ---------------------------------------------------------------------- */
 
 ComputePairLocal::~ComputePairLocal()
 {
-  memory->destroy(vector);
-  memory->destroy(array);
+  memory->destroy(vlocal);
+  memory->destroy(alocal);
   delete [] pstyle;
   delete [] pindex;
 }
@@ -100,11 +126,15 @@ void ComputePairLocal::init()
                  " requested by compute pair/local");
 
   // need an occasional half neighbor list
+  // set size to same value as request made by force->pair
+  // this should enable it to always be a copy list (e.g. for granular pstyle)
 
-  int irequest = neighbor->request((void *) this);
+  int irequest = neighbor->request(this,instance_me);
   neighbor->requests[irequest]->pair = 0;
   neighbor->requests[irequest]->compute = 1;
   neighbor->requests[irequest]->occasional = 1;
+  NeighRequest *pairrequest = neighbor->find_request((void *) force->pair);
+  if (pairrequest) neighbor->requests[irequest]->size = pairrequest->size;
 }
 
 /* ---------------------------------------------------------------------- */
@@ -138,12 +168,15 @@ void ComputePairLocal::compute_local()
 int ComputePairLocal::compute_pairs(int flag)
 {
   int i,j,m,n,ii,jj,inum,jnum,itype,jtype;
+  tagint itag,jtag;
   double xtmp,ytmp,ztmp,delx,dely,delz;
-  double rsq,eng,fpair,factor_coul,factor_lj;
+  double rsq,radsum,eng,fpair,factor_coul,factor_lj;
   int *ilist,*jlist,*numneigh,**firstneigh;
   double *ptr;
 
   double **x = atom->x;
+  double *radius = atom->radius;
+  tagint *tag = atom->tag;
   int *type = atom->type;
   int *mask = atom->mask;
   int nlocal = atom->nlocal;
@@ -153,7 +186,7 @@ int ComputePairLocal::compute_pairs(int flag)
 
   // invoke half neighbor list (will copy or build if necessary)
 
-  if (flag == 0) neighbor->build_one(list->index);
+  if (flag == 0) neighbor->build_one(list);
 
   inum = list->inum;
   ilist = list->ilist;
@@ -162,6 +195,9 @@ int ComputePairLocal::compute_pairs(int flag)
 
   // loop over neighbors of my atoms
   // skip if I or J are not in group
+  // for newton = 0 and J = ghost atom,
+  //   need to insure I,J pair is only output by one proc
+  //   use same itag,jtag logic as in Neighbor::neigh_half_nsq()
   // for flag = 0, just count pair interactions within force cutoff
   // for flag = 1, calculate requested output fields
 
@@ -176,6 +212,7 @@ int ComputePairLocal::compute_pairs(int flag)
     xtmp = x[i][0];
     ytmp = x[i][1];
     ztmp = x[i][2];
+    itag = tag[i];
     itype = type[i];
     jlist = firstneigh[i];
     jnum = numneigh[i];
@@ -187,21 +224,44 @@ int ComputePairLocal::compute_pairs(int flag)
       j &= NEIGHMASK;
 
       if (!(mask[j] & groupbit)) continue;
-      if (newton_pair == 0 && j >= nlocal) continue;
+
+      // itag = jtag is possible for long cutoffs that include images of self
+
+      if (newton_pair == 0 && j >= nlocal) {
+        jtag = tag[j];
+        if (itag > jtag) {
+          if ((itag+jtag) % 2 == 0) continue;
+        } else if (itag < jtag) {
+          if ((itag+jtag) % 2 == 1) continue;
+        } else {
+          if (x[j][2] < ztmp) continue;
+          if (x[j][2] == ztmp) {
+            if (x[j][1] < ytmp) continue;
+            if (x[j][1] == ytmp && x[j][0] < xtmp) continue;
+          }
+        }
+      }
 
       delx = xtmp - x[j][0];
       dely = ytmp - x[j][1];
       delz = ztmp - x[j][2];
       rsq = delx*delx + dely*dely + delz*delz;
       jtype = type[j];
-      if (rsq >= cutsq[itype][jtype]) continue;
+
+      if (cutstyle == TYPE) {
+        if (rsq >= cutsq[itype][jtype]) continue;
+      } else {
+        radsum = radius[i] + radius[j];
+        if (rsq >= radsum*radsum) continue;
+      }
 
       if (flag) {
         if (singleflag)
           eng = pair->single(i,j,itype,jtype,rsq,factor_coul,factor_lj,fpair);
+        else eng = fpair = 0.0;
 
-        if (nvalues == 1) ptr = &vector[m];
-        else ptr = array[m];
+        if (nvalues == 1) ptr = &vlocal[m];
+        else ptr = alocal[m];
 
         for (n = 0; n < nvalues; n++) {
           switch (pstyle[n]) {
@@ -241,18 +301,18 @@ int ComputePairLocal::compute_pairs(int flag)
 
 void ComputePairLocal::reallocate(int n)
 {
-  // grow vector or array and indices array
+  // grow vector_local or array_local
 
   while (nmax < n) nmax += DELTA;
 
   if (nvalues == 1) {
-    memory->destroy(vector);
-    memory->create(vector,nmax,"pair/local:vector");
-    vector_local = vector;
+    memory->destroy(vlocal);
+    memory->create(vlocal,nmax,"pair/local:vector_local");
+    vector_local = vlocal;
   } else {
-    memory->destroy(array);
-    memory->create(array,nmax,nvalues,"pair/local:array");
-    array_local = array;
+    memory->destroy(alocal);
+    memory->create(alocal,nmax,nvalues,"pair/local:array_local");
+    array_local = alocal;
   }
 }
 

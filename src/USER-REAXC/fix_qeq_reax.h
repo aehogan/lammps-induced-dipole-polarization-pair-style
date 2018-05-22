@@ -1,4 +1,4 @@
-/* ----------------------------------------------------------------------
+/* -*- c++ -*- ----------------------------------------------------------
    LAMMPS - Large-scale Atomic/Molecular Massively Parallel Simulator
    http://lammps.sandia.gov, Sandia National Laboratories
    Steve Plimpton, sjplimp@sandia.gov
@@ -39,11 +39,12 @@ class FixQEqReax : public Fix {
   FixQEqReax(class LAMMPS *, int, char **);
   ~FixQEqReax();
   int setmask();
-  void init();
+  virtual void post_constructor();
+  virtual void init();
   void init_list(int,class NeighList *);
-  void init_storage();
+  virtual void init_storage();
   void setup_pre_force(int);
-  void pre_force(int);
+  virtual void pre_force(int);
 
   void setup_pre_force_respa(int, int);
   void pre_force_respa(int, int, int);
@@ -54,7 +55,7 @@ class FixQEqReax : public Fix {
   int matvecs;
   double qeq_time;
 
- private:
+ protected:
   int nevery,reaxflag;
   int n, N, m_fill;
   int n_cap, nmax, m_cap;
@@ -69,6 +70,8 @@ class FixQEqReax : public Fix {
 
   double *chi,*eta,*gamma;  // qeq parameters
   double **shld;
+
+  bigint ngroup;
 
   // fictitious charges
 
@@ -98,45 +101,47 @@ class FixQEqReax : public Fix {
   //double **h;
   //double *hc, *hs;
 
-  void pertype_parameters(char*);
+  char *pertype_option;  // argument to determine how per-type info is obtained
+  virtual void pertype_parameters(char*);
   void init_shielding();
   void init_taper();
-  void allocate_storage();
-  void deallocate_storage();
+  virtual void allocate_storage();
+  virtual void deallocate_storage();
   void reallocate_storage();
-  void allocate_matrix();
+  virtual void allocate_matrix();
   void deallocate_matrix();
   void reallocate_matrix();
 
-  void init_matvec();
+  virtual void init_matvec();
   void init_H();
-  void compute_H();
+  virtual void compute_H();
   double calculate_H(double,double);
-  void calculate_Q();
+  virtual void calculate_Q();
 
-  int CG(double*,double*);
+  virtual int CG(double*,double*);
   //int GMRES(double*,double*);
-  void sparse_matvec(sparse_matrix*,double*,double*);
+  virtual void sparse_matvec(sparse_matrix*,double*,double*);
 
-  int pack_comm(int, int *, double *, int, int *);
-  void unpack_comm(int, int, double *);
-  int pack_reverse_comm(int, int, double *);
-  void unpack_reverse_comm(int, int *, double *);
-  double memory_usage();
-  void grow_arrays(int);
-  void copy_arrays(int, int);
-  int pack_exchange(int, double *);
-  int unpack_exchange(int, double *);
+  virtual int pack_forward_comm(int, int *, double *, int, int *);
+  virtual void unpack_forward_comm(int, int, double *);
+  virtual int pack_reverse_comm(int, int, double *);
+  virtual void unpack_reverse_comm(int, int *, double *);
+  virtual double memory_usage();
+  virtual void grow_arrays(int);
+  virtual void copy_arrays(int, int, int);
+  virtual int pack_exchange(int, double *);
+  virtual int unpack_exchange(int, double *);
 
-  double parallel_norm( double*, int );
-  double parallel_dot( double*, double*, int );
-  double parallel_vector_acc( double*, int );
+  virtual double parallel_norm( double*, int );
+  virtual double parallel_dot( double*, double*, int );
+  virtual double parallel_vector_acc( double*, int );
 
-  double norm(double*,int);
-  void vector_sum(double*,double,double*,double,double*,int);
-  void vector_scale(double*,double,double*,int);
-  double dot(double*,double*,int);
-  void vector_add(double*, double, double*,int);
+  virtual void vector_sum(double*,double,double*,double,double*,int);
+  virtual void vector_add(double*, double, double*,int);
+
+  // dual CG support
+  int dual_enabled;  // 0: Original, separate s & t optimization; 1: dual optimization
+  int matvecs_s, matvecs_t; // Iteration count for each system
 };
 
 }

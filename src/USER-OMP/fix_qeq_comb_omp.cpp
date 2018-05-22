@@ -15,9 +15,8 @@
    Contributing author: Axel Kohlmeyer (Temple U)
 ------------------------------------------------------------------------- */
 
-#include "lmptype.h"
-#include "mpi.h"
-#include "math.h"
+#include <mpi.h>
+#include <math.h>
 #include "fix_qeq_comb_omp.h"
 #include "fix_omp.h"
 #include "atom.h"
@@ -41,8 +40,8 @@ using namespace FixConst;
 
 /* ---------------------------------------------------------------------- */
 
-FixQEQCombOMP::FixQEQCombOMP(LAMMPS *lmp, int narg, char **arg)
-  : FixQEQComb(lmp, narg, arg)
+FixQEQCombOMP::FixQEQCombOMP(LAMMPS *lmp, int narg, char **arg) :
+  FixQEQComb(lmp, narg, arg)
 {
   if (narg < 5) error->all(FLERR,"Illegal fix qeq/comb/omp command");
 }
@@ -54,31 +53,23 @@ void FixQEQCombOMP::init()
   if (!atom->q_flag)
     error->all(FLERR,"Fix qeq/comb/omp requires atom attribute q");
 
+  if (NULL != force->pair_match("comb3",0))
+    error->all(FLERR,"No support for comb3 currently available in USER-OMP");
+
   comb = (PairComb *) force->pair_match("comb/omp",1);
   if (comb == NULL)
     comb = (PairComb *) force->pair_match("comb",1);
-  if (comb == NULL) error->all(FLERR,"Must use pair_style comb or comb/omp with fix qeq/comb");
+  if (comb == NULL)
+    error->all(FLERR,"Must use pair_style comb or "
+               "comb/omp with fix qeq/comb/omp");
 
-  if (strstr(update->integrate_style,"respa"))
-    nlevels_respa = ((Respa *) update->integrate)->nlevels;
+  if (strstr(update->integrate_style,"respa")) {
+    ilevel_respa = ((Respa *) update->integrate)->nlevels-1;
+    if (respa_level >= 0) ilevel_respa = MIN(respa_level,ilevel_respa);
+  }
 
   ngroup = group->count(igroup);
   if (ngroup == 0) error->all(FLERR,"Fix qeq/comb group has no atoms");
-
-  // determine status of neighbor flag of the omp package command
-  int ifix = modify->find_fix("package_omp");
-  int use_omp = 0;
-  if (ifix >=0) {
-     FixOMP * fix = static_cast<FixOMP *>(lmp->modify->fix[ifix]);
-     if (fix->get_neighbor()) use_omp = 1;
-  }
-
-  int irequest = neighbor->request(this);
-  neighbor->requests[irequest]->pair = 0;
-  neighbor->requests[irequest]->fix = 1;
-  neighbor->requests[irequest]->half = 0;
-  neighbor->requests[irequest]->full = 1;
-  neighbor->requests[irequest]->omp = use_omp;
 }
 
 /* ---------------------------------------------------------------------- */

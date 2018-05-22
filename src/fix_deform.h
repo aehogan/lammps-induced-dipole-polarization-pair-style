@@ -1,4 +1,4 @@
-/* ----------------------------------------------------------------------
+/* -*- c++ -*- ----------------------------------------------------------
    LAMMPS - Large-scale Atomic/Molecular Massively Parallel Simulator
    http://lammps.sandia.gov, Sandia National Laboratories
    Steve Plimpton, sjplimp@sandia.gov
@@ -30,13 +30,16 @@ class FixDeform : public Fix {
   int dimflag[6];                  // which dims are deformed
 
   FixDeform(class LAMMPS *, int, char **);
-  ~FixDeform();
+  virtual ~FixDeform();
   int setmask();
   void init();
-  void pre_exchange();
-  void end_of_step();
+  virtual void pre_exchange();
+  virtual void end_of_step();
+  virtual void write_restart(FILE *);
+  virtual void restart(char *buf);
+  double memory_usage();
 
- private:
+ protected:
   int triclinic,scaleflag,flipflag;
   int flip,flipxy,flipxz,flipyz;
   double *h_rate,*h_ratelo;
@@ -96,10 +99,6 @@ E: Cannot use fix deform tilt on a shrink-wrapped 2nd dim
 This is because the shrink-wrapping will change the value
 of the strain implied by the tilt factor.
 
-E: Use of fix deform with undefined lattice
-
-A lattice must be defined to use fix deform with units = lattice.
-
 E: Fix deform volume setting is invalid
 
 Cannot use volume style unless other dimensions are being controlled.
@@ -110,7 +109,7 @@ Only one fix deform can be defined at a time.
 
 E: Variable name for fix deform does not exist
 
-Self-explantory.
+Self-explanatory.
 
 E: Variable for fix deform is invalid style
 

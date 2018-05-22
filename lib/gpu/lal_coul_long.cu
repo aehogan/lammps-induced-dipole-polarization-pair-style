@@ -74,12 +74,12 @@ texture<int2> q_tex;
     if (eflag>0) {                                                          \
       *ap1=(acctyp)0;                                                       \
       ap1+=inum;                                                            \
-      *ap1=e_coul;                                                          \
+      *ap1=e_coul*(acctyp)0.5;                                              \
       ap1+=inum;                                                            \
     }                                                                       \
     if (vflag>0) {                                                          \
       for (int i=0; i<6; i++) {                                             \
-        *ap1=virial[i];                                                     \
+        *ap1=virial[i]*(acctyp)0.5;                                         \
         ap1+=inum;                                                          \
       }                                                                     \
     }                                                                       \
@@ -109,12 +109,12 @@ texture<int2> q_tex;
     if (eflag>0) {                                                          \
       *ap1=(acctyp)0;                                                       \
       ap1+=inum;                                                            \
-      *ap1=e_coul;                                                          \
+      *ap1=e_coul*(acctyp)0.5;                                              \
       ap1+=inum;                                                            \
     }                                                                       \
     if (vflag>0) {                                                          \
       for (int i=0; i<6; i++) {                                             \
-        *ap1=virial[i];                                                     \
+        *ap1=virial[i]*(acctyp)0.5;                                         \
         ap1+=inum;                                                          \
       }                                                                     \
     }                                                                       \
@@ -123,17 +123,16 @@ texture<int2> q_tex;
 
 #endif
 
-__kernel void k_coul_long(const __global numtyp4 *restrict x_, 
-                          const __global numtyp4 *restrict lj1,
-                          const __global numtyp4 *restrict lj3, 
+__kernel void k_coul_long(const __global numtyp4 *restrict x_,
+                          const __global numtyp *restrict scale,
                           const int lj_types,
-                          const __global numtyp *restrict sp_cl_in, 
+                          const __global numtyp *restrict sp_cl_in,
                           const __global int *dev_nbor,
-                          const __global int *dev_packed, 
+                          const __global int *dev_packed,
                           __global acctyp4 *restrict ans,
-                          __global acctyp *restrict engv, 
+                          __global acctyp *restrict engv,
                           const int eflag, const int vflag, const int inum,
-                          const int nbor_pitch, 
+                          const int nbor_pitch,
                           const __global numtyp *restrict q_,
                           const numtyp cut_coulsq, const numtyp qqrd2e,
                           const numtyp g_ewald, const int t_per_atom) {
@@ -154,22 +153,25 @@ __kernel void k_coul_long(const __global numtyp4 *restrict x_,
     virial[i]=(acctyp)0;
 
   if (ii<inum) {
-    const __global int *nbor, *list_end;
-    int i, numj, n_stride;
+    int nbor, nbor_end;
+    int i, numj;
+    __local int n_stride;
     nbor_info(dev_nbor,dev_packed,nbor_pitch,t_per_atom,ii,offset,i,numj,
-              n_stride,list_end,nbor);
+              n_stride,nbor_end,nbor);
 
     numtyp4 ix; fetch4(ix,i,pos_tex); //x_[i];
+    int itype=ix.w;
     numtyp qtmp; fetch(qtmp,i,q_tex);
 
-    for ( ; nbor<list_end; nbor+=n_stride) {
-      int j=*nbor;
+    for ( ; nbor<nbor_end; nbor+=n_stride) {
+      int j=dev_packed[nbor];
 
       numtyp factor_coul;
       factor_coul = (numtyp)1.0-sp_cl[sbmask(j)];
       j &= NEIGHMASK;
 
       numtyp4 jx; fetch4(jx,j,pos_tex); //x_[j];
+      int jtype=jx.w;
 
       // Compute r12
       numtyp delx = ix.x-jx.x;
@@ -177,6 +179,7 @@ __kernel void k_coul_long(const __global numtyp4 *restrict x_,
       numtyp delz = ix.z-jx.z;
       numtyp rsq = delx*delx+dely*dely+delz*delz;
 
+      int mtype=itype*lj_types+jtype;
       if (rsq < cut_coulsq) {
         numtyp r2inv=ucl_recip(rsq);
         numtyp force, prefactor, _erfc;
@@ -187,7 +190,7 @@ __kernel void k_coul_long(const __global numtyp4 *restrict x_,
         numtyp t = ucl_recip((numtyp)1.0 + EWALD_P*grij);
         _erfc = t * (A1+t*(A2+t*(A3+t*(A4+t*A5)))) * expm2;
         fetch(prefactor,j,q_tex);
-        prefactor *= qqrd2e * qtmp/r;
+        prefactor *= qqrd2e * scale[mtype] * qtmp/r;
         force = prefactor * (_erfc + EWALD_F*grij*expm2-factor_coul) * r2inv;
 
         f.x+=delx*force;
@@ -195,7 +198,7 @@ __kernel void k_coul_long(const __global numtyp4 *restrict x_,
         f.z+=delz*force;
 
         if (eflag>0) {
-	  e_coul += prefactor*(_erfc-factor_coul);
+          e_coul += prefactor*(_erfc-factor_coul);
         }
         if (vflag>0) {
           virial[0] += delx*delx*force;
@@ -213,25 +216,27 @@ __kernel void k_coul_long(const __global numtyp4 *restrict x_,
   } // if ii
 }
 
-__kernel void k_coul_long_fast(const __global numtyp4 *restrict x_, 
-                               const __global numtyp4 *restrict lj1_in,
-                               const __global numtyp4 *restrict lj3_in,
+__kernel void k_coul_long_fast(const __global numtyp4 *restrict x_,
+                               const __global numtyp *restrict scale_in,
                                const __global numtyp *restrict sp_cl_in,
-                               const __global int *dev_nbor, 
+                               const __global int *dev_nbor,
                                const __global int *dev_packed,
-                               __global acctyp4 *restrict ans, 
+                               __global acctyp4 *restrict ans,
                                __global acctyp *restrict engv,
                                const int eflag, const int vflag, const int inum,
-                               const int nbor_pitch, 
+                               const int nbor_pitch,
                                const __global numtyp *restrict q_,
                                const numtyp cut_coulsq, const numtyp qqrd2e,
                                const numtyp g_ewald, const int t_per_atom) {
   int tid, ii, offset;
   atom_info(t_per_atom,ii,tid,offset);
 
+  __local numtyp scale[MAX_SHARED_TYPES*MAX_SHARED_TYPES];
   __local numtyp sp_cl[4];
   if (tid<4)
     sp_cl[tid]=sp_cl_in[tid];
+  if (tid<MAX_SHARED_TYPES*MAX_SHARED_TYPES)
+    scale[tid]=scale_in[tid];
 
   acctyp e_coul=(acctyp)0;
   acctyp4 f;
@@ -243,22 +248,26 @@ __kernel void k_coul_long_fast(const __global numtyp4 *restrict x_,
   __syncthreads();
 
   if (ii<inum) {
-    const __global int *nbor, *list_end;
-    int i, numj, n_stride;
+    int nbor, nbor_end;
+    int i, numj;
+    __local int n_stride;
     nbor_info(dev_nbor,dev_packed,nbor_pitch,t_per_atom,ii,offset,i,numj,
-              n_stride,list_end,nbor);
+              n_stride,nbor_end,nbor);
 
     numtyp4 ix; fetch4(ix,i,pos_tex); //x_[i];
     numtyp qtmp; fetch(qtmp,i,q_tex);
+    int iw=ix.w;
+    int itype=fast_mul((int)MAX_SHARED_TYPES,iw);
 
-    for ( ; nbor<list_end; nbor+=n_stride) {
-      int j=*nbor;
+    for ( ; nbor<nbor_end; nbor+=n_stride) {
+      int j=dev_packed[nbor];
 
       numtyp factor_coul;
       factor_coul = (numtyp)1.0-sp_cl[sbmask(j)];
       j &= NEIGHMASK;
 
       numtyp4 jx; fetch4(jx,j,pos_tex); //x_[j];
+      int mtype=itype+jx.w;
 
       // Compute r12
       numtyp delx = ix.x-jx.x;
@@ -276,15 +285,15 @@ __kernel void k_coul_long_fast(const __global numtyp4 *restrict x_,
         numtyp t = ucl_recip((numtyp)1.0 + EWALD_P*grij);
         _erfc = t * (A1+t*(A2+t*(A3+t*(A4+t*A5)))) * expm2;
         fetch(prefactor,j,q_tex);
-        prefactor *= qqrd2e * qtmp/r;
-        force = prefactor * (_erfc + EWALD_F*grij*expm2-factor_coul) * r2inv;
+        prefactor *= qqrd2e * scale[mtype] * qtmp/r;
+        force = prefactor*(_erfc + EWALD_F*grij*expm2-factor_coul) * r2inv;
 
         f.x+=delx*force;
         f.y+=dely*force;
         f.z+=delz*force;
 
         if (eflag>0) {
-	  e_coul += prefactor*(_erfc-factor_coul);
+          e_coul += prefactor*(_erfc-factor_coul);
         }
         if (vflag>0) {
           virial[0] += delx*delx*force;

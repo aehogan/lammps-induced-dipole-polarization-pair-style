@@ -9,7 +9,7 @@
     This file is part of the LAMMPS Accelerator Library (LAMMPS_AL)
  __________________________________________________________________________
 
-    begin                : 
+    begin                :
     email                : brownw@ornl.gov
  ***************************************************************************/
 
@@ -49,17 +49,17 @@ inline std::ostream & operator<<(std::ostream &out, const _lgpu_float2 &v) {
   out << v.x << " " << v.y;
   return out;
 }
-  
+
 inline std::ostream & operator<<(std::ostream &out, const _lgpu_float4 &v) {
   out << v.x << " " << v.y << " " << v.z;
   return out;
 }
-  
+
 inline std::ostream & operator<<(std::ostream &out, const _lgpu_double2 &v) {
   out << v.x << " " << v.y;
   return out;
 }
-  
+
 inline std::ostream & operator<<(std::ostream &out, const _lgpu_double4 &v) {
   out << v.x << " " << v.y << " " << v.z;
   return out;
@@ -96,20 +96,54 @@ inline std::ostream & operator<<(std::ostream &out, const _lgpu_double4 &v) {
 
 enum{SPHERE_SPHERE,SPHERE_ELLIPSE,ELLIPSE_SPHERE,ELLIPSE_ELLIPSE};
 
-// OCL_VENDOR: preprocessor define for hardware
+// OCL_DEFAULT_VENDOR: preprocessor define for hardware
 // specific sizes of OpenCL kernel related constants
 
 #ifdef FERMI_OCL
-#define OCL_VENDOR "FERMI_OCL"
+#define OCL_DEFAULT_VENDOR "fermi"
+#endif
+
+#ifdef KEPLER_OCL
+#define OCL_DEFAULT_VENDOR "kepler"
 #endif
 
 #ifdef CYPRESS_OCL
-#define OCL_VENDOR "CYPRESS_OCL"
+#define OCL_DEFAULT_VENDOR "cypress"
 #endif
 
-#ifndef OCL_VENDOR
-#define OCL_VENDOR "GENERIC_OCL"
+#ifdef GENERIC_OCL
+#define OCL_DEFAULT_VENDOR "generic"
 #endif
 
+#ifdef INTEL_OCL
+#define OCL_DEFAULT_VENDOR "intel"
 #endif
 
+#ifdef PHI_OCL
+#define OCL_DEFAULT_VENDOR "phi"
+#endif
+
+#ifndef OCL_DEFAULT_VENDOR
+#define OCL_DEFAULT_VENDOR "none"
+#endif
+
+// default to 32-bit smallint and other ints, 64-bit bigint: same as defined in src/lmptype.h
+#if !defined(LAMMPS_SMALLSMALL) && !defined(LAMMPS_BIGBIG) && !defined(LAMMPS_SMALLBIG)
+#define LAMMPS_SMALLBIG
+#endif
+
+#ifdef LAMMPS_SMALLBIG
+typedef int tagint;
+#define OCL_INT_TYPE "-DLAMMPS_SMALLBIG"
+#endif
+#ifdef LAMMPS_BIGBIG
+#include "inttypes.h"
+typedef int64_t tagint;
+#define OCL_INT_TYPE "-DLAMMPS_BIGBIG"
+#endif
+#ifdef LAMMPS_SMALLSMALL
+typedef int tagint;
+#define OCL_INT_TYPE "-DLAMMPS_SMALLSMALL"
+#endif
+
+#endif // LAL_PRECISION_H

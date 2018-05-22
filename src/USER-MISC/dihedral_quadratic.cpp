@@ -5,7 +5,7 @@
 
    Copyright (2003) Sandia Corporation.  Under the terms of Contract
    DE-AC04-94AL85000 with Sandia Corporation, the U.S. Government retains
-   certain rights in this software.  This software is distributed under 
+   certain rights in this software.  This software is distributed under
    the GNU General Public License.
 
    See the README file in the top-level LAMMPS directory.
@@ -16,20 +16,21 @@
    [ based on dihedral_helix.cpp Paul Crozier (SNL) ]
 ------------------------------------------------------------------------- */
 
-#include "lmptype.h"
-#include "math.h"
-#include "stdlib.h"
+#include <math.h>
+#include <stdlib.h>
 #include "dihedral_quadratic.h"
 #include "atom.h"
-#include "comm.h"
 #include "neighbor.h"
 #include "domain.h"
+#include "comm.h"
 #include "force.h"
 #include "update.h"
+#include "math_const.h"
 #include "memory.h"
 #include "error.h"
 
 using namespace LAMMPS_NS;
+using namespace MathConst;
 
 #define TOLERANCE 0.05
 #define SMALL     0.001
@@ -54,7 +55,7 @@ DihedralQuadratic::~DihedralQuadratic()
 
 void DihedralQuadratic::compute(int eflag, int vflag)
 {
-  int i1,i2,i3,i4,i,m,n,type;
+  int i1,i2,i3,i4,n,type;
   double vb1x,vb1y,vb1z,vb2x,vb2y,vb2z,vb3x,vb3y,vb3z,vb2xm,vb2ym,vb2zm;
   double edihedral,f1[3],f2[3],f3[3],f4[3];
   double sb1,sb2,sb3,rb1,rb3,c0,b1mag2,b1mag,b2mag2;
@@ -86,26 +87,22 @@ void DihedralQuadratic::compute(int eflag, int vflag)
     vb1x = x[i1][0] - x[i2][0];
     vb1y = x[i1][1] - x[i2][1];
     vb1z = x[i1][2] - x[i2][2];
-    domain->minimum_image(vb1x,vb1y,vb1z);
 
     // 2nd bond
 
     vb2x = x[i3][0] - x[i2][0];
     vb2y = x[i3][1] - x[i2][1];
     vb2z = x[i3][2] - x[i2][2];
-    domain->minimum_image(vb2x,vb2y,vb2z);
 
     vb2xm = -vb2x;
     vb2ym = -vb2y;
     vb2zm = -vb2z;
-    domain->minimum_image(vb2xm,vb2ym,vb2zm);
 
     // 3rd bond
 
     vb3x = x[i4][0] - x[i3][0];
     vb3y = x[i4][1] - x[i3][1];
     vb3z = x[i4][2] - x[i3][2];
-    domain->minimum_image(vb3x,vb3y,vb3z);
 
     // c0 calculation
 
@@ -164,22 +161,24 @@ void DihedralQuadratic::compute(int eflag, int vflag)
       int me;
       MPI_Comm_rank(world,&me);
       if (screen) {
-	char str[128];
-	sprintf(str,"Dihedral problem: %d " BIGINT_FORMAT " %d %d %d %d",
-		me,update->ntimestep,
-		atom->tag[i1],atom->tag[i2],atom->tag[i3],atom->tag[i4]);
-	error->warning(FLERR,str,0);
-	fprintf(screen,"  1st atom: %d %g %g %g\n",
-		me,x[i1][0],x[i1][1],x[i1][2]);
-	fprintf(screen,"  2nd atom: %d %g %g %g\n",
-		me,x[i2][0],x[i2][1],x[i2][2]);
-	fprintf(screen,"  3rd atom: %d %g %g %g\n",
-		me,x[i3][0],x[i3][1],x[i3][2]);
-	fprintf(screen,"  4th atom: %d %g %g %g\n",
-		me,x[i4][0],x[i4][1],x[i4][2]);
+        char str[128];
+        sprintf(str,"Dihedral problem: %d " BIGINT_FORMAT " "
+                TAGINT_FORMAT " " TAGINT_FORMAT " "
+                TAGINT_FORMAT " " TAGINT_FORMAT,
+                me,update->ntimestep,
+                atom->tag[i1],atom->tag[i2],atom->tag[i3],atom->tag[i4]);
+        error->warning(FLERR,str,0);
+        fprintf(screen,"  1st atom: %d %g %g %g\n",
+                me,x[i1][0],x[i1][1],x[i1][2]);
+        fprintf(screen,"  2nd atom: %d %g %g %g\n",
+                me,x[i2][0],x[i2][1],x[i2][2]);
+        fprintf(screen,"  3rd atom: %d %g %g %g\n",
+                me,x[i3][0],x[i3][1],x[i3][2]);
+        fprintf(screen,"  4th atom: %d %g %g %g\n",
+                me,x[i4][0],x[i4][1],x[i4][2]);
       }
     }
-    
+
     if (c > 1.0) c = 1.0;
     if (c < -1.0) c = -1.0;
 
@@ -188,19 +187,17 @@ void DihedralQuadratic::compute(int eflag, int vflag)
     // pd = dp/dc
 
     phi = acos(c);
-    if (dx < 0.0) phi *= -1.0;
+    if (dx > 0.0) phi *= -1.0;
     si = sin(phi);
+    if (fabs(si) < SMALLER) si = SMALLER;
+    siinv = 1.0/si;
 
     double dphi = phi-phi0[type];
     p = k[type]*dphi;
-    if (fabs(si) < SMALLER) {
-        pd = - 2.0 * k[type];
-    } else {
-        pd = - 2.0 * p / si;
-    }
+    pd = - 2.0 * p * siinv;
     p = p * dphi;
 
-    if (eflag) edihedral = p; 
+    if (eflag) edihedral = p;
 
     a = pd;
     c = c * a;
@@ -260,7 +257,7 @@ void DihedralQuadratic::compute(int eflag, int vflag)
 
     if (evflag)
       ev_tally(i1,i2,i3,i4,nlocal,newton_bond,edihedral,f1,f3,f4,
-	       vb1x,vb1y,vb1z,vb2x,vb2y,vb2z,vb3x,vb3y,vb3z);
+               vb1x,vb1y,vb1z,vb2x,vb2y,vb2z,vb3x,vb3y,vb3z);
   }
 }
 
@@ -288,19 +285,19 @@ void DihedralQuadratic::coeff(int narg, char **arg)
   if (!allocated) allocate();
 
   int ilo,ihi;
-  force->bounds(arg[0],atom->ndihedraltypes,ilo,ihi);
+  force->bounds(FLERR,arg[0],atom->ndihedraltypes,ilo,ihi);
 
-  double k_one = force->numeric(arg[1]);
-  double phi0_one= force->numeric(arg[2]);
+  double k_one = force->numeric(FLERR,arg[1]);
+  double phi0_one= force->numeric(FLERR,arg[2]);
 
   // require k >= 0
   if (k_one < 0.0)
     error->all(FLERR,"Incorrect coefficient arg for dihedral coefficients");
-                       
+
   int count = 0;
   for (int i = ilo; i <= ihi; i++) {
     k[i] = k_one;
-    phi0[i] = phi0_one;
+    phi0[i] = phi0_one*MY_PI/180.0;
     setflag[i] = 1;
     count++;
   }
@@ -309,7 +306,7 @@ void DihedralQuadratic::coeff(int narg, char **arg)
 }
 
 /* ----------------------------------------------------------------------
-   proc 0 writes out coeffs to restart file 
+   proc 0 writes out coeffs to restart file
 ------------------------------------------------------------------------- */
 
 void DihedralQuadratic::write_restart(FILE *fp)
@@ -319,7 +316,7 @@ void DihedralQuadratic::write_restart(FILE *fp)
 }
 
 /* ----------------------------------------------------------------------
-   proc 0 reads coeffs from restart file, bcasts them 
+   proc 0 reads coeffs from restart file, bcasts them
 ------------------------------------------------------------------------- */
 
 void DihedralQuadratic::read_restart(FILE *fp)
@@ -328,11 +325,11 @@ void DihedralQuadratic::read_restart(FILE *fp)
 
   if (comm->me == 0) {
     fread(&k[1],sizeof(double),atom->ndihedraltypes,fp);
-    fread(&phi0[1],sizeof(int),atom->ndihedraltypes,fp);
+    fread(&phi0[1],sizeof(double),atom->ndihedraltypes,fp);
   }
   MPI_Bcast(&k[1],atom->ndihedraltypes,MPI_DOUBLE,0,world);
   MPI_Bcast(&phi0[1],atom->ndihedraltypes,MPI_DOUBLE,0,world);
- 
+
   for (int i = 1; i <= atom->ndihedraltypes; i++) setflag[i] = 1;
 }
 

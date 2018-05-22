@@ -1,4 +1,4 @@
-/* ----------------------------------------------------------------------
+/* -*- c++ -*- ----------------------------------------------------------
    LAMMPS - Large-scale Atomic/Molecular Massively Parallel Simulator
    http://lammps.sandia.gov, Sandia National Laboratories
    Steve Plimpton, sjplimp@sandia.gov
@@ -38,7 +38,6 @@ class PairLJCutCoulDSFGPU : public PairLJCutCoulDSF {
  private:
   int gpu_mode;
   double cpu_time;
-  int *gpulist;
 };
 
 }

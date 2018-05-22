@@ -39,7 +39,7 @@ class FixSpringSelf : public Fix {
 
   double memory_usage();
   void grow_arrays(int);
-  void copy_arrays(int, int);
+  void copy_arrays(int, int, int);
   int pack_exchange(int, double *);
   int unpack_exchange(int, double *);
   int pack_restart(int, double *);
@@ -51,7 +51,7 @@ class FixSpringSelf : public Fix {
   double k,espring;
   double **xoriginal;         // original coords of atoms
   int xflag, yflag, zflag;
-  int nlevels_respa;
+  int ilevel_respa;
 };
 
 }

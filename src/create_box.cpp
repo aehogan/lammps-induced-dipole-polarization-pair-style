@@ -11,14 +11,16 @@
    See the README file in the top-level LAMMPS directory.
 ------------------------------------------------------------------------- */
 
-#include "stdlib.h"
-#include "string.h"
+#include <stdlib.h>
+#include <string.h>
 #include "create_box.h"
 #include "atom.h"
+#include "atom_vec.h"
 #include "force.h"
 #include "domain.h"
 #include "region.h"
 #include "region_prism.h"
+#include "force.h"
 #include "comm.h"
 #include "update.h"
 #include "error.h"
@@ -33,7 +35,7 @@ CreateBox::CreateBox(LAMMPS *lmp) : Pointers(lmp) {}
 
 void CreateBox::command(int narg, char **arg)
 {
-  if (narg != 2) error->all(FLERR,"Illegal create_box command");
+  if (narg < 2) error->all(FLERR,"Illegal create_box command");
 
   if (domain->box_exist)
     error->all(FLERR,"Cannot create_box after simulation box is defined");
@@ -48,6 +50,8 @@ void CreateBox::command(int narg, char **arg)
   if (iregion == -1) error->all(FLERR,"Create_box region ID does not exist");
   if (domain->regions[iregion]->bboxflag == 0)
     error->all(FLERR,"Create_box region does not support a bounding box");
+
+  domain->regions[iregion]->init();
 
   // if region not prism:
   //   setup orthogonal domain
@@ -94,18 +98,81 @@ void CreateBox::command(int narg, char **arg)
 
   // set atom and topology type quantities
 
-  atom->ntypes = atoi(arg[0]);
+  atom->ntypes = force->inumeric(FLERR,arg[0]);
   atom->nbondtypes = 0;
   atom->nangletypes = 0;
   atom->ndihedraltypes = 0;
   atom->nimpropertypes = 0;
 
+  // process optional args that can overwrite default settings
+
+  int iarg = 2;
+  while (iarg < narg) {
+    if (strcmp(arg[iarg],"bond/types") == 0) {
+      if (iarg+2 > narg) error->all(FLERR,"Illegal create_box command");
+      if (!atom->avec->bonds_allow)
+        error->all(FLERR,"No bonds allowed with this atom style");
+      atom->nbondtypes = force->inumeric(FLERR,arg[iarg+1]);
+      iarg += 2;
+    } else if (strcmp(arg[iarg],"angle/types") == 0) {
+      if (iarg+2 > narg) error->all(FLERR,"Illegal create_box command");
+      if (!atom->avec->angles_allow)
+        error->all(FLERR,"No angles allowed with this atom style");
+      atom->nangletypes = force->inumeric(FLERR,arg[iarg+1]);
+      iarg += 2;
+    } else if (strcmp(arg[iarg],"dihedral/types") == 0) {
+      if (iarg+2 > narg) error->all(FLERR,"Illegal create_box command");
+      if (!atom->avec->dihedrals_allow)
+        error->all(FLERR,"No dihedrals allowed with this atom style");
+      atom->ndihedraltypes = force->inumeric(FLERR,arg[iarg+1]);
+      iarg += 2;
+    } else if (strcmp(arg[iarg],"improper/types") == 0) {
+      if (iarg+2 > narg) error->all(FLERR,"Illegal create_box command");
+      if (!atom->avec->impropers_allow)
+        error->all(FLERR,"No impropers allowed with this atom style");
+      atom->nimpropertypes = force->inumeric(FLERR,arg[iarg+1]);
+      iarg += 2;
+    } else if (strcmp(arg[iarg],"extra/bond/per/atom") == 0) {
+      if (iarg+2 > narg) error->all(FLERR,"Illegal create_box command");
+      if (!atom->avec->bonds_allow)
+        error->all(FLERR,"No bonds allowed with this atom style");
+      atom->bond_per_atom = force->inumeric(FLERR,arg[iarg+1]);
+      iarg += 2;
+    } else if (strcmp(arg[iarg],"extra/angle/per/atom") == 0) {
+      if (iarg+2 > narg) error->all(FLERR,"Illegal create_box command");
+      if (!atom->avec->angles_allow)
+        error->all(FLERR,"No angles allowed with this atom style");
+      atom->angle_per_atom = force->inumeric(FLERR,arg[iarg+1]);
+      iarg += 2;
+    } else if (strcmp(arg[iarg],"extra/dihedral/per/atom") == 0) {
+      if (iarg+2 > narg) error->all(FLERR,"Illegal create_box command");
+      if (!atom->avec->dihedrals_allow)
+        error->all(FLERR,"No dihedrals allowed with this atom style");
+      atom->dihedral_per_atom = force->inumeric(FLERR,arg[iarg+1]);
+      iarg += 2;
+    } else if (strcmp(arg[iarg],"extra/improper/per/atom") == 0) {
+      if (iarg+2 > narg) error->all(FLERR,"Illegal create_box command");
+      if (!atom->avec->impropers_allow)
+        error->all(FLERR,"No impropers allowed with this atom style");
+      atom->improper_per_atom = force->inumeric(FLERR,arg[iarg+1]);
+      iarg += 2;
+    } else if (strcmp(arg[iarg],"extra/special/per/atom") == 0) {
+      if (iarg+2 > narg) error->all(FLERR,"Illegal create_box command");
+      force->special_extra = force->inumeric(FLERR,arg[iarg+1]);
+      atom->maxspecial += force->special_extra;
+      iarg += 2;
+    } else error->all(FLERR,"Illegal create_box command");
+  }
+
   // problem setup using info from header
-  // no call to atom->grow since create_atoms or fixes will do it
+  // deallocate/grow insures any extra settings are used for topology arrays
+  // necessary in case no create_atoms is performed
 
   update->ntimestep = 0;
 
   atom->allocate_type_arrays();
+  atom->deallocate_topology();
+  atom->avec->grow(1);
 
   domain->print_box("Created ");
   domain->set_initial_box();

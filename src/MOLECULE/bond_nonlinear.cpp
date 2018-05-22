@@ -11,8 +11,8 @@
    See the README file in the top-level LAMMPS directory.
 ------------------------------------------------------------------------- */
 
-#include "math.h"
-#include "stdlib.h"
+#include <math.h>
+#include <stdlib.h>
 #include "bond_nonlinear.h"
 #include "atom.h"
 #include "neighbor.h"
@@ -123,11 +123,11 @@ void BondNonlinear::coeff(int narg, char **arg)
   if (!allocated) allocate();
 
   int ilo,ihi;
-  force->bounds(arg[0],atom->nbondtypes,ilo,ihi);
+  force->bounds(FLERR,arg[0],atom->nbondtypes,ilo,ihi);
 
-  double epsilon_one = force->numeric(arg[1]);
-  double r0_one = force->numeric(arg[2]);
-  double lamda_one = force->numeric(arg[3]);
+  double epsilon_one = force->numeric(FLERR,arg[1]);
+  double r0_one = force->numeric(FLERR,arg[2]);
+  double lamda_one = force->numeric(FLERR,arg[3]);
 
   int count = 0;
   for (int i = ilo; i <= ihi; i++) {
@@ -179,14 +179,27 @@ void BondNonlinear::read_restart(FILE *fp)
   for (int i = 1; i <= atom->nbondtypes; i++) setflag[i] = 1;
 }
 
+/* ----------------------------------------------------------------------
+   proc 0 writes to data file
+------------------------------------------------------------------------- */
+
+void BondNonlinear::write_data(FILE *fp)
+{
+  for (int i = 1; i <= atom->nbondtypes; i++)
+    fprintf(fp,"%d %g %g %g\n",i,epsilon[i],r0[i],lamda[i]);
+}
+
 /* ---------------------------------------------------------------------- */
 
-double BondNonlinear::single(int type, double rsq, int i, int j)
+double BondNonlinear::single(int type, double rsq, int i, int j,
+                             double &fforce)
 {
   double r = sqrt(rsq);
   double dr = r - r0[type];
   double drsq = dr*dr;
   double lamdasq = lamda[type]*lamda[type];
   double denom = lamdasq - drsq;
+  double denomsq = denom*denom;
+  fforce = -epsilon[type]/r * 2.0*dr*lamdasq/denomsq;
   return epsilon[type] * drsq / denom;
 }

@@ -15,25 +15,38 @@
    Contributing author: Mike Parks (SNL)
 ------------------------------------------------------------------------- */
 
-#include "float.h"
-#include "stdlib.h"
+#include <float.h>
+#include <stdlib.h>
+#include <string.h>
 #include "atom_vec_peri.h"
 #include "atom.h"
 #include "comm.h"
 #include "domain.h"
 #include "modify.h"
 #include "fix.h"
+#include "citeme.h"
 #include "memory.h"
 #include "error.h"
 
 using namespace LAMMPS_NS;
 
-#define DELTA 10000
+static const char cite_peri_package[] =
+  "PERI package for Peridynamics:\n\n"
+  "@Article{Parks08,\n"
+  " author = {M. L. Parks, R. B. Lehoucq, S. J. Plimpton, S. A. Silling},\n"
+  " title = {Implementing peridynamics within a molecular dynamics code},\n"
+  " journal = {Comp.~Phys.~Comm.},\n"
+  " year =    2008,\n"
+  " volume =  179,\n"
+  " pages =   {777--783}\n"
+  "}\n\n";
 
 /* ---------------------------------------------------------------------- */
 
 AtomVecPeri::AtomVecPeri(LAMMPS *lmp) : AtomVec(lmp)
 {
+  if (lmp->citeme) lmp->citeme->add(cite_peri_package);
+
   molecular = 0;
 
   comm_x_only = 0;
@@ -52,13 +65,13 @@ AtomVecPeri::AtomVecPeri(LAMMPS *lmp) : AtomVec(lmp)
 
 /* ----------------------------------------------------------------------
    grow atom arrays
-   n = 0 grows arrays by DELTA
+   n = 0 grows arrays by a chunk
    n > 0 allocates arrays to size n
 ------------------------------------------------------------------------- */
 
 void AtomVecPeri::grow(int n)
 {
-  if (n == 0) nmax += DELTA;
+  if (n == 0) grow_nmax();
   else nmax = n;
   atom->nmax = nmax;
   if (nmax < 0 || nmax > MAXSMALLINT)
@@ -121,7 +134,7 @@ void AtomVecPeri::copy(int i, int j, int delflag)
 
   if (atom->nextra_grow)
     for (int iextra = 0; iextra < atom->nextra_grow; iextra++)
-      modify->fix[atom->extra_grow[iextra]]->copy_arrays(i,j);
+      modify->fix[atom->extra_grow[iextra]]->copy_arrays(i,j,delflag);
 }
 
 /* ---------------------------------------------------------------------- */
@@ -338,9 +351,9 @@ int AtomVecPeri::pack_border(int n, int *list, double *buf,
       buf[m++] = x[j][0];
       buf[m++] = x[j][1];
       buf[m++] = x[j][2];
-      buf[m++] = tag[j];
-      buf[m++] = type[j];
-      buf[m++] = mask[j];
+      buf[m++] = ubuf(tag[j]).d;
+      buf[m++] = ubuf(type[j]).d;
+      buf[m++] = ubuf(mask[j]).d;
       buf[m++] = vfrac[j];
       buf[m++] = s0[j];
       buf[m++] = x0[j][0];
@@ -362,9 +375,9 @@ int AtomVecPeri::pack_border(int n, int *list, double *buf,
       buf[m++] = x[j][0] + dx;
       buf[m++] = x[j][1] + dy;
       buf[m++] = x[j][2] + dz;
-      buf[m++] = tag[j];
-      buf[m++] = type[j];
-      buf[m++] = mask[j];
+      buf[m++] = ubuf(tag[j]).d;
+      buf[m++] = ubuf(type[j]).d;
+      buf[m++] = ubuf(mask[j]).d;
       buf[m++] = vfrac[j];
       buf[m++] = s0[j];
       buf[m++] = x0[j][0];
@@ -372,6 +385,11 @@ int AtomVecPeri::pack_border(int n, int *list, double *buf,
       buf[m++] = x0[j][2];
     }
   }
+
+  if (atom->nextra_border)
+    for (int iextra = 0; iextra < atom->nextra_border; iextra++)
+      m += modify->fix[atom->extra_border[iextra]]->pack_border(n,list,&buf[m]);
+
   return m;
 }
 
@@ -390,9 +408,9 @@ int AtomVecPeri::pack_border_vel(int n, int *list, double *buf,
       buf[m++] = x[j][0];
       buf[m++] = x[j][1];
       buf[m++] = x[j][2];
-      buf[m++] = tag[j];
-      buf[m++] = type[j];
-      buf[m++] = mask[j];
+      buf[m++] = ubuf(tag[j]).d;
+      buf[m++] = ubuf(type[j]).d;
+      buf[m++] = ubuf(mask[j]).d;
       buf[m++] = vfrac[j];
       buf[m++] = s0[j];
       buf[m++] = x0[j][0];
@@ -418,9 +436,9 @@ int AtomVecPeri::pack_border_vel(int n, int *list, double *buf,
         buf[m++] = x[j][0] + dx;
         buf[m++] = x[j][1] + dy;
         buf[m++] = x[j][2] + dz;
-        buf[m++] = tag[j];
-        buf[m++] = type[j];
-        buf[m++] = mask[j];
+        buf[m++] = ubuf(tag[j]).d;
+        buf[m++] = ubuf(type[j]).d;
+        buf[m++] = ubuf(mask[j]).d;
         buf[m++] = vfrac[j];
         buf[m++] = s0[j];
         buf[m++] = x0[j][0];
@@ -439,9 +457,9 @@ int AtomVecPeri::pack_border_vel(int n, int *list, double *buf,
         buf[m++] = x[j][0] + dx;
         buf[m++] = x[j][1] + dy;
         buf[m++] = x[j][2] + dz;
-        buf[m++] = tag[j];
-        buf[m++] = type[j];
-        buf[m++] = mask[j];
+        buf[m++] = ubuf(tag[j]).d;
+        buf[m++] = ubuf(type[j]).d;
+        buf[m++] = ubuf(mask[j]).d;
         buf[m++] = vfrac[j];
         buf[m++] = s0[j];
         buf[m++] = x0[j][0];
@@ -459,6 +477,11 @@ int AtomVecPeri::pack_border_vel(int n, int *list, double *buf,
       }
     }
   }
+
+  if (atom->nextra_border)
+    for (int iextra = 0; iextra < atom->nextra_border; iextra++)
+      m += modify->fix[atom->extra_border[iextra]]->pack_border(n,list,&buf[m]);
+
   return m;
 }
 
@@ -493,15 +516,20 @@ void AtomVecPeri::unpack_border(int n, int first, double *buf)
     x[i][0] = buf[m++];
     x[i][1] = buf[m++];
     x[i][2] = buf[m++];
-    tag[i] = static_cast<int> (buf[m++]);
-    type[i] = static_cast<int> (buf[m++]);
-    mask[i] = static_cast<int> (buf[m++]);
+    tag[i] = (tagint) ubuf(buf[m++]).i;
+    type[i] = (int) ubuf(buf[m++]).i;
+    mask[i] = (int) ubuf(buf[m++]).i;
     vfrac[i] = buf[m++];
     s0[i] = buf[m++];
     x0[i][0] = buf[m++];
     x0[i][1] = buf[m++];
     x0[i][2] = buf[m++];
   }
+
+  if (atom->nextra_border)
+    for (int iextra = 0; iextra < atom->nextra_border; iextra++)
+      m += modify->fix[atom->extra_border[iextra]]->
+        unpack_border(n,first,&buf[m]);
 }
 
 /* ---------------------------------------------------------------------- */
@@ -517,9 +545,9 @@ void AtomVecPeri::unpack_border_vel(int n, int first, double *buf)
     x[i][0] = buf[m++];
     x[i][1] = buf[m++];
     x[i][2] = buf[m++];
-    tag[i] = static_cast<int> (buf[m++]);
-    type[i] = static_cast<int> (buf[m++]);
-    mask[i] = static_cast<int> (buf[m++]);
+    tag[i] = (tagint) ubuf(buf[m++]).i;
+    type[i] = (int) ubuf(buf[m++]).i;
+    mask[i] = (int) ubuf(buf[m++]).i;
     vfrac[i] = buf[m++];
     s0[i] = buf[m++];
     x0[i][0] = buf[m++];
@@ -529,6 +557,11 @@ void AtomVecPeri::unpack_border_vel(int n, int first, double *buf)
     v[i][1] = buf[m++];
     v[i][2] = buf[m++];
   }
+
+  if (atom->nextra_border)
+    for (int iextra = 0; iextra < atom->nextra_border; iextra++)
+      m += modify->fix[atom->extra_border[iextra]]->
+        unpack_border(n,first,&buf[m]);
 }
 
 /* ---------------------------------------------------------------------- */
@@ -563,10 +596,10 @@ int AtomVecPeri::pack_exchange(int i, double *buf)
   buf[m++] = v[i][0];
   buf[m++] = v[i][1];
   buf[m++] = v[i][2];
-  buf[m++] = tag[i];
-  buf[m++] = type[i];
-  buf[m++] = mask[i];
-  *((tagint *) &buf[m++]) = image[i];
+  buf[m++] = ubuf(tag[i]).d;
+  buf[m++] = ubuf(type[i]).d;
+  buf[m++] = ubuf(mask[i]).d;
+  buf[m++] = ubuf(image[i]).d;
 
   buf[m++] = vfrac[i];
   buf[m++] = rmass[i];
@@ -597,10 +630,10 @@ int AtomVecPeri::unpack_exchange(double *buf)
   v[nlocal][0] = buf[m++];
   v[nlocal][1] = buf[m++];
   v[nlocal][2] = buf[m++];
-  tag[nlocal] = static_cast<int> (buf[m++]);
-  type[nlocal] = static_cast<int> (buf[m++]);
-  mask[nlocal] = static_cast<int> (buf[m++]);
-  image[nlocal] = *((tagint *) &buf[m++]);
+  tag[nlocal] = (tagint) ubuf(buf[m++]).i;
+  type[nlocal] = (int) ubuf(buf[m++]).i;
+  mask[nlocal] = (int) ubuf(buf[m++]).i;
+  image[nlocal] = (imageint) ubuf(buf[m++]).i;
 
   vfrac[nlocal] = buf[m++];
   rmass[nlocal] = buf[m++];
@@ -651,10 +684,10 @@ int AtomVecPeri::pack_restart(int i, double *buf)
   buf[m++] = x[i][0];
   buf[m++] = x[i][1];
   buf[m++] = x[i][2];
-  buf[m++] = tag[i];
-  buf[m++] = type[i];
-  buf[m++] = mask[i];
-  *((tagint *) &buf[m++]) = image[i];
+  buf[m++] = ubuf(tag[i]).d;
+  buf[m++] = ubuf(type[i]).d;
+  buf[m++] = ubuf(mask[i]).d;
+  buf[m++] = ubuf(image[i]).d;
   buf[m++] = v[i][0];
   buf[m++] = v[i][1];
   buf[m++] = v[i][2];
@@ -691,10 +724,10 @@ int AtomVecPeri::unpack_restart(double *buf)
   x[nlocal][0] = buf[m++];
   x[nlocal][1] = buf[m++];
   x[nlocal][2] = buf[m++];
-  tag[nlocal] = static_cast<int> (buf[m++]);
-  type[nlocal] = static_cast<int> (buf[m++]);
-  mask[nlocal] = static_cast<int> (buf[m++]);
-  image[nlocal] = *((tagint *) &buf[m++]);
+  tag[nlocal] = (tagint) ubuf(buf[m++]).i;
+  type[nlocal] = (int) ubuf(buf[m++]).i;
+  mask[nlocal] = (int) ubuf(buf[m++]).i;
+  image[nlocal] = (imageint) ubuf(buf[m++]).i;
   v[nlocal][0] = buf[m++];
   v[nlocal][1] = buf[m++];
   v[nlocal][2] = buf[m++];
@@ -732,8 +765,8 @@ void AtomVecPeri::create_atom(int itype, double *coord)
   x[nlocal][1] = coord[1];
   x[nlocal][2] = coord[2];
   mask[nlocal] = 1;
-  image[nlocal] = ((tagint) IMGMAX << IMG2BITS) |
-    ((tagint) IMGMAX << IMGBITS) | IMGMAX;
+  image[nlocal] = ((imageint) IMGMAX << IMG2BITS) |
+    ((imageint) IMGMAX << IMGBITS) | IMGMAX;
   v[nlocal][0] = 0.0;
   v[nlocal][1] = 0.0;
   v[nlocal][2] = 0.0;
@@ -753,15 +786,12 @@ void AtomVecPeri::create_atom(int itype, double *coord)
    initialize other atom quantities
 ------------------------------------------------------------------------- */
 
-void AtomVecPeri::data_atom(double *coord, tagint imagetmp, char **values)
+void AtomVecPeri::data_atom(double *coord, imageint imagetmp, char **values)
 {
   int nlocal = atom->nlocal;
   if (nlocal == nmax) grow(0);
 
-  tag[nlocal] = atoi(values[0]);
-  if (tag[nlocal] <= 0)
-    error->one(FLERR,"Invalid atom ID in Atoms section of data file");
-
+  tag[nlocal] = ATOTAGINT(values[0]);
   type[nlocal] = atoi(values[1]);
   if (type[nlocal] <= 0 || type[nlocal] > atom->ntypes)
     error->one(FLERR,"Invalid atom type in Atoms section of data file");
@@ -789,7 +819,6 @@ void AtomVecPeri::data_atom(double *coord, tagint imagetmp, char **values)
   atom->nlocal++;
 }
 
-
 /* ----------------------------------------------------------------------
    unpack hybrid quantities from one line in Atoms section of data file
    initialize other atom quantities for this sub-style
@@ -807,6 +836,102 @@ int AtomVecPeri::data_atom_hybrid(int nlocal, char **values)
   x0[nlocal][2] = x[nlocal][2];
 
   return 2;
+}
+
+/* ----------------------------------------------------------------------
+   pack atom info for data file including 3 image flags
+------------------------------------------------------------------------- */
+
+void AtomVecPeri::pack_data(double **buf)
+{
+  int nlocal = atom->nlocal;
+  for (int i = 0; i < nlocal; i++) {
+    buf[i][0] = ubuf(tag[i]).d;
+    buf[i][1] = ubuf(type[i]).d;
+    buf[i][2] = vfrac[i];
+    buf[i][3] = rmass[i];
+    buf[i][4] = x[i][0];
+    buf[i][5] = x[i][1];
+    buf[i][6] = x[i][2];
+    buf[i][7] = ubuf((image[i] & IMGMASK) - IMGMAX).d;
+    buf[i][8] = ubuf((image[i] >> IMGBITS & IMGMASK) - IMGMAX).d;
+    buf[i][9] = ubuf((image[i] >> IMG2BITS) - IMGMAX).d;
+  }
+}
+
+/* ----------------------------------------------------------------------
+   pack hybrid atom info for data file
+------------------------------------------------------------------------- */
+
+int AtomVecPeri::pack_data_hybrid(int i, double *buf)
+{
+  buf[0] = vfrac[i];
+  buf[1] = rmass[i];
+  return 2;
+}
+
+/* ----------------------------------------------------------------------
+   write atom info to data file including 3 image flags
+------------------------------------------------------------------------- */
+
+void AtomVecPeri::write_data(FILE *fp, int n, double **buf)
+{
+  for (int i = 0; i < n; i++)
+    fprintf(fp,TAGINT_FORMAT
+            " %d %-1.16e %-1.16e %-1.16e %-1.16e %-1.16e %d %d %d\n",
+            (tagint) ubuf(buf[i][0]).i,(int) ubuf(buf[i][1]).i,
+            buf[i][2],buf[i][3],buf[i][4],buf[i][5],buf[i][6],
+            (int) ubuf(buf[i][7]).i,(int) ubuf(buf[i][8]).i,
+            (int) ubuf(buf[i][9]).i);
+}
+
+/* ----------------------------------------------------------------------
+   write hybrid atom info to data file
+------------------------------------------------------------------------- */
+
+int AtomVecPeri::write_data_hybrid(FILE *fp, double *buf)
+{
+  fprintf(fp," %-1.16e %-1.16e",buf[0],buf[1]);
+  return 2;
+}
+
+/* ----------------------------------------------------------------------
+   assign an index to named atom property and return index
+   return -1 if name is unknown to this atom style
+------------------------------------------------------------------------- */
+
+int AtomVecPeri::property_atom(char *name)
+{
+  if (strcmp(name,"vfrac") == 0) return 0;
+  if (strcmp(name,"s0") == 0) return 1;
+  return -1;
+}
+
+/* ----------------------------------------------------------------------
+   pack per-atom data into buf for ComputePropertyAtom
+   index maps to data specific to this atom style
+------------------------------------------------------------------------- */
+
+void AtomVecPeri::pack_property_atom(int index, double *buf,
+                                     int nvalues, int groupbit)
+{
+  int *mask = atom->mask;
+  int nlocal = atom->nlocal;
+  int n = 0;
+
+  if (index == 0) {
+    for (int i = 0; i < nlocal; i++) {
+      if (mask[i] & groupbit) buf[n] = vfrac[i];
+      else buf[n] = 0.0;
+      n += nvalues;
+    }
+  } else if (index == 1) {
+    for (int i = 0; i < nlocal; i++) {
+      if (mask[i] & groupbit) buf[n] = s0[i];
+      else buf[n] = 0.0;
+      n += nvalues;
+    }
+  }
 }
 
 /* ----------------------------------------------------------------------

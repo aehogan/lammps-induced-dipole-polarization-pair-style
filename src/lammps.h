@@ -1,4 +1,4 @@
-/* ----------------------------------------------------------------------
+/* -*- c++ -*- ----------------------------------------------------------
    LAMMPS - Large-scale Atomic/Molecular Massively Parallel Simulator
    http://lammps.sandia.gov, Sandia National Laboratories
    Steve Plimpton, sjplimp@sandia.gov
@@ -14,7 +14,7 @@
 #ifndef LMP_LAMMPS_H
 #define LMP_LAMMPS_H
 
-#include "stdio.h"
+#include <stdio.h>
 
 namespace LAMMPS_NS {
 
@@ -42,9 +42,22 @@ class LAMMPS {
   FILE *screen;                  // screen output
   FILE *logfile;                 // logfile
 
-  char *suffix;                  // suffix to add to input script style names
-  int suffix_enable;             // 1 if suffix enabled, 0 if disabled
-  class Cuda *cuda;              // CUDA accelerator class
+  double initclock;              // wall clock at instantiation
+
+  char *suffix,*suffix2;         // suffixes to add to input script style names
+  int suffix_enable;             // 1 if suffixes are enabled, 0 if disabled
+  char *exename;                 // pointer to argv[0]
+  char ***packargs;              // arguments for cmdline package commands
+  int num_package;               // number of cmdline package commands
+  int cite_enable;               // 1 if generating log.cite, 0 if disabled
+
+  class KokkosLMP *kokkos;       // KOKKOS accelerator class
+  class AtomKokkos *atomKK;      // KOKKOS version of Atom class
+  class MemoryKokkos *memoryKK;  // KOKKOS version of Memory class
+
+  class Python * python;         // Python interface
+
+  class CiteMe *citeme;          // citation info
 
   LAMMPS(int, char **, MPI_Comm);
   ~LAMMPS();
@@ -53,7 +66,10 @@ class LAMMPS {
   void init();
   void destroy();
 
-  void print_styles();
+ private:
+  void help();
+  LAMMPS() {};                   // prohibit using the default constructor
+  LAMMPS(const LAMMPS &) {};     // prohibit using the copy constructor
 };
 
 }
@@ -71,7 +87,7 @@ E: Cannot use -reorder after -partition
 
 Self-explanatory.  See doc page discussion of command-line switches.
 
-E: Processor partitions are inconsistent
+E: Processor partitions do not match number of allocated processors
 
 The total number of processors in all partitions must match the number
 of processors LAMMPS is running on.
@@ -95,7 +111,7 @@ For a multi-partition run, the master screen file cannot be opened.
 Check that the directory you are running in allows for files to be
 created.
 
-E: Cannot open log.lammps
+E: Cannot open log.lammps for writing
 
 The default LAMMPS log file cannot be opened.  Check that the
 directory you are running in allows for files to be created.
@@ -125,6 +141,10 @@ E: Smallint setting in lmptype.h is invalid
 
 It has to be the size of an integer.
 
+E: Imageint setting in lmptype.h is invalid
+
+Imageint must be as large or larger than smallint.
+
 E: Tagint setting in lmptype.h is invalid
 
 Tagint must be as large or larger than smallint.
@@ -141,17 +161,39 @@ E: MPI_LMP_BIGINT and bigint in lmptype.h are not compatible
 
 The size of the MPI datatype does not match the size of a bigint.
 
-E: Small, tag, big integers are not sized correctly
+E: Small to big integers are not sized correctly
 
-See description of these 3 data types in src/lmptype.h.
+This error occurs whenthe sizes of smallint, imageint, tagint, bigint,
+as defined in src/lmptype.h are not what is expected.  Contact
+the developers if this occurs.
 
-E: 64-bit atom IDs are not yet supported
+E: Cannot use -cuda on and -kokkos on together
 
-See description of this data type in src/lmptype.h.
+This is not allowed since both packages can use GPUs.
 
-E: Cannot use -cuda on without USER-CUDA installed
+E: Cannot use -kokkos on without KOKKOS installed
 
-The USER-CUDA package must be installed via "make yes-user-cuda"
-before LAMMPS is built.
+Self-explanatory.
+
+E: Using suffix gpu without GPU package installed
+
+Self-explanatory.
+
+E: Using suffix intel without USER-INTEL package installed
+
+Self-explanatory.
+
+E: Using suffix kk without KOKKOS package enabled
+
+Self-explanatory.
+
+E: Using suffix omp without USER-OMP package installed
+
+Self-explanatory.
+
+E: Too many -pk arguments in command line
+
+The string formed by concatenating the arguments is too long.  Use a
+package command in the input script instead.
 
 */

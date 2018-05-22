@@ -11,9 +11,9 @@
    See the README file in the top-level LAMMPS directory.
 ------------------------------------------------------------------------- */
 
-#include "mpi.h"
-#include "string.h"
-#include "stdlib.h"
+#include <mpi.h>
+#include <string.h>
+#include <stdlib.h>
 #include "fix_aveforce.h"
 #include "atom.h"
 #include "update.h"
@@ -24,6 +24,7 @@
 #include "input.h"
 #include "variable.h"
 #include "error.h"
+#include "force.h"
 
 using namespace LAMMPS_NS;
 using namespace FixConst;
@@ -33,14 +34,18 @@ enum{NONE,CONSTANT,EQUAL};
 /* ---------------------------------------------------------------------- */
 
 FixAveForce::FixAveForce(LAMMPS *lmp, int narg, char **arg) :
-  Fix(lmp, narg, arg)
+  Fix(lmp, narg, arg),
+  xstr(NULL), ystr(NULL), zstr(NULL), idregion(NULL)
 {
   if (narg < 6) error->all(FLERR,"Illegal fix aveforce command");
 
+  dynamic_group_allow = 1;
   vector_flag = 1;
   size_vector = 3;
   global_freq = 1;
   extvector = 1;
+  respa_level_support = 1;
+  ilevel_respa = nlevels_respa = 0;
 
   xstr = ystr = zstr = NULL;
 
@@ -51,7 +56,7 @@ FixAveForce::FixAveForce(LAMMPS *lmp, int narg, char **arg) :
   } else if (strcmp(arg[3],"NULL") == 0) {
     xstyle = NONE;
   } else {
-    xvalue = atof(arg[3]);
+    xvalue = force->numeric(FLERR,arg[3]);
     xstyle = CONSTANT;
   }
   if (strstr(arg[4],"v_") == arg[4]) {
@@ -61,7 +66,7 @@ FixAveForce::FixAveForce(LAMMPS *lmp, int narg, char **arg) :
   } else if (strcmp(arg[4],"NULL") == 0) {
     ystyle = NONE;
   } else {
-    yvalue = atof(arg[4]);
+    yvalue = force->numeric(FLERR,arg[4]);
     ystyle = CONSTANT;
   }
   if (strstr(arg[5],"v_") == arg[5]) {
@@ -71,7 +76,7 @@ FixAveForce::FixAveForce(LAMMPS *lmp, int narg, char **arg) :
   } else if (strcmp(arg[5],"NULL") == 0) {
     zstyle = NONE;
   } else {
-    zvalue = atof(arg[5]);
+    zvalue = force->numeric(FLERR,arg[5]);
     zstyle = CONSTANT;
   }
 
@@ -159,8 +164,11 @@ void FixAveForce::init()
   if (xstyle == EQUAL || ystyle == EQUAL || zstyle == EQUAL) varflag = EQUAL;
   else varflag = CONSTANT;
 
-  if (strstr(update->integrate_style,"respa"))
+  if (strstr(update->integrate_style,"respa")) {
     nlevels_respa = ((Respa *) update->integrate)->nlevels;
+    if (respa_level >= 0) ilevel_respa = MIN(respa_level,nlevels_respa-1);
+    else ilevel_respa = nlevels_respa-1;
+  }
 }
 
 /* ---------------------------------------------------------------------- */
@@ -188,6 +196,14 @@ void FixAveForce::min_setup(int vflag)
 
 void FixAveForce::post_force(int vflag)
 {
+  // update region if necessary
+
+  Region *region = NULL;
+  if (iregion >= 0) {
+    region = domain->regions[iregion];
+    region->prematch();
+  }
+
   // sum forces on participating atoms
 
   double **x = atom->x;
@@ -200,10 +216,7 @@ void FixAveForce::post_force(int vflag)
 
   for (int i = 0; i < nlocal; i++)
     if (mask[i] & groupbit) {
-      if (iregion >= 0 &&
-          !domain->regions[iregion]->match(x[i][0],x[i][1],x[i][2]))
-        continue;
-
+      if (region && !region->match(x[i][0],x[i][1],x[i][2])) continue;
       foriginal[0] += f[i][0];
       foriginal[1] += f[i][1];
       foriginal[2] += f[i][2];
@@ -237,10 +250,7 @@ void FixAveForce::post_force(int vflag)
 
   for (int i = 0; i < nlocal; i++)
     if (mask[i] & groupbit) {
-      if (iregion >= 0 &&
-          !domain->regions[iregion]->match(x[i][0],x[i][1],x[i][2]))
-        continue;
-
+      if (region && !region->match(x[i][0],x[i][1],x[i][2])) continue;
       if (xstyle) f[i][0] = fave[0];
       if (ystyle) f[i][1] = fave[1];
       if (zstyle) f[i][2] = fave[2];
@@ -251,11 +261,17 @@ void FixAveForce::post_force(int vflag)
 
 void FixAveForce::post_force_respa(int vflag, int ilevel, int iloop)
 {
-  // ave + extra force on outermost level
-  // just ave on inner levels
+  // ave + extra force on selected RESPA level
+  // just ave on all other levels
 
-  if (ilevel == nlevels_respa-1) post_force(vflag);
+  if (ilevel == ilevel_respa) post_force(vflag);
   else {
+    Region *region = NULL;
+    if (iregion >= 0) {
+      region = domain->regions[iregion];
+      region->prematch();
+    }
+
     double **x = atom->x;
     double **f = atom->f;
     int *mask = atom->mask;
@@ -266,10 +282,7 @@ void FixAveForce::post_force_respa(int vflag, int ilevel, int iloop)
 
     for (int i = 0; i < nlocal; i++)
       if (mask[i] & groupbit) {
-        if (iregion >= 0 &&
-            !domain->regions[iregion]->match(x[i][0],x[i][1],x[i][2]))
-          continue;
-
+        if (region && !region->match(x[i][0],x[i][1],x[i][2])) continue;
         foriginal[0] += f[i][0];
         foriginal[1] += f[i][1];
         foriginal[2] += f[i][2];
@@ -288,10 +301,7 @@ void FixAveForce::post_force_respa(int vflag, int ilevel, int iloop)
 
     for (int i = 0; i < nlocal; i++)
       if (mask[i] & groupbit) {
-        if (iregion >= 0 &&
-            !domain->regions[iregion]->match(x[i][0],x[i][1],x[i][2]))
-          continue;
-
+        if (region && !region->match(x[i][0],x[i][1],x[i][2])) continue;
         if (xstyle) f[i][0] = fave[0];
         if (ystyle) f[i][1] = fave[1];
         if (zstyle) f[i][2] = fave[2];

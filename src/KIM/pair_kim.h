@@ -1,4 +1,4 @@
-/* ----------------------------------------------------------------------
+/* -*- c++ -*- ----------------------------------------------------------
    LAMMPS - Large-scale Atomic/Molecular Massively Parallel Simulator
    http://lammps.sandia.gov, Sandia National Laboratories
    Steve Plimpton, sjplimp@sandia.gov
@@ -18,7 +18,8 @@
 ------------------------------------------------------------------------- */
 
 /* ----------------------------------------------------------------------
-   Designed for use with the openkim-api-v1.1.0 (and newer) package
+   Designed for use with the openkim-api-v1.5.0 package and for use with
+   the kim-api-v1.6.0 (and newer) package
 ------------------------------------------------------------------------- */
 
 #ifdef PAIR_CLASS
@@ -48,33 +49,40 @@ namespace LAMMPS_NS {
       virtual void coeff(int, char**);
       virtual void init_style();
       virtual double init_one(int, int);
+      virtual void reinit();
       virtual int pack_reverse_comm(int, int, double*);
       virtual void unpack_reverse_comm(int, int*, double*);
       virtual double memory_usage();
+      void *extract(const char *, int &);
 
    private:
       // (nearly) all bool flags are not initialized in constructor, but set
       // explicitly in the indicated function.  All other data members are
       // initialized in constructor
+      int settings_call_count;
+      int init_style_call_count;
 
       // values set in settings()
       char* kim_modelname;
+      bool print_kim_file;
 
       // values set in coeff()
 
       // values set in allocate(), called by coeff()
       void allocate();
-      int* lmps_map_types_to_unique;
+      int* lmps_map_species_to_unique;
 
       // values set in coeff(), after calling allocate()
-      char** lmps_unique_elements;  // names of unique elements given in pair_coeff command
+      char** lmps_unique_elements;  // names of unique elements given
+                                    // in pair_coeff command
       int lmps_num_unique_elements;
 
       // values set in set_lmps_flags(), called from init_style()
       bool lmps_using_newton;
       bool lmps_using_molecular;
       bool lmps_hybrid;             // true if running with pair hybrid
-      bool lmps_support_cluster;    // true if running in mode compat. with CLUSTER
+      bool lmps_support_cluster;    // true if running in mode compat.
+                                    // with CLUSTER
       enum unit_sys {REAL, METAL, SI, CGS, ELECTRON};
       unit_sys lmps_units;
 
@@ -93,8 +101,8 @@ namespace LAMMPS_NS {
       int kim_ind_coordinates;
       int kim_ind_numberOfParticles;
       int kim_ind_numberContributingParticles;
-      int kim_ind_numberParticleTypes;
-      int kim_ind_particleTypes;
+      int kim_ind_numberOfSpecies;
+      int kim_ind_particleSpecies;
       int kim_ind_get_neigh;
       int kim_ind_neighObject;
       int kim_ind_cutoff;
@@ -112,18 +120,19 @@ namespace LAMMPS_NS {
       // values set in set_statics(), called at end of kim_init(),
       //   then again in set_volatiles(), called in compute()
       int lmps_local_tot_num_atoms;
-      double kim_global_cutoff;     // KIM Model cutoff value
+      double kim_global_cutoff;       // KIM Model cutoff value
 
       // values set in compute()
-      int lmps_maxalloc;            // max allocated memory value
-      int* kim_particleTypes;       // array of KIM particle types
-      double** lmps_force_tmp;      // temp storage for f, when running in hybrid mode
-                                    // needed to avoid reseting f to zero in each object
-      int* lmps_stripped_neigh_list;// neighbors of one atom, used when LAMMPS is in
-                                    // molecular mode
+      int lmps_maxalloc;              // max allocated memory value
+      int* kim_particleSpecies;       // array of KIM particle species
+      double** lmps_force_tmp;        // temp storage for f, when running in
+                                      // hybrid mode needed to avoid resetting
+                                      // f to zero in each object
+      int* lmps_stripped_neigh_list;  // neighbors of one atom, used when LAMMPS
+                                      // is in molecular mode
 
       // values used in get_neigh()
-      int kim_iterator_position;    //get_neigh iterator current position
+      int kim_iterator_position;      //get_neigh iterator current position
       double *Rij;
 
       // KIM specific helper functions
@@ -137,7 +146,8 @@ namespace LAMMPS_NS {
       void write_descriptor(char** test_descriptor_string);
       // static methods used as callbacks from KIM
       static int get_neigh(void** kimmdl, int* mode, int* request,
-                           int* atom, int* numnei, int** nei1atom, double** pRij);
+                           int* atom, int* numnei, int** nei1atom,
+                           double** pRij);
    };
 }
 
@@ -166,16 +176,12 @@ E: Invalid args for non-hybrid pair coefficients
 
 E: PairKIM only works with 3D problems
 
-The KIM API does not explicitly support anything other than 3D problems
+This is a current limitation.
 
 E: All pair coeffs are not set
 
 All pair coefficients must be set in the data file or by the
 pair_coeff command before running a simulation.
-
-E: Internal KIM error
-
-Self-explanatory. Check the output and kim.log file for more details.
 
 E: KIM neighbor iterator exceeded range
 
@@ -191,24 +197,24 @@ E: Unknown unit_style
 
 Self-explanatory. Check the input script or data file.
 
-W: KIM Model does not provide `energy'; Potential energy will be zero
+W: KIM Model does not provide 'energy'; Potential energy will be zero
 
 Self-explanatory.
 
-W: KIM Model does not provide `forces'; Forces will be zero
+W: KIM Model does not provide 'forces'; Forces will be zero
 
 Self-explanatory.
 
-W: KIM Model does not provide `particleEnergy'; energy per atom will be zero
+W: KIM Model does not provide 'particleEnergy'; energy per atom will be zero
 
 Self-explanatory.
 
-W: KIM Model does not provide `particleVirial'; virial per atom will be zero
+W: KIM Model does not provide 'particleVirial'; virial per atom will be zero
 
 Self-explanatory.
 
-E: test_descriptor_string already allocated
+E: Test_descriptor_string already allocated
 
-This should not happen. It likely indicates a bug in the pair_kim implementation.
+This is an internal error.  Contact the developers.
 
 */

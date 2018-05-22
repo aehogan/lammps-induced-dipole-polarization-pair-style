@@ -15,8 +15,8 @@
    Contributing author: Pieter in 't Veld (SNL)
 ------------------------------------------------------------------------- */
 
-#include "mpi.h"
-#include "string.h"
+#include <mpi.h>
+#include <string.h>
 #include "compute_temp_deform.h"
 #include "domain.h"
 #include "atom.h"
@@ -67,11 +67,6 @@ void ComputeTempDeform::init()
 {
   int i;
 
-  fix_dof = 0;
-  for (i = 0; i < modify->nfix; i++)
-    fix_dof += modify->fix[i]->dof(igroup);
-  dof_compute();
-
   // check fix deform remap settings
 
   for (i = 0; i < modify->nfix; i++)
@@ -83,15 +78,26 @@ void ComputeTempDeform::init()
       break;
     }
   if (i == modify->nfix && comm->me == 0)
-    error->warning(FLERR,"Using compute temp/deform with no fix deform defined");
+    error->warning(FLERR,
+                   "Using compute temp/deform with no fix deform defined");
+}
+
+/* ---------------------------------------------------------------------- */
+
+void ComputeTempDeform::setup()
+{
+  dynamic = 0;
+  if (dynamic_user || group->dynamic[igroup]) dynamic = 1;
+  dof_compute();
 }
 
 /* ---------------------------------------------------------------------- */
 
 void ComputeTempDeform::dof_compute()
 {
-  double natoms = group->count(igroup);
-  dof = domain->dimension * natoms;
+  adjust_dof_fix();
+  natoms_temp = group->count(igroup);
+  dof = domain->dimension * natoms_temp;
   dof -= extra_dof + fix_dof;
   if (dof > 0) tfactor = force->mvv2e / (dof * force->boltz);
   else tfactor = 0.0;
@@ -142,6 +148,8 @@ double ComputeTempDeform::compute_scalar()
 
   MPI_Allreduce(&t,&scalar,1,MPI_DOUBLE,MPI_SUM,world);
   if (dynamic) dof_compute();
+  if (dof < 0.0 && natoms_temp > 0.0)
+    error->all(FLERR,"Temperature compute degrees of freedom < 0");
   scalar *= tfactor;
   return scalar;
 }
@@ -214,6 +222,26 @@ void ComputeTempDeform::remove_bias(int i, double *v)
 }
 
 /* ----------------------------------------------------------------------
+   remove velocity bias from atom I to leave thermal velocity
+------------------------------------------------------------------------- */
+
+void ComputeTempDeform::remove_bias_thr(int i, double *v, double *b)
+{
+  double lamda[3];
+  double *h_rate = domain->h_rate;
+  double *h_ratelo = domain->h_ratelo;
+
+  domain->x2lamda(atom->x[i],lamda);
+  b[0] = h_rate[0]*lamda[0] + h_rate[5]*lamda[1] +
+    h_rate[4]*lamda[2] + h_ratelo[0];
+  b[1] = h_rate[1]*lamda[1] + h_rate[3]*lamda[2] + h_ratelo[1];
+  b[2] = h_rate[2]*lamda[2] + h_ratelo[2];
+  v[0] -= b[0];
+  v[1] -= b[1];
+  v[2] -= b[2];
+}
+
+/* ----------------------------------------------------------------------
    remove velocity bias from all atoms to leave thermal velocity
 ------------------------------------------------------------------------- */
 
@@ -223,7 +251,7 @@ void ComputeTempDeform::remove_bias_all()
   int *mask = atom->mask;
   int nlocal = atom->nlocal;
 
-  if (nlocal > maxbias) {
+  if (atom->nmax > maxbias) {
     memory->destroy(vbiasall);
     maxbias = atom->nmax;
     memory->create(vbiasall,maxbias,3,"temp/deform:vbiasall");
@@ -259,6 +287,18 @@ void ComputeTempDeform::restore_bias(int i, double *v)
 }
 
 /* ----------------------------------------------------------------------
+   add back in velocity bias to atom I removed by remove_bias_thr()
+   assume remove_bias_thr() was previously called with the same buffer b
+------------------------------------------------------------------------- */
+
+void ComputeTempDeform::restore_bias_thr(int i, double *v, double *b)
+{
+  v[0] += b[0];
+  v[1] += b[1];
+  v[2] += b[2];
+}
+
+/* ----------------------------------------------------------------------
    add back in velocity bias to all atoms removed by remove_bias_all()
    assume remove_bias_all() was previously called
 ------------------------------------------------------------------------- */
@@ -281,6 +321,6 @@ void ComputeTempDeform::restore_bias_all()
 
 double ComputeTempDeform::memory_usage()
 {
-  double bytes = maxbias * sizeof(double);
+  double bytes = 3*maxbias * sizeof(double);
   return bytes;
 }

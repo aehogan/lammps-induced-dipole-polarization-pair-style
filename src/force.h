@@ -15,6 +15,9 @@
 #define LMP_FORCE_H
 
 #include "pointers.h"
+#include <stdio.h>
+#include <map>
+#include <string>
 
 namespace LAMMPS_NS {
 
@@ -40,6 +43,9 @@ class Force : protected Pointers {
   double femtosecond;                // 1 femtosecond in native units
   double qelectron;                  // 1 electron charge abs() in native units
 
+  double qqr2e_lammps_real;          // different versions of this constant
+  double qqr2e_charmm_real;          // used by new CHARMM pair styles
+
   int newton,newton_pair,newton_bond;   // Newton's 3rd law settings
 
   class Pair *pair;
@@ -59,6 +65,28 @@ class Force : protected Pointers {
 
   class KSpace *kspace;
   char *kspace_style;
+
+  typedef Pair *(*PairCreator)(LAMMPS *);
+  typedef Bond *(*BondCreator)(LAMMPS *);
+  typedef Angle *(*AngleCreator)(LAMMPS *);
+  typedef Dihedral *(*DihedralCreator)(LAMMPS *);
+  typedef Improper *(*ImproperCreator)(LAMMPS *);
+  typedef KSpace *(*KSpaceCreator)(LAMMPS *,int,char**);
+
+  typedef std::map<std::string,PairCreator> PairCreatorMap;
+  typedef std::map<std::string,BondCreator> BondCreatorMap;
+  typedef std::map<std::string,AngleCreator> AngleCreatorMap;
+  typedef std::map<std::string,DihedralCreator> DihedralCreatorMap;
+  typedef std::map<std::string,ImproperCreator> ImproperCreatorMap;
+  typedef std::map<std::string,KSpaceCreator> KSpaceCreatorMap;
+
+  PairCreatorMap *pair_map;
+  BondCreatorMap *bond_map;
+  AngleCreatorMap *angle_map;
+  DihedralCreatorMap *dihedral_map;
+  ImproperCreatorMap *improper_map;
+  KSpaceCreatorMap *kspace_map;
+
                              // index [0] is not used in these arrays
   double special_lj[4];      // 1-2, 1-3, 1-4 prefactors for LJ
   double special_coul[4];    // 1-2, 1-3, 1-4 prefactors for Coulombics
@@ -71,33 +99,55 @@ class Force : protected Pointers {
   Force(class LAMMPS *);
   ~Force();
   void init();
+  void setup();
 
-  void create_pair(const char *, const char *suffix = NULL);
-  class Pair *new_pair(const char *, const char *, int &);
-  class Pair *pair_match(const char *, int);
+  void create_pair(const char *, int);
+  class Pair *new_pair(const char *, int, int &);
+  class Pair *pair_match(const char *, int, int nsub=0);
+  char *pair_match_ptr(Pair *);
 
-  void create_bond(const char *, const char *suffix = NULL);
-  class Bond *new_bond(const char *, const char *, int &);
+  void create_bond(const char *, int);
+  class Bond *new_bond(const char *, int, int &);
   class Bond *bond_match(const char *);
 
-  void create_angle(const char *, const char *suffix = NULL);
-  class Angle *new_angle(const char *, const char *, int &);
+  void create_angle(const char *, int);
+  class Angle *new_angle(const char *, int, int &);
+  class Angle *angle_match(const char *);
 
-  void create_dihedral(const char *, const char *suffix = NULL);
-  class Dihedral *new_dihedral(const char *, const char *, int &);
+  void create_dihedral(const char *, int);
+  class Dihedral *new_dihedral(const char *, int, int &);
+  class Dihedral *dihedral_match(const char *);
 
-  void create_improper(const char *, const char *suffix = NULL);
-  class Improper *new_improper(const char *, const char *, int &);
+  void create_improper(const char *, int);
+  class Improper *new_improper(const char *, int, int &);
+  class Improper *improper_match(const char *);
 
-  void create_kspace(int, char **, const char *suffix = NULL);
-  class KSpace *new_kspace(int, char **, const char *, int &);
+  void create_kspace(int, char **, int);
+  class KSpace *new_kspace(int, char **, int, int &);
   class KSpace *kspace_match(const char *, int);
 
+  void store_style(char *&, const char *, int);
   void set_special(int, char **);
-  void bounds(char *, int, int &, int &);
-  double numeric(char *);
-  int inumeric(char *);
+  void bounds(const char *, int, char *, int, int &, int &, int nmin=1);
+  void boundsbig(const char *, int, char *, bigint, bigint &, bigint &, bigint nmin=1);
+  double numeric(const char *, int, char *);
+  int inumeric(const char *, int, char *);
+  bigint bnumeric(const char *, int, char *);
+  tagint tnumeric(const char *, int, char *);
+
+  FILE *open_potential(const char *);
+  const char *potential_name(const char *);
+  void potential_date(FILE *, const char *);
+
   bigint memory_usage();
+
+ private:
+  template <typename T> static Pair *pair_creator(LAMMPS *);
+  template <typename T> static Bond *bond_creator(LAMMPS *);
+  template <typename T> static Angle *angle_creator(LAMMPS *);
+  template <typename T> static Dihedral *dihedral_creator(LAMMPS *);
+  template <typename T> static Improper *improper_creator(LAMMPS *);
+  template <typename T> static KSpace *kspace_creator(LAMMPS *, int, char **);
 };
 
 }
@@ -106,27 +156,31 @@ class Force : protected Pointers {
 
 /* ERROR/WARNING messages:
 
-E: Invalid pair style
+E: Unknown pair style
 
 The choice of pair style is unknown.
 
-E: Invalid bond style
+E: Unknown bond style
 
 The choice of bond style is unknown.
 
-E: Invalid angle style
+E: Unknown angle style
 
 The choice of angle style is unknown.
 
-E: Invalid dihedral style
+E: Unknown dihedral style
 
 The choice of dihedral style is unknown.
 
-E: Invalid improper style
+E: Unknown improper style
 
 The choice of improper style is unknown.
 
-E: Invalid kspace style
+E: Cannot yet use KSpace solver with grid with comm style tiled
+
+This is current restriction in LAMMPS.
+
+E: Unknown kspace style
 
 The choice of kspace style is unknown.
 
@@ -141,13 +195,5 @@ E: Numeric index is out of bounds
 A command with an argument that specifies an integer or range of
 integers is using a value that is less than 1 or greater than the
 maximum allowed limit.
-
-E: Expected floating point parameter in input script or data file
-
-The quantity being read is an integer on non-numeric value.
-
-E: Expected integer parameter in input script or data file
-
-The quantity being read is a floating point or non-numeric value.
 
 */

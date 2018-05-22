@@ -1,4 +1,4 @@
-/* ----------------------------------------------------------------------
+/* -*- c++ -*- ----------------------------------------------------------
    LAMMPS - Large-scale Atomic/Molecular Massively Parallel Simulator
    http://lammps.sandia.gov, Sandia National Laboratories
    Steve Plimpton, sjplimp@sandia.gov
@@ -92,11 +92,6 @@ different dimension, i.e. dim != dim1 and dim != dim2.
 E: Cannot change_box in xz or yz for 2d simulation
 
 Self-explanatory.
-
-E: Use of change_box with undefined lattice
-
-Must use lattice command with displace_box command if units option is
-set to lattice.
 
 E: Cannot change box tilt factors for orthogonal box
 

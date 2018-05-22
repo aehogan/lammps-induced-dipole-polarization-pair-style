@@ -1,4 +1,4 @@
-/* ----------------------------------------------------------------------
+/* -*- c++ -*- ----------------------------------------------------------
    LAMMPS - Large-scale Atomic/Molecular Massively Parallel Simulator
    http://lammps.sandia.gov, Sandia National Laboratories
    Steve Plimpton, sjplimp@sandia.gov
@@ -25,7 +25,10 @@ class FixNHSphere : public FixNH {
   void init();
 
  protected:
+  double inertia;
+
   void nve_v();
+  void nve_x();
   void nh_v_temp();
 };
 

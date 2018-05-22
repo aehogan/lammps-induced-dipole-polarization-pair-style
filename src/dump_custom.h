@@ -1,4 +1,4 @@
-/* ----------------------------------------------------------------------
+/* -*- c++ -*- ----------------------------------------------------------
    LAMMPS - Large-scale Atomic/Molecular Massively Parallel Simulator
    http://lammps.sandia.gov, Sandia National Laboratories
    Steve Plimpton, sjplimp@sandia.gov
@@ -30,13 +30,27 @@ class DumpCustom : public Dump {
   virtual ~DumpCustom();
 
  protected:
-  int nevery;                // dump frequency to check Fix against
+  int nevery;                // dump frequency for output
   int iregion;               // -1 if no region, else which region
   char *idregion;            // region ID
-  int nthresh;               // # of defined threshholds
-  int *thresh_array;         // array to threshhhold on for each nthresh
-  int *thresh_op;            // threshhold operation for each nthresh
-  double *thresh_value;      // threshhold value for each nthresh
+
+  int nthresh;               // # of defined thresholds
+  int nthreshlast;           // # of defined thresholds with value = LAST
+
+  int *thresh_array;         // array to threshold on for each nthresh
+  int *thresh_op;            // threshold operation for each nthresh
+  double *thresh_value;      // threshold value for each nthresh
+  int *thresh_last;          // for threshold value = LAST,
+                             // index into thresh_fix
+                             // -1 if not LAST, value is numeric
+
+  class FixStore **thresh_fix;  // stores values for each threshold LAST
+  char **thresh_fixID;          // IDs of thresh_fixes
+  int *thresh_first;            // 1 the first time a FixStore values accessed
+
+  int expand;                // flag for whether field args were expanded
+  char **earg;               // field names with wildcard expansion
+  int nargnew;               // size of earg
 
   int *vtype;                // type of each vector (INT, DOUBLE)
   char **vformat;            // format string for each vector element
@@ -46,7 +60,7 @@ class DumpCustom : public Dump {
   int nchoose;               // # of selected atoms
   int maxlocal;              // size of atom selection and variable arrays
   int *choose;               // local indices of selected atoms
-  double *dchoose;           // value for each atom to threshhold against
+  double *dchoose;           // value for each atom to threshold against
   int *clist;                // compressed list of indices of selected atoms
 
   int nfield;                // # of keywords listed by user
@@ -69,6 +83,10 @@ class DumpCustom : public Dump {
   int *variable;             // list of indices for the Variables
   double **vbuf;             // local storage for variable evaluation
 
+  int ncustom;               // # of custom atom properties
+  char **id_custom;          // their names
+  int *flag_custom;          // their data type
+
   int ntypes;                // # of atom types
   char **typenames;             // array of element names for each type
 
@@ -77,7 +95,8 @@ class DumpCustom : public Dump {
   virtual void init_style();
   virtual void write_header(bigint);
   int count();
-  void pack(int *);
+  void pack(tagint *);
+  virtual int convert_string(int, double *);
   virtual void write_data(int, double *);
   bigint memory_usage();
 
@@ -85,6 +104,7 @@ class DumpCustom : public Dump {
   int add_compute(char *);
   int add_fix(char *);
   int add_variable(char *);
+  int add_custom(char *, int);
   virtual int modify_param(int, char **);
 
   typedef void (DumpCustom::*FnPtrHeader)(bigint);
@@ -94,10 +114,16 @@ class DumpCustom : public Dump {
   void header_item(bigint);
   void header_item_triclinic(bigint);
 
-  typedef void (DumpCustom::*FnPtrData)(int, double *);
-  FnPtrData write_choice;              // ptr to write data functions
+  typedef int (DumpCustom::*FnPtrConvert)(int, double *);
+  FnPtrConvert convert_choice;          // ptr to convert data functions
+  int convert_image(int, double *);
+  int convert_noimage(int, double *);
+
+  typedef void (DumpCustom::*FnPtrWrite)(int, double *);
+  FnPtrWrite write_choice;             // ptr to write data functions
   void write_binary(int, double *);
-  void write_text(int, double *);
+  void write_string(int, double *);
+  void write_lines(int, double *);
 
   // customize by adding a method prototype
 
@@ -107,9 +133,12 @@ class DumpCustom : public Dump {
   void pack_compute(int);
   void pack_fix(int);
   void pack_variable(int);
+  void pack_custom(int);
 
   void pack_id(int);
   void pack_molecule(int);
+  void pack_proc(int);
+  void pack_procp1(int);
   void pack_type(int);
   void pack_mass(int);
 
@@ -161,10 +190,6 @@ class DumpCustom : public Dump {
   void pack_tqx(int);
   void pack_tqy(int);
   void pack_tqz(int);
-  void pack_spin(int);
-  void pack_eradius(int);
-  void pack_ervel(int);
-  void pack_erforce(int);
 };
 
 }
@@ -181,12 +206,16 @@ output to dump file.
 
 E: Invalid attribute in dump custom command
 
-Self-explantory.
+Self-explanatory.
+
+E: Dump_modify format string is too short
+
+There are more fields to be dumped in a line of output than your
+format string specifies.
 
 E: Could not find dump custom compute ID
 
-The compute ID needed by dump custom to compute a per-atom quantity
-does not exist.
+Self-explanatory.
 
 E: Could not find dump custom fix ID
 
@@ -201,24 +230,28 @@ E: Could not find dump custom variable name
 
 Self-explanatory.
 
+E: Could not find custom per-atom property ID
+
+Self-explanatory.
+
 E: Region ID for dump custom does not exist
 
 Self-explanatory.
 
-E: Threshhold for an atom property that isn't allocated
+E: Compute used in dump between runs is not current
 
-A dump threshhold has been requested on a quantity that is
+The compute was not invoked on the current timestep, therefore it
+cannot be used in a dump between runs.
+
+E: Threshold for an atom property that isn't allocated
+
+A dump threshold has been requested on a quantity that is
 not defined by the atom style used in this simulation.
 
 E: Dumping an atom property that isn't allocated
 
 The chosen atom style does not define the per-atom quantity being
 dumped.
-
-E: Dumping an atom quantity that isn't allocated
-
-Only per-atom quantities that are defined for the atom style being
-used are allowed.
 
 E: Dump custom compute does not compute per-atom info
 
@@ -257,6 +290,14 @@ E: Dump custom variable is not atom-style variable
 Only atom-style variables generate per-atom quantities, needed for
 dump output.
 
+E: Custom per-atom property ID is not floating point
+
+Self-explanatory.
+
+E: Custom per-atom property ID is not integer
+
+Self-explanatory.
+
 E: Illegal ... command
 
 Self-explanatory.  Check the input script syntax and compare to the
@@ -273,7 +314,7 @@ Number of element names must equal number of atom types.
 
 E: Invalid attribute in dump modify command
 
-Self-explantory.
+Self-explanatory.
 
 E: Could not find dump modify compute ID
 
@@ -323,7 +364,15 @@ E: Dump modify variable is not atom-style variable
 
 Self-explanatory.
 
-E: Invalid dump_modify threshhold operator
+E: Could not find dump modify custom atom floating point property ID
+
+Self-explanatory.
+
+E: Could not find dump modify custom atom integer property ID
+
+Self-explanatory.
+
+E: Invalid dump_modify threshold operator
 
 Operator keyword used for threshold specification in not recognized.
 

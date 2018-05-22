@@ -15,9 +15,9 @@
    Contributing author: Chuanfu Luo (luochuanfu@gmail.com)
 ------------------------------------------------------------------------- */
 
-#include "math.h"
-#include "stdlib.h"
-#include "string.h"
+#include <math.h>
+#include <stdlib.h>
+#include <string.h>
 #include "angle_table.h"
 #include "atom.h"
 #include "neighbor.h"
@@ -41,6 +41,7 @@ enum{LINEAR,SPLINE};
 
 AngleTable::AngleTable(LAMMPS *lmp) : Angle(lmp)
 {
+  writedata = 0;
   ntables = 0;
   tables = NULL;
 }
@@ -186,7 +187,7 @@ void AngleTable::settings(int narg, char **arg)
   else if (strcmp(arg[0],"spline") == 0) tabstyle = SPLINE;
   else error->all(FLERR,"Unknown table style in angle style table");
 
-  tablength = force->inumeric(arg[1]);
+  tablength = force->inumeric(FLERR,arg[1]);
   if (tablength < 2) error->all(FLERR,"Illegal number of angle table entries");
 
   // delete old tables, since cannot just change settings
@@ -214,7 +215,7 @@ void AngleTable::coeff(int narg, char **arg)
   if (!allocated) allocate();
 
   int ilo,ihi;
-  force->bounds(arg[0],atom->nangletypes,ilo,ihi);
+  force->bounds(FLERR,arg[0],atom->nangletypes,ilo,ihi);
 
   int me;
   MPI_Comm_rank(world,&me);
@@ -321,7 +322,7 @@ double AngleTable::single(int type, int i1, int i2, int i3)
   if (c < -1.0) c = -1.0;
 
   double theta = acos(c);
-  double u;
+  double u=0.0;
   u_lookup(type,theta,u);
   return u;
 }
@@ -365,7 +366,7 @@ void AngleTable::read_table(Table *tb, char *file, char *keyword)
 
   // open file
 
-  FILE *fp = fopen(file,"r");
+  FILE *fp = force->open_potential(file);
   if (fp == NULL) {
     char str[128];
     sprintf(str,"Cannot open file %s",file);
@@ -608,18 +609,22 @@ double AngleTable::splint(double *xa, double *ya, double *y2a, int n, double x)
 
 void AngleTable::uf_lookup(int type, double x, double &u, double &f)
 {
-  int itable;
-  double fraction,a,b;
+  if (!ISFINITE(x)) {
+    error->one(FLERR,"Illegal angle in angle style table");
+  }
 
-  Table *tb = &tables[tabindex[type]];
+  double fraction,a,b;
+  const Table *tb = &tables[tabindex[type]];
+  int itable = static_cast<int> (x * tb->invdelta);
+
+  if (itable < 0) itable = 0;
+  if (itable >= tablength) itable = tablength-1;
 
   if (tabstyle == LINEAR) {
-    itable = static_cast<int> ( x * tb->invdelta);
     fraction = (x - tb->ang[itable]) * tb->invdelta;
     u = tb->e[itable] + fraction*tb->de[itable];
     f = tb->f[itable] + fraction*tb->df[itable];
   } else if (tabstyle == SPLINE) {
-    itable = static_cast<int> ( x * tb->invdelta);
     fraction = (x - tb->ang[itable]) * tb->invdelta;
 
     b = (x - tb->ang[itable]) * tb->invdelta;
@@ -639,17 +644,21 @@ void AngleTable::uf_lookup(int type, double x, double &u, double &f)
 
 void AngleTable::u_lookup(int type, double x, double &u)
 {
-  int itable;
-  double fraction,a,b;
+  if (!ISFINITE(x)) {
+    error->one(FLERR,"Illegal angle in angle style table");
+  }
 
-  Table *tb = &tables[tabindex[type]];
+  double fraction,a,b;
+  const Table *tb = &tables[tabindex[type]];
+  int itable = static_cast<int> ( x * tb->invdelta);
+
+  if (itable < 0) itable = 0;
+  if (itable >= tablength) itable = tablength-1;
 
   if (tabstyle == LINEAR) {
-    itable = static_cast<int> ( x * tb->invdelta);
     fraction = (x - tb->ang[itable]) * tb->invdelta;
     u = tb->e[itable] + fraction*tb->de[itable];
   } else if (tabstyle == SPLINE) {
-    itable = static_cast<int> ( x * tb->invdelta);
     fraction = (x - tb->ang[itable]) * tb->invdelta;
 
     b = (x - tb->ang[itable]) * tb->invdelta;

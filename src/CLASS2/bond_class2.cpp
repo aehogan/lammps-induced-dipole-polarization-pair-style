@@ -15,8 +15,8 @@
    Contributing author: Eric Simon (Cray)
 ------------------------------------------------------------------------- */
 
-#include "math.h"
-#include "stdlib.h"
+#include <math.h>
+#include <stdlib.h>
 #include "bond_class2.h"
 #include "atom.h"
 #include "neighbor.h"
@@ -36,6 +36,8 @@ BondClass2::BondClass2(LAMMPS *lmp) : Bond(lmp) {}
 
 BondClass2::~BondClass2()
 {
+  if (copymode) return;
+
   if (allocated) {
     memory->destroy(setflag);
     memory->destroy(r0);
@@ -132,12 +134,12 @@ void BondClass2::coeff(int narg, char **arg)
   if (!allocated) allocate();
 
   int ilo,ihi;
-  force->bounds(arg[0],atom->nbondtypes,ilo,ihi);
+  force->bounds(FLERR,arg[0],atom->nbondtypes,ilo,ihi);
 
-  double r0_one = force->numeric(arg[1]);
-  double k2_one = force->numeric(arg[2]);
-  double k3_one = force->numeric(arg[3]);
-  double k4_one = force->numeric(arg[4]);
+  double r0_one = force->numeric(FLERR,arg[1]);
+  double k2_one = force->numeric(FLERR,arg[2]);
+  double k3_one = force->numeric(FLERR,arg[3]);
+  double k4_one = force->numeric(FLERR,arg[4]);
 
   int count = 0;
   for (int i = ilo; i <= ihi; i++) {
@@ -195,14 +197,27 @@ void BondClass2::read_restart(FILE *fp)
   for (int i = 1; i <= atom->nbondtypes; i++) setflag[i] = 1;
 }
 
+/* ----------------------------------------------------------------------
+   proc 0 writes to data file
+------------------------------------------------------------------------- */
+
+void BondClass2::write_data(FILE *fp)
+{
+  for (int i = 1; i <= atom->nbondtypes; i++)
+    fprintf(fp,"%d %g %g %g %g\n",i,r0[i],k2[i],k3[i],k4[i]);
+}
+
 /* ---------------------------------------------------------------------- */
 
-double BondClass2::single(int type, double rsq, int i, int j)
+double BondClass2::single(int type, double rsq, int i, int j, double &fforce)
 {
   double r = sqrt(rsq);
   double dr = r - r0[type];
   double dr2 = dr*dr;
   double dr3 = dr2*dr;
   double dr4 = dr3*dr;
+  double de_bond = 2.0*k2[type]*dr + 3.0*k3[type]*dr2 + 4.0*k4[type]*dr3;
+  if (r > 0.0) fforce = -de_bond/r;
+  else fforce = 0.0;
   return (k2[type]*dr2 + k3[type]*dr3 + k4[type]*dr4);
 }

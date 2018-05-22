@@ -15,10 +15,10 @@
    Contributing author: Andres Jaramillo-Botero
 ------------------------------------------------------------------------- */
 
-#include "math.h"
-#include "stdio.h"
-#include "stdlib.h"
-#include "string.h"
+#include <math.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
 #include "pair_eff_cut.h"
 #include "pair_eff_inline.h"
 #include "atom.h"
@@ -92,8 +92,6 @@ void PairEffCut::compute(int eflag, int vflag)
   int *spin = atom->spin;
   int *type = atom->type;
   int nlocal = atom->nlocal;
-
-  int *id = atom->tag;
 
   int newton_pair = force->newton_pair;
   double qqrd2e = force->qqrd2e;
@@ -798,7 +796,7 @@ void PairEffCut::settings(int narg, char **arg)
   PAULI_CORE_D[14] = 0.0;
   PAULI_CORE_E[14] = 0.0;
 
-  cut_global = force->numeric(arg[0]);
+  cut_global = force->numeric(FLERR,arg[0]);
   limit_eradius_flag = 0;
   pressure_with_evirials_flag = 0;
 
@@ -808,30 +806,30 @@ void PairEffCut::settings(int narg, char **arg)
 
   while (iarg < narg) {
     if (strcmp(arg[iarg],"limit/eradius") == 0) {
-      limit_eradius_flag = 1; 
+      limit_eradius_flag = 1;
       iarg += 1;
     }
     else if (strcmp(arg[iarg],"pressure/evirials") == 0) {
-      pressure_with_evirials_flag = 1; 
+      pressure_with_evirials_flag = 1;
       iarg += 1;
     }
     else if (strcmp(arg[iarg],"ecp") == 0) {
       iarg += 1;
       while (iarg < narg) {
-        atype = force->inumeric(arg[iarg]);
+        atype = force->inumeric(FLERR,arg[iarg]);
         if (strcmp(arg[iarg+1],"C") == 0) ecp_type[atype] = 6;
         else if (strcmp(arg[iarg+1],"N") == 0) ecp_type[atype] = 7;
         else if (strcmp(arg[iarg+1],"O") == 0) ecp_type[atype] = 8;
         else if (strcmp(arg[iarg+1],"Al") == 0) ecp_type[atype] = 13;
         else if (strcmp(arg[iarg+1],"Si") == 0) ecp_type[atype] = 14;
-        else error->all(FLERR, "Note: there are no default parameters for this atom ECP\n"); 
+        else error->all(FLERR, "Note: there are no default parameters for this atom ECP\n");
         iarg += 2;
         ecp_found = 1;
-      } 
+      }
     }
   }
 
-  if (!ecp_found && atom->ecp_flag) 
+  if (!ecp_found && atom->ecp_flag)
     error->all(FLERR,"Need to specify ECP type on pair_style command");
 
   // Need to introduce 2 new constants w/out changing update.cpp
@@ -848,7 +846,7 @@ void PairEffCut::settings(int narg, char **arg)
   if (allocated) {
     int i,j;
     for (i = 1; i <= atom->ntypes; i++)
-      for (j = i+1; j <= atom->ntypes; j++)
+      for (j = i; j <= atom->ntypes; j++)
         if (setflag[i][j]) cut[i][j] = cut_global;
   }
 }
@@ -869,7 +867,7 @@ void PairEffCut::init_style()
   // add hook to minimizer for eradius and erforce
 
   if (update->whichflag == 2)
-    int ignore = update->minimize->request(this,1,0.01);
+    update->minimize->request(this,1,0.01);
 
   // make sure to use the appropriate timestep when using real units
 
@@ -880,7 +878,7 @@ void PairEffCut::init_style()
 
   // need a half neigh list and optionally a granular history neigh list
 
-  int irequest = neighbor->request(this);
+  neighbor->request(this,instance_me);
 }
 
 /* ----------------------------------------------------------------------
@@ -893,11 +891,11 @@ void PairEffCut::coeff(int narg, char **arg)
 
   if ((strcmp(arg[0],"*") == 0) || (strcmp(arg[1],"*") == 0)) {
     int ilo,ihi,jlo,jhi;
-    force->bounds(arg[0],atom->ntypes,ilo,ihi);
-    force->bounds(arg[1],atom->ntypes,jlo,jhi);
+    force->bounds(FLERR,arg[0],atom->ntypes,ilo,ihi);
+    force->bounds(FLERR,arg[1],atom->ntypes,jlo,jhi);
 
     double cut_one = cut_global;
-    if (narg == 3) cut_one = atof(arg[2]);
+    if (narg == 3) cut_one = force->numeric(FLERR,arg[2]);
 
     int count = 0;
     for (int i = ilo; i <= ihi; i++) {
@@ -910,20 +908,20 @@ void PairEffCut::coeff(int narg, char **arg)
     if (count == 0) error->all(FLERR,"Incorrect args for pair coefficients");
   } else {
     int ecp;
-    ecp = force->inumeric(arg[0]);
+    ecp = force->inumeric(FLERR,arg[0]);
     if (strcmp(arg[1],"s") ==0) {
-      PAULI_CORE_A[ecp_type[ecp]] = force->numeric(arg[2]);
-      PAULI_CORE_B[ecp_type[ecp]] = force->numeric(arg[3]);
-      PAULI_CORE_C[ecp_type[ecp]] = force->numeric(arg[4]);
+      PAULI_CORE_A[ecp_type[ecp]] = force->numeric(FLERR,arg[2]);
+      PAULI_CORE_B[ecp_type[ecp]] = force->numeric(FLERR,arg[3]);
+      PAULI_CORE_C[ecp_type[ecp]] = force->numeric(FLERR,arg[4]);
       PAULI_CORE_D[ecp_type[ecp]] = 0.0;
       PAULI_CORE_E[ecp_type[ecp]] = 0.0;
     } else if (strcmp(arg[1],"p") ==0) {
-      PAULI_CORE_A[ecp_type[ecp]] = force->numeric(arg[2]);
-      PAULI_CORE_B[ecp_type[ecp]] = force->numeric(arg[3]);
-      PAULI_CORE_C[ecp_type[ecp]] = force->numeric(arg[4]);
-      PAULI_CORE_D[ecp_type[ecp]] = force->numeric(arg[5]);
-      PAULI_CORE_E[ecp_type[ecp]] = force->numeric(arg[6]);
-    } else error->all(FLERR,"Illegal pair_coeff command"); 
+      PAULI_CORE_A[ecp_type[ecp]] = force->numeric(FLERR,arg[2]);
+      PAULI_CORE_B[ecp_type[ecp]] = force->numeric(FLERR,arg[3]);
+      PAULI_CORE_C[ecp_type[ecp]] = force->numeric(FLERR,arg[4]);
+      PAULI_CORE_D[ecp_type[ecp]] = force->numeric(FLERR,arg[5]);
+      PAULI_CORE_E[ecp_type[ecp]] = force->numeric(FLERR,arg[6]);
+    } else error->all(FLERR,"Illegal pair_coeff command");
   }
 }
 

@@ -11,8 +11,8 @@
  See the README file in the top-level LAMMPS directory.
  ------------------------------------------------------------------------- */
 
-#include "math.h"
-#include "stdlib.h"
+#include <math.h>
+#include <stdlib.h>
 #include "pair_sph_rhosum.h"
 #include "atom.h"
 #include "force.h"
@@ -56,7 +56,7 @@ PairSPHRhoSum::~PairSPHRhoSum() {
 
 void PairSPHRhoSum::init_style() {
   // need a full neighbor list
-  int irequest = neighbor->request(this);
+  int irequest = neighbor->request(this,instance_me);
   neighbor->requests[irequest]->half = 0;
   neighbor->requests[irequest]->full = 1;
 }
@@ -66,7 +66,7 @@ void PairSPHRhoSum::init_style() {
 void PairSPHRhoSum::compute(int eflag, int vflag) {
   int i, j, ii, jj, jnum, itype, jtype;
   double xtmp, ytmp, ztmp, delx, dely, delz;
-  double r, rsq, imass, h, ih, ihsq;
+  double rsq, imass, h, ih, ihsq;
   int *jlist;
   double wf;
   // neighbor list variables
@@ -229,7 +229,7 @@ void PairSPHRhoSum::settings(int narg, char **arg) {
   if (narg != 1)
     error->all(FLERR,
         "Illegal number of setting arguments for pair_style sph/rhosum");
-  nstep = force->inumeric(arg[0]);
+  nstep = force->inumeric(FLERR,arg[0]);
 }
 
 /* ----------------------------------------------------------------------
@@ -243,10 +243,10 @@ void PairSPHRhoSum::coeff(int narg, char **arg) {
     allocate();
 
   int ilo, ihi, jlo, jhi;
-  force->bounds(arg[0], atom->ntypes, ilo, ihi);
-  force->bounds(arg[1], atom->ntypes, jlo, jhi);
+  force->bounds(FLERR,arg[0], atom->ntypes, ilo, ihi);
+  force->bounds(FLERR,arg[1], atom->ntypes, jlo, jhi);
 
-  double cut_one = force->numeric(arg[2]);
+  double cut_one = force->numeric(FLERR,arg[2]);
 
   int count = 0;
   for (int i = ilo; i <= ihi; i++) {
@@ -287,8 +287,8 @@ double PairSPHRhoSum::single(int i, int j, int itype, int jtype, double rsq,
 
 /* ---------------------------------------------------------------------- */
 
-int PairSPHRhoSum::pack_comm(int n, int *list, double *buf, int pbc_flag,
-    int *pbc) {
+int PairSPHRhoSum::pack_forward_comm(int n, int *list, double *buf,
+                                     int pbc_flag, int *pbc) {
   int i, j, m;
   double *rho = atom->rho;
 
@@ -297,12 +297,12 @@ int PairSPHRhoSum::pack_comm(int n, int *list, double *buf, int pbc_flag,
     j = list[i];
     buf[m++] = rho[j];
   }
-  return 1;
+  return m;
 }
 
 /* ---------------------------------------------------------------------- */
 
-void PairSPHRhoSum::unpack_comm(int n, int first, double *buf) {
+void PairSPHRhoSum::unpack_forward_comm(int n, int first, double *buf) {
   int i, m, last;
   double *rho = atom->rho;
 

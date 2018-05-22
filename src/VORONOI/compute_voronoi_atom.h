@@ -1,4 +1,4 @@
-/* ----------------------------------------------------------------------
+/* -*- c++ -*- ----------------------------------------------------------
    LAMMPS - Large-scale Atomic/Molecular Massively Parallel Simulator
    http://lammps.sandia.gov, Sandia National Laboratories
    Steve Plimpton, sjplimp@sandia.gov
@@ -21,6 +21,7 @@ ComputeStyle(voronoi/atom,ComputeVoronoi)
 #define LMP_COMPUTE_VORONOI_H
 
 #include "compute.h"
+#include "voro++.hh"
 
 namespace LAMMPS_NS {
 
@@ -30,11 +31,34 @@ class ComputeVoronoi : public Compute {
   ~ComputeVoronoi();
   void init();
   void compute_peratom();
+  void compute_vector();
+  void compute_local();
   double memory_usage();
 
+  int pack_forward_comm(int, int *, double *, int, int *);
+  void unpack_forward_comm(int, int, double *);
+
  private:
-  int nmax;
+  voro::container *con_mono;
+  voro::container_poly *con_poly;
+
+  void buildCells();
+  void checkOccupation();
+  void loopCells();
+  void processCell(voro::voronoicell_neighbor&, int);
+
+  int nmax, rmax, maxedge, sgroupbit;
+  char *radstr;
+  double fthresh, ethresh;
   double **voro;
+  double *edge, *sendvector, *rfield;
+  enum { VOROSURF_NONE, VOROSURF_ALL, VOROSURF_GROUP } surface;
+  bool onlyGroup, occupation;
+
+  tagint *tags, oldmaxtag;
+  int *occvec, *sendocc, *lroot, *lnext, lmax, oldnatoms, oldnall;
+  int faces_flag, nfaces, nfacesmax;
+  double **faces;
 };
 
 }
@@ -49,5 +73,25 @@ E: Illegal ... command
 Self-explanatory.  Check the input script syntax and compare to the
 documentation for the command.  You can use -echo screen as a
 command-line option when running LAMMPS to see the offending line.
+
+E: Could not find compute/voronoi surface group ID
+
+Self-explanatory.
+
+E: Illegal compute voronoi/atom command (occupation and (surface or edges))
+
+Self-explanatory.
+
+E: Variable name for voronoi radius does not exist
+
+Self-explanatory.
+
+E: Variable for voronoi radius is not atom style
+
+Self-explanatory.
+
+E: Voro++ error: narea and neigh have a different size
+
+This error is returned by the Voro++ library.
 
 */

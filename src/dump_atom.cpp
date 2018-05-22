@@ -11,15 +11,19 @@
    See the README file in the top-level LAMMPS directory.
 ------------------------------------------------------------------------- */
 
-#include "string.h"
+#include <string.h>
 #include "dump_atom.h"
 #include "domain.h"
 #include "atom.h"
 #include "update.h"
 #include "group.h"
+#include "memory.h"
 #include "error.h"
 
 using namespace LAMMPS_NS;
+
+#define ONELINE 256
+#define DELTA 1048576
 
 /* ---------------------------------------------------------------------- */
 
@@ -29,6 +33,8 @@ DumpAtom::DumpAtom(LAMMPS *lmp, int narg, char **arg) : Dump(lmp, narg, arg)
 
   scale_flag = 1;
   image_flag = 0;
+  buffer_allow = 1;
+  buffer_flag = 1;
   format_default = NULL;
 }
 
@@ -39,18 +45,19 @@ void DumpAtom::init_style()
   if (image_flag == 0) size_one = 5;
   else size_one = 8;
 
-  // default format depends on image flags
+  // format = copy of default or user-specified line format
+  // default depends on image flags
 
   delete [] format;
-  if (format_user) {
-    int n = strlen(format_user) + 2;
+  if (format_line_user) {
+    int n = strlen(format_line_user) + 2;
     format = new char[n];
-    strcpy(format,format_user);
+    strcpy(format,format_line_user);
     strcat(format,"\n");
   } else {
     char *str;
-    if (image_flag == 0) str = (char *) "%d %d %g %g %g";
-    else str = (char *) "%d %d %g %g %g %d %d %d";
+    if (image_flag == 0) str = (char *) TAGINT_FORMAT " %d %g %g %g";
+    else str = (char *) TAGINT_FORMAT " %d %g %g %g %d %d %d";
     int n = strlen(str) + 2;
     format = new char[n];
     strcpy(format,str);
@@ -96,9 +103,13 @@ void DumpAtom::init_style()
   else if (scale_flag == 0 && image_flag == 1)
     pack_choice = &DumpAtom::pack_noscale_image;
 
+  if (image_flag == 0) convert_choice = &DumpAtom::convert_noimage;
+  else convert_choice = &DumpAtom::convert_image;
+
   if (binary) write_choice = &DumpAtom::write_binary;
-  else if (image_flag == 0) write_choice = &DumpAtom::write_noimage;
-  else if (image_flag == 1) write_choice = &DumpAtom::write_image;
+  else if (buffer_flag == 1) write_choice = &DumpAtom::write_string;
+  else if (image_flag == 0) write_choice = &DumpAtom::write_lines_noimage;
+  else if (image_flag == 1) write_choice = &DumpAtom::write_lines_image;
 
   // open single file, one time only
 
@@ -135,9 +146,16 @@ void DumpAtom::write_header(bigint ndump)
 
 /* ---------------------------------------------------------------------- */
 
-void DumpAtom::pack(int *ids)
+void DumpAtom::pack(tagint *ids)
 {
   (this->*pack_choice)(ids);
+}
+
+/* ---------------------------------------------------------------------- */
+
+int DumpAtom::convert_string(int n, double *mybuf)
+{
+  return (this->*convert_choice)(n,mybuf);
 }
 
 /* ---------------------------------------------------------------------- */
@@ -162,10 +180,8 @@ void DumpAtom::header_binary(bigint ndump)
   fwrite(&boxzlo,sizeof(double),1,fp);
   fwrite(&boxzhi,sizeof(double),1,fp);
   fwrite(&size_one,sizeof(int),1,fp);
-  if (multiproc) {
-    int one = 1;
-    fwrite(&one,sizeof(int),1,fp);
-  } else fwrite(&nprocs,sizeof(int),1,fp);
+  if (multiproc) fwrite(&nclusterprocs,sizeof(int),1,fp);
+  else fwrite(&nprocs,sizeof(int),1,fp);
 }
 
 /* ---------------------------------------------------------------------- */
@@ -186,10 +202,8 @@ void DumpAtom::header_binary_triclinic(bigint ndump)
   fwrite(&boxxz,sizeof(double),1,fp);
   fwrite(&boxyz,sizeof(double),1,fp);
   fwrite(&size_one,sizeof(int),1,fp);
-  if (multiproc) {
-    int one = 1;
-    fwrite(&one,sizeof(int),1,fp);
-  } else fwrite(&nprocs,sizeof(int),1,fp);
+  if (multiproc) fwrite(&nclusterprocs,sizeof(int),1,fp);
+  else fwrite(&nprocs,sizeof(int),1,fp);
 }
 
 /* ---------------------------------------------------------------------- */
@@ -201,9 +215,9 @@ void DumpAtom::header_item(bigint ndump)
   fprintf(fp,"ITEM: NUMBER OF ATOMS\n");
   fprintf(fp,BIGINT_FORMAT "\n",ndump);
   fprintf(fp,"ITEM: BOX BOUNDS %s\n",boundstr);
-  fprintf(fp,"%g %g\n",boxxlo,boxxhi);
-  fprintf(fp,"%g %g\n",boxylo,boxyhi);
-  fprintf(fp,"%g %g\n",boxzlo,boxzhi);
+  fprintf(fp,"%-1.16e %-1.16e\n",boxxlo,boxxhi);
+  fprintf(fp,"%-1.16e %-1.16e\n",boxylo,boxyhi);
+  fprintf(fp,"%-1.16e %-1.16e\n",boxzlo,boxzhi);
   fprintf(fp,"ITEM: ATOMS %s\n",columns);
 }
 
@@ -216,21 +230,21 @@ void DumpAtom::header_item_triclinic(bigint ndump)
   fprintf(fp,"ITEM: NUMBER OF ATOMS\n");
   fprintf(fp,BIGINT_FORMAT "\n",ndump);
   fprintf(fp,"ITEM: BOX BOUNDS xy xz yz %s\n",boundstr);
-  fprintf(fp,"%g %g %g\n",boxxlo,boxxhi,boxxy);
-  fprintf(fp,"%g %g %g\n",boxylo,boxyhi,boxxz);
-  fprintf(fp,"%g %g %g\n",boxzlo,boxzhi,boxyz);
+  fprintf(fp,"%-1.16e %-1.16e %-1.16e\n",boxxlo,boxxhi,boxxy);
+  fprintf(fp,"%-1.16e %-1.16e %-1.16e\n",boxylo,boxyhi,boxxz);
+  fprintf(fp,"%-1.16e %-1.16e %-1.16e\n",boxzlo,boxzhi,boxyz);
   fprintf(fp,"ITEM: ATOMS %s\n",columns);
 }
 
 /* ---------------------------------------------------------------------- */
 
-void DumpAtom::pack_scale_image(int *ids)
+void DumpAtom::pack_scale_image(tagint *ids)
 {
   int m,n;
 
-  int *tag = atom->tag;
+  tagint *tag = atom->tag;
   int *type = atom->type;
-  tagint *image = atom->image;
+  imageint *image = atom->image;
   int *mask = atom->mask;
   double **x = atom->x;
   int nlocal = atom->nlocal;
@@ -256,11 +270,11 @@ void DumpAtom::pack_scale_image(int *ids)
 
 /* ---------------------------------------------------------------------- */
 
-void DumpAtom::pack_scale_noimage(int *ids)
+void DumpAtom::pack_scale_noimage(tagint *ids)
 {
   int m,n;
 
-  int *tag = atom->tag;
+  tagint *tag = atom->tag;
   int *type = atom->type;
   int *mask = atom->mask;
   double **x = atom->x;
@@ -284,13 +298,13 @@ void DumpAtom::pack_scale_noimage(int *ids)
 
 /* ---------------------------------------------------------------------- */
 
-void DumpAtom::pack_scale_image_triclinic(int *ids)
+void DumpAtom::pack_scale_image_triclinic(tagint *ids)
 {
   int m,n;
 
-  int *tag = atom->tag;
+  tagint *tag = atom->tag;
   int *type = atom->type;
-  tagint *image = atom->image;
+  imageint *image = atom->image;
   int *mask = atom->mask;
   double **x = atom->x;
   int nlocal = atom->nlocal;
@@ -315,11 +329,11 @@ void DumpAtom::pack_scale_image_triclinic(int *ids)
 
 /* ---------------------------------------------------------------------- */
 
-void DumpAtom::pack_scale_noimage_triclinic(int *ids)
+void DumpAtom::pack_scale_noimage_triclinic(tagint *ids)
 {
   int m,n;
 
-  int *tag = atom->tag;
+  tagint *tag = atom->tag;
   int *type = atom->type;
   int *mask = atom->mask;
   double **x = atom->x;
@@ -342,13 +356,13 @@ void DumpAtom::pack_scale_noimage_triclinic(int *ids)
 
 /* ---------------------------------------------------------------------- */
 
-void DumpAtom::pack_noscale_image(int *ids)
+void DumpAtom::pack_noscale_image(tagint *ids)
 {
   int m,n;
 
-  int *tag = atom->tag;
+  tagint *tag = atom->tag;
   int *type = atom->type;
-  tagint *image = atom->image;
+  imageint *image = atom->image;
   int *mask = atom->mask;
   double **x = atom->x;
   int nlocal = atom->nlocal;
@@ -370,11 +384,11 @@ void DumpAtom::pack_noscale_image(int *ids)
 
 /* ---------------------------------------------------------------------- */
 
-void DumpAtom::pack_noscale_noimage(int *ids)
+void DumpAtom::pack_noscale_noimage(tagint *ids)
 {
   int m,n;
 
-  int *tag = atom->tag;
+  tagint *tag = atom->tag;
   int *type = atom->type;
   int *mask = atom->mask;
   double **x = atom->x;
@@ -390,6 +404,58 @@ void DumpAtom::pack_noscale_noimage(int *ids)
       buf[m++] = x[i][2];
       if (ids) ids[n++] = tag[i];
     }
+}
+
+/* ----------------------------------------------------------------------
+   convert mybuf of doubles to one big formatted string in sbuf
+   return -1 if strlen exceeds an int, since used as arg in MPI calls in Dump
+------------------------------------------------------------------------- */
+
+int DumpAtom::convert_image(int n, double *mybuf)
+{
+  int offset = 0;
+  int m = 0;
+  for (int i = 0; i < n; i++) {
+    if (offset + ONELINE > maxsbuf) {
+      if ((bigint) maxsbuf + DELTA > MAXSMALLINT) return -1;
+      maxsbuf += DELTA;
+      memory->grow(sbuf,maxsbuf,"dump:sbuf");
+    }
+
+    offset += sprintf(&sbuf[offset],format,
+                      static_cast<tagint> (mybuf[m]),
+                      static_cast<int> (mybuf[m+1]),
+                      mybuf[m+2],mybuf[m+3],mybuf[m+4],
+                      static_cast<int> (mybuf[m+5]),
+                      static_cast<int> (mybuf[m+6]),
+                      static_cast<int> (mybuf[m+7]));
+    m += size_one;
+  }
+
+  return offset;
+}
+
+/* ---------------------------------------------------------------------- */
+
+int DumpAtom::convert_noimage(int n, double *mybuf)
+{
+  int offset = 0;
+  int m = 0;
+  for (int i = 0; i < n; i++) {
+    if (offset + ONELINE > maxsbuf) {
+      if ((bigint) maxsbuf + DELTA > MAXSMALLINT) return -1;
+      maxsbuf += DELTA;
+      memory->grow(sbuf,maxsbuf,"dump:sbuf");
+    }
+
+    offset += sprintf(&sbuf[offset],format,
+                      static_cast<tagint> (mybuf[m]),
+                      static_cast<int> (mybuf[m+1]),
+                      mybuf[m+2],mybuf[m+3],mybuf[m+4]);
+    m += size_one;
+  }
+
+  return offset;
 }
 
 /* ---------------------------------------------------------------------- */
@@ -403,12 +469,19 @@ void DumpAtom::write_binary(int n, double *mybuf)
 
 /* ---------------------------------------------------------------------- */
 
-void DumpAtom::write_image(int n, double *mybuf)
+void DumpAtom::write_string(int n, double *mybuf)
+{
+  fwrite(mybuf,sizeof(char),n,fp);
+}
+
+/* ---------------------------------------------------------------------- */
+
+void DumpAtom::write_lines_image(int n, double *mybuf)
 {
   int m = 0;
   for (int i = 0; i < n; i++) {
     fprintf(fp,format,
-            static_cast<int> (mybuf[m]), static_cast<int> (mybuf[m+1]),
+            static_cast<tagint> (mybuf[m]), static_cast<int> (mybuf[m+1]),
             mybuf[m+2],mybuf[m+3],mybuf[m+4], static_cast<int> (mybuf[m+5]),
             static_cast<int> (mybuf[m+6]), static_cast<int> (mybuf[m+7]));
     m += size_one;
@@ -417,12 +490,12 @@ void DumpAtom::write_image(int n, double *mybuf)
 
 /* ---------------------------------------------------------------------- */
 
-void DumpAtom::write_noimage(int n, double *mybuf)
+void DumpAtom::write_lines_noimage(int n, double *mybuf)
 {
   int m = 0;
   for (int i = 0; i < n; i++) {
     fprintf(fp,format,
-            static_cast<int> (mybuf[m]), static_cast<int> (mybuf[m+1]),
+            static_cast<tagint> (mybuf[m]), static_cast<int> (mybuf[m+1]),
             mybuf[m+2],mybuf[m+3],mybuf[m+4]);
     m += size_one;
   }

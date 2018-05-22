@@ -28,9 +28,12 @@ class Pair : protected Pointers {
   friend class FixGPU;
   friend class FixOMP;
   friend class ThrOMP;
+  friend class Info;
 
  public:
-  double eng_vdwl,eng_coul,eng_pol;      // accumulated energies
+  static int instance_total;     // # of Pair classes ever instantiated
+
+  double eng_vdwl,eng_coul,/* polarization stuff */eng_pol/* end polarization stuff */;      // accumulated energies
   double virial[6];              // accumulated virial
   double *eatom,**vatom;         // accumulated per-atom energy/virial
 
@@ -46,7 +49,9 @@ class Pair : protected Pointers {
   int restartinfo;               // 1 if pair style writes restart info
   int respa_enable;              // 1 if inner/middle/outer rRESPA routines
   int one_coeff;                 // 1 if allows only one coeff * * call
+  int manybody_flag;             // 1 if a manybody potential
   int no_virial_fdotr_compute;   // 1 if does not invoke virial_fdotr_compute()
+  int writedata;                 // 1 if writes coeffs to data file
   int ghostneigh;                // 1 if pair style needs neighbors of ghosts
   double **cutghost;             // cutoff for each ghost pair
 
@@ -55,6 +60,8 @@ class Pair : protected Pointers {
   int msmflag;                   // 1 if compatible with MSM solver
   int dispersionflag;            // 1 if compatible with LJ/dispersion solver
   int tip4pflag;                 // 1 if compatible with TIP4P solver
+  int dipoleflag;                // 1 if compatible with dipole solver
+  int reinitflag;                // 1 if compatible with fix adapt and alike
 
   int tail_flag;                 // pair_modify flag for LJ tail correction
   double etail,ptail;            // energy/pressure tail corrections
@@ -65,10 +72,15 @@ class Pair : protected Pointers {
   int vflag_either,vflag_global,vflag_atom;
 
   int ncoultablebits;            // size of Coulomb table, accessed by KSpace
+  int ndisptablebits;            // size of dispersion table
   double tabinnersq;
+  double tabinnerdispsq;
   double *rtable,*drtable,*ftable,*dftable,*ctable,*dctable;
   double *etable,*detable,*ptable,*dptable,*vtable,*dvtable;
+  double *rdisptable, *drdisptable, *fdisptable, *dfdisptable;
+  double *edisptable, *dedisptable;
   int ncoulshiftbits,ncoulmask;
+  int ndispshiftbits, ndispmask;
 
   int nextra;                    // # of extra quantities pair style calculates
   double *pvector;               // vector of extra pair quantities
@@ -79,15 +91,15 @@ class Pair : protected Pointers {
   class NeighList *list;         // standard neighbor list used by most pairs
   class NeighList *listhalf;     // half list used by some pairs
   class NeighList *listfull;     // full list used by some pairs
-  class NeighList *listgranhistory;  // granular history list used by some pairs
-  class NeighList *listinner;    // rRESPA lists used by some pairs
-  class NeighList *listmiddle;
-  class NeighList *listouter;
 
-  unsigned int datamask;
-  unsigned int datamask_ext;
-
+  int allocated;                 // 0/1 = whether arrays are allocated
+                                 //       public so external driver can check
   int compute_flag;              // 0 if skip compute()
+
+  // KOKKOS host/device flag and data masks
+
+  ExecutionSpace execution_space;
+  unsigned int datamask_read,datamask_modify;
 
   Pair(class LAMMPS *);
   virtual ~Pair();
@@ -95,7 +107,8 @@ class Pair : protected Pointers {
   // top-level Pair methods
 
   void init();
-  void reinit();
+  virtual void reinit();
+  virtual void setup() {}
   double mix_energy(double, double, double, double);
   double mix_distance(double, double);
   void write_file(int, char **);
@@ -124,8 +137,8 @@ class Pair : protected Pointers {
   virtual void compute_outer(int, int) {}
 
   virtual double single(int, int, int, int,
-                        double, double, double, 
-			double& fforce) {
+                        double, double, double,
+                        double& fforce) {
     fforce = 0.0;
     return 0.0;
   }
@@ -138,18 +151,24 @@ class Pair : protected Pointers {
   virtual double init_one(int, int) {return 0.0;}
 
   virtual void init_tables(double, double *);
+  virtual void init_tables_disp(double);
   virtual void free_tables();
+  virtual void free_disp_tables();
 
   virtual void write_restart(FILE *) {}
   virtual void read_restart(FILE *) {}
   virtual void write_restart_settings(FILE *) {}
   virtual void read_restart_settings(FILE *) {}
+  virtual void write_data(FILE *) {}
+  virtual void write_data_all(FILE *) {}
 
-  virtual int pack_comm(int, int *, double *, int, int *) {return 0;}
-  virtual void unpack_comm(int, int, double *) {}
+  virtual int pack_forward_comm(int, int *, double *, int, int *) {return 0;}
+  virtual void unpack_forward_comm(int, int, double *) {}
   virtual int pack_reverse_comm(int, int, double *) {return 0;}
   virtual void unpack_reverse_comm(int, int *, double *) {}
   virtual double memory_usage();
+
+  void set_copymode(int value) {copymode = value;}
 
   // specific child-class methods for certain Pair styles
 
@@ -160,29 +179,42 @@ class Pair : protected Pointers {
   virtual void min_xf_get(int) {}
   virtual void min_x_set(int) {}
 
-  virtual unsigned int data_mask() {return datamask;}
-  virtual unsigned int data_mask_ext() {return datamask_ext;}
+  // management of callbacks to be run from ev_tally()
 
  protected:
+  int num_tally_compute;
+  class Compute **list_tally_compute;
+ public:
+  virtual void add_tally_callback(class Compute *);
+  virtual void del_tally_callback(class Compute *);
+
+ protected:
+  int instance_me;        // which Pair class instantiation I am
+
   enum{GEOMETRIC,ARITHMETIC,SIXTHPOWER};   // mixing options
 
-  int allocated;               // 0/1 = whether arrays are allocated
+  int special_lj[4];           // copied from force->special_lj for Kokkos
+
   int suffix_flag;             // suffix compatibility flag
 
                                        // pair_modify settings
   int offset_flag,mix_flag;            // flags for offset and mixing
   double tabinner;                     // inner cutoff for Coulomb table
+  double tabinner_disp;                 // inner cutoff for dispersion table
 
+ public:
   // custom data type for accessing Coulomb tables
 
   typedef union {int i; float f;} union_int_float_t;
 
-  double THIRD;
-
+ protected:
   int vflag_fdotr;
   int maxeatom,maxvatom;
 
-  virtual void ev_setup(int, int);
+  int copymode;   // if set, do not deallocate during destruction
+                  // required when classes are used as functors by Kokkos
+
+  virtual void ev_setup(int, int, int alloc = 1);
   void ev_unset();
   void ev_tally_full(int, double, double, double, double, double, double);
   void ev_tally_xyz_full(int, double, double,
@@ -195,7 +227,18 @@ class Pair : protected Pointers {
                       double, double, double, double, double, double);
   void virial_fdotr_compute();
 
-  inline int sbmask(int j) {
+  // union data struct for packing 32-bit and 64-bit ints into double bufs
+  // see atom_vec.h for documentation
+
+  union ubuf {
+    double d;
+    int64_t i;
+    ubuf(double arg) : d(arg) {}
+    ubuf(int64_t arg) : i(arg) {}
+    ubuf(int arg) : i(arg) {}
+  };
+
+  inline int sbmask(int j) const {
     return j >> SBBITS & 3;
   }
 };
@@ -231,10 +274,36 @@ This is probably a bogus thing to do, since tail corrections are
 computed by integrating the density of a periodic system out to
 infinity.
 
+W: Using pair tail corrections with pair_modify compute no
+
+The tail corrections will thus not be computed.
+
+W: Using pair potential shift with pair_modify compute no
+
+The shift effects will thus not be computed.
+
+W: Using a manybody potential with bonds/angles/dihedrals and special_bond exclusions
+
+This is likely not what you want to do.  The exclusion settings will
+eliminate neighbors in the neighbor list, which the manybody potential
+needs to calculated its terms correctly.
+
 E: All pair coeffs are not set
 
 All pair coefficients must be set in the data file or by the
 pair_coeff command before running a simulation.
+
+E: Fix adapt interface to this pair style not supported
+
+New coding for the pair style would need to be done.
+
+E: Pair style requires a KSpace style
+
+No kspace style is defined.
+
+E: Cannot yet use compute tally with Kokkos
+
+This feature is not yet supported.
 
 E: Pair style does not support pair_write
 

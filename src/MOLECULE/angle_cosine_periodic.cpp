@@ -15,8 +15,8 @@
    Contributing author: Tod A Pascal (Caltech)
 ------------------------------------------------------------------------- */
 
-#include "math.h"
-#include "stdlib.h"
+#include <math.h>
+#include <stdlib.h>
 #include "angle_cosine_periodic.h"
 #include "atom.h"
 #include "neighbor.h"
@@ -24,11 +24,13 @@
 #include "comm.h"
 #include "force.h"
 #include "math_const.h"
+#include "math_special.h"
 #include "memory.h"
 #include "error.h"
 
 using namespace LAMMPS_NS;
 using namespace MathConst;
+using namespace MathSpecial;
 
 #define SMALL 0.001
 
@@ -55,7 +57,7 @@ void AngleCosinePeriodic::compute(int eflag, int vflag)
   int i,i1,i2,i3,n,m,type,b_factor;
   double delx1,dely1,delz1,delx2,dely2,delz2;
   double eangle,f1[3],f3[3];
-  double rsq1,rsq2,r1,r2,c,s,a,a11,a12,a22;
+  double rsq1,rsq2,r1,r2,c,a,a11,a12,a22;
   double tn,tn_1,tn_2,un,un_1,un_2;
 
   eangle = 0.0;
@@ -118,10 +120,6 @@ void AngleCosinePeriodic::compute(int eflag, int vflag)
     un_1 = 2.0;
     un_2 = 0.0;
 
-    s = sqrt(1.0 - c*c);
-    if (s < SMALL) s = SMALL;
-    s = 1.0/s;
-
     // force & energy
 
     tn_2 = c;
@@ -136,8 +134,8 @@ void AngleCosinePeriodic::compute(int eflag, int vflag)
       un_2 = un_1;
       un_1 = un;
     }
-    tn = b_factor*pow(-1.0,(double)m)*tn;
-    un = b_factor*pow(-1.0,(double)m)*m*un;
+    tn = b_factor*powsign(m)*tn;
+    un = b_factor*powsign(m)*m*un;
 
     if (eflag) eangle = 2*k[type]*(1.0 - tn);
 
@@ -203,11 +201,11 @@ void AngleCosinePeriodic::coeff(int narg, char **arg)
   if (!allocated) allocate();
 
   int ilo,ihi;
-  force->bounds(arg[0],atom->nangletypes,ilo,ihi);
+  force->bounds(FLERR,arg[0],atom->nangletypes,ilo,ihi);
 
-  double c_one = atof(arg[1]);
-  int b_one = atoi(arg[2]);
-  int n_one = atoi(arg[3]);
+  double c_one = force->numeric(FLERR,arg[1]);
+  int b_one = force->inumeric(FLERR,arg[2]);
+  int n_one = force->inumeric(FLERR,arg[3]);
   if (n_one <= 0) error->all(FLERR,"Incorrect args for angle coefficients");
 
   int count = 0;
@@ -260,6 +258,19 @@ void AngleCosinePeriodic::read_restart(FILE *fp)
   for (int i = 1; i <= atom->nangletypes; i++) setflag[i] = 1;
 }
 
+
+/* ----------------------------------------------------------------------
+   proc 0 writes to data file
+------------------------------------------------------------------------- */
+
+void AngleCosinePeriodic::write_data(FILE *fp)
+{
+  for (int i = 1; i <= atom->nangletypes; i++) {
+    int m = multiplicity[i];
+    fprintf(fp,"%d %g %d %d\n",i,k[i]*m*m,b[i],m);
+  }
+}
+
 /* ---------------------------------------------------------------------- */
 
 double AngleCosinePeriodic::single(int type, int i1, int i2, int i3)
@@ -284,5 +295,5 @@ double AngleCosinePeriodic::single(int type, int i1, int i2, int i3)
   if (c < -1.0) c = -1.0;
 
   c = cos(acos(c)*multiplicity[type]);
-  return k[type]*(1.0-b[type]*pow(-1.0,(double)multiplicity[type])*c);
+  return k[type]*(1.0-b[type]*powsign(multiplicity[type])*c);
 }

@@ -15,16 +15,19 @@
    Contributing author: Naveen Michaud-Agrawal (Johns Hopkins U)
 ------------------------------------------------------------------------- */
 
-#include "stdlib.h"
-#include "string.h"
+#include <stdlib.h>
+#include <string.h>
 #include "fix_recenter.h"
 #include "atom.h"
 #include "group.h"
+#include "update.h"
 #include "domain.h"
 #include "lattice.h"
 #include "modify.h"
 #include "comm.h"
+#include "respa.h"
 #include "error.h"
+#include "force.h"
 
 using namespace LAMMPS_NS;
 using namespace FixConst;
@@ -41,16 +44,25 @@ FixRecenter::FixRecenter(LAMMPS *lmp, int narg, char **arg) :
   xcom = ycom = zcom = 0.0;
   xflag = yflag = zflag = 1;
   xinitflag = yinitflag = zinitflag = 0;
+  shift[0] = shift[1] = shift[2] = 0.0;
+  distance = 0.0;
+  scalar_flag = 1;
+  vector_flag = 1;
+  size_vector = 3;
+  extscalar = 1;
+  extvector = 1;
+  global_freq = 1;
+  dynamic_group_allow = 1;
 
   if (strcmp(arg[3],"NULL") == 0) xflag = 0;
   else if (strcmp(arg[3],"INIT") == 0) xinitflag = 1;
-  else xcom = atof(arg[3]);
+  else xcom = force->numeric(FLERR,arg[3]);
   if (strcmp(arg[4],"NULL") == 0) yflag = 0;
   else if (strcmp(arg[4],"INIT") == 0) yinitflag = 1;
-  else ycom = atof(arg[4]);
+  else ycom = force->numeric(FLERR,arg[4]);
   if (strcmp(arg[5],"NULL") == 0) zflag = 0;
   else if (strcmp(arg[5],"INIT") == 0) zinitflag = 1;
-  else zcom = atof(arg[5]);
+  else zcom = force->numeric(FLERR,arg[5]);
 
   // optional args
 
@@ -74,9 +86,6 @@ FixRecenter::FixRecenter(LAMMPS *lmp, int narg, char **arg) :
   }
 
   // scale xcom,ycom,zcom
-
-  if (scaleflag == LATTICE && domain->lattice == NULL)
-    error->all(FLERR,"Use of fix recenter with undefined lattice");
 
   double xscale,yscale,zscale;
   if (scaleflag == LATTICE) {
@@ -102,6 +111,7 @@ int FixRecenter::setmask()
 {
   int mask = 0;
   mask |= INITIAL_INTEGRATE;
+  mask |= INITIAL_INTEGRATE_RESPA;
   return mask;
 }
 
@@ -118,7 +128,8 @@ void FixRecenter::init()
     else if ((modify->fmask[i] & INITIAL_INTEGRATE) && after) flag = 1;
   }
   if (flag && comm->me == 0)
-    error->warning(FLERR,"Fix recenter should come after all other integration fixes");
+    error->warning(FLERR,"Fix recenter should come after all other "
+                   "integration fixes");
 
   masstotal = group->mass(igroup);
 
@@ -131,6 +142,9 @@ void FixRecenter::init()
     yinit = xcm[1];
     zinit = xcm[2];
   }
+
+  if (strstr(update->integrate_style,"respa"))
+    nlevels_respa = ((Respa *) update->integrate)->nlevels;
 }
 
 /* ---------------------------------------------------------------------- */
@@ -171,6 +185,9 @@ void FixRecenter::initial_integrate(int vflag)
   // current COM
 
   double xcm[3];
+  if (group->dynamic[igroup])
+    masstotal = group->mass(igroup);
+
   group->xcm(igroup,masstotal,xcm);
 
   // shift coords by difference between actual COM and requested COM
@@ -179,10 +196,39 @@ void FixRecenter::initial_integrate(int vflag)
   int *mask = atom->mask;
   int nlocal = atom->nlocal;
 
+  shift[0] = xflag ? (xtarget - xcm[0]) : 0.0;
+  shift[1] = yflag ? (ytarget - xcm[1]) : 0.0;
+  shift[2] = zflag ? (ztarget - xcm[2]) : 0.0;
+  distance = sqrt(shift[0]*shift[0] + shift[1]*shift[1] + shift[2]*shift[2]);
+
   for (int i = 0; i < nlocal; i++)
     if (mask[i] & group2bit) {
-      if (xflag) x[i][0] += xtarget - xcm[0];
-      if (yflag) x[i][1] += ytarget - xcm[1];
-      if (zflag) x[i][2] += ztarget - xcm[2];
+      x[i][0] += shift[0];
+      x[i][1] += shift[1];
+      x[i][2] += shift[2];
     }
+}
+
+/* ---------------------------------------------------------------------- */
+
+void FixRecenter::initial_integrate_respa(int vflag, int ilevel, int iloop)
+{
+  // outermost level - operate recenter
+  // all other levels - nothing
+
+  if (ilevel == nlevels_respa-1) initial_integrate(vflag);
+}
+
+/* ---------------------------------------------------------------------- */
+
+double FixRecenter::compute_scalar()
+{
+  return distance;
+}
+
+/* ---------------------------------------------------------------------- */
+
+double FixRecenter::compute_vector(int n)
+{
+  return shift[n];
 }

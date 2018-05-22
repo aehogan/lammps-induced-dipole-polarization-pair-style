@@ -1,4 +1,4 @@
-/* ----------------------------------------------------------------------
+/* -*- c++ -*- ----------------------------------------------------------
    LAMMPS - Large-scale Atomic/Molecular Massively Parallel Simulator
    http://lammps.sandia.gov, Sandia National Laboratories
    Steve Plimpton, sjplimp@sandia.gov
@@ -33,10 +33,12 @@ class PairDPD : public Pair {
   virtual void coeff(int, char **);
   void init_style();
   double init_one(int, int);
-  void write_restart(FILE *);
-  void read_restart(FILE *);
+  virtual void write_restart(FILE *);
+  virtual void read_restart(FILE *);
   virtual void write_restart_settings(FILE *);
   virtual void read_restart_settings(FILE *);
+  virtual void write_data(FILE *);
+  virtual void write_data_all(FILE *);
   double single(int, int, int, int, double, double, double, double &);
 
  protected:
@@ -69,7 +71,7 @@ Self-explanatory.  Check the input script or data file.
 
 E: Pair dpd requires ghost atoms store velocity
 
-Use the communicate vel yes command to enable this.
+Use the comm_modify vel yes command to enable this.
 
 W: Pair dpd needs newton pair on for momentum conservation
 

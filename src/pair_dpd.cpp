@@ -15,9 +15,9 @@
    Contributing author: Kurt Smith (U Pittsburgh)
 ------------------------------------------------------------------------- */
 
-#include "math.h"
-#include "stdio.h"
-#include "stdlib.h"
+#include <math.h>
+#include <stdio.h>
+#include <stdlib.h>
 #include "pair_dpd.h"
 #include "atom.h"
 #include "atom_vec.h"
@@ -38,6 +38,7 @@ using namespace LAMMPS_NS;
 
 PairDPD::PairDPD(LAMMPS *lmp) : Pair(lmp)
 {
+  writedata = 1;
   random = NULL;
 }
 
@@ -163,12 +164,13 @@ void PairDPD::compute(int eflag, int vflag)
 
 void PairDPD::allocate()
 {
+  int i,j;
   allocated = 1;
   int n = atom->ntypes;
 
   memory->create(setflag,n+1,n+1,"pair:setflag");
-  for (int i = 1; i <= n; i++)
-    for (int j = i; j <= n; j++)
+  for (i = 1; i <= n; i++)
+    for (j = i; j <= n; j++)
       setflag[i][j] = 0;
 
   memory->create(cutsq,n+1,n+1,"pair:cutsq");
@@ -177,6 +179,9 @@ void PairDPD::allocate()
   memory->create(a0,n+1,n+1,"pair:a0");
   memory->create(gamma,n+1,n+1,"pair:gamma");
   memory->create(sigma,n+1,n+1,"pair:sigma");
+  for (i = 0; i <= atom->ntypes; i++)
+    for (j = 0; j <= atom->ntypes; j++)
+      sigma[i][j] = gamma[i][j] = 0.0;
 }
 
 /* ----------------------------------------------------------------------
@@ -187,9 +192,9 @@ void PairDPD::settings(int narg, char **arg)
 {
   if (narg != 3) error->all(FLERR,"Illegal pair_style command");
 
-  temperature = force->numeric(arg[0]);
-  cut_global = force->numeric(arg[1]);
-  seed = force->inumeric(arg[2]);
+  temperature = force->numeric(FLERR,arg[0]);
+  cut_global = force->numeric(FLERR,arg[1]);
+  seed = force->inumeric(FLERR,arg[2]);
 
   // initialize Marsaglia RNG with processor-unique seed
 
@@ -202,7 +207,7 @@ void PairDPD::settings(int narg, char **arg)
   if (allocated) {
     int i,j;
     for (i = 1; i <= atom->ntypes; i++)
-      for (j = i+1; j <= atom->ntypes; j++)
+      for (j = i; j <= atom->ntypes; j++)
         if (setflag[i][j]) cut[i][j] = cut_global;
   }
 }
@@ -213,18 +218,19 @@ void PairDPD::settings(int narg, char **arg)
 
 void PairDPD::coeff(int narg, char **arg)
 {
-  if (narg < 4 || narg > 5) error->all(FLERR,"Incorrect args for pair coefficients");
+  if (narg < 4 || narg > 5)
+    error->all(FLERR,"Incorrect args for pair coefficients");
   if (!allocated) allocate();
 
   int ilo,ihi,jlo,jhi;
-  force->bounds(arg[0],atom->ntypes,ilo,ihi);
-  force->bounds(arg[1],atom->ntypes,jlo,jhi);
+  force->bounds(FLERR,arg[0],atom->ntypes,ilo,ihi);
+  force->bounds(FLERR,arg[1],atom->ntypes,jlo,jhi);
 
-  double a0_one = force->numeric(arg[2]);
-  double gamma_one = force->numeric(arg[3]);
+  double a0_one = force->numeric(FLERR,arg[2]);
+  double gamma_one = force->numeric(FLERR,arg[3]);
 
   double cut_one = cut_global;
-  if (narg == 5) cut_one = force->numeric(arg[4]);
+  if (narg == 5) cut_one = force->numeric(FLERR,arg[4]);
 
   int count = 0;
   for (int i = ilo; i <= ihi; i++) {
@@ -255,7 +261,7 @@ void PairDPD::init_style()
   if (force->newton_pair == 0 && comm->me == 0) error->warning(FLERR,
       "Pair dpd needs newton pair on for momentum conservation");
 
-  neighbor->request(this);
+  neighbor->request(this,instance_me);
 }
 
 /* ----------------------------------------------------------------------
@@ -359,6 +365,27 @@ void PairDPD::read_restart_settings(FILE *fp)
 
   if (random) delete random;
   random = new RanMars(lmp,seed + comm->me);
+}
+
+/* ----------------------------------------------------------------------
+   proc 0 writes to data file
+------------------------------------------------------------------------- */
+
+void PairDPD::write_data(FILE *fp)
+{
+  for (int i = 1; i <= atom->ntypes; i++)
+    fprintf(fp,"%d %g %g\n",i,a0[i][i],gamma[i][i]);
+}
+
+/* ----------------------------------------------------------------------
+   proc 0 writes all pairs to data file
+------------------------------------------------------------------------- */
+
+void PairDPD::write_data_all(FILE *fp)
+{
+  for (int i = 1; i <= atom->ntypes; i++)
+    for (int j = i; j <= atom->ntypes; j++)
+      fprintf(fp,"%d %d %g %g %g\n",i,j,a0[i][j],gamma[i][j],cut[i][j]);
 }
 
 /* ---------------------------------------------------------------------- */

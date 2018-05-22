@@ -11,8 +11,8 @@
    See the README file in the top-level LAMMPS directory.
 ------------------------------------------------------------------------- */
 
-#include "string.h"
-#include "stdlib.h"
+#include <string.h>
+#include <stdlib.h>
 #include "compute_reduce_region.h"
 #include "atom.h"
 #include "update.h"
@@ -28,7 +28,7 @@
 
 using namespace LAMMPS_NS;
 
-enum{SUM,MINN,MAXX,AVE};
+enum{SUM,SUMSQ,MINN,MAXX,AVE,AVESQ};          // also in ComputeReduce
 enum{X,V,F,COMPUTE,FIX,VARIABLE};
 enum{PERATOM,LOCAL};
 
@@ -58,6 +58,7 @@ double ComputeReduceRegion::compute_one(int m, int flag)
   int i;
 
   Region *region = domain->regions[iregion];
+  region->prematch();
 
   // invoke the appropriate attribute,compute,fix,variable
   // compute scalar quantity by summing over atom scalars
@@ -71,11 +72,9 @@ double ComputeReduceRegion::compute_one(int m, int flag)
   int n = value2index[m];
   int j = argindex[m];
 
-  double one;
-  if (mode == SUM) one = 0.0;
-  else if (mode == MINN) one = BIG;
-  else if (mode == MAXX) one = -BIG;
-  else if (mode == AVE) one = 0.0;
+  double one = 0.0;
+  if (mode == MINN) one = BIG;
+  if (mode == MAXX) one = -BIG;
 
   if (which[m] == X) {
     if (flag < 0) {
@@ -156,7 +155,8 @@ double ComputeReduceRegion::compute_one(int m, int flag)
 
   } else if (which[m] == FIX) {
     if (update->ntimestep % modify->fix[n]->peratom_freq)
-      error->all(FLERR,"Fix used in compute reduce not computed at compatible time");
+      error->all(FLERR,"Fix used in compute reduce not computed at "
+                 "compatible time");
     Fix *fix = modify->fix[n];
 
     if (flavor[m] == PERATOM) {
@@ -200,7 +200,7 @@ double ComputeReduceRegion::compute_one(int m, int flag)
   // evaluate atom-style variable
 
   } else if (which[m] == VARIABLE) {
-    if (nlocal > maxatom) {
+    if (atom->nmax > maxatom) {
       maxatom = atom->nmax;
       memory->destroy(varatom);
       memory->create(varatom,maxatom,"reduce/region:varatom");

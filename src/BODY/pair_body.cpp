@@ -11,10 +11,10 @@
    See the README file in the top-level LAMMPS directory.
 ------------------------------------------------------------------------- */
 
-#include "math.h"
-#include "stdio.h"
-#include "stdlib.h"
-#include "string.h"
+#include <math.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
 #include "pair_body.h"
 #include "math_extra.h"
 #include "atom.h"
@@ -178,7 +178,7 @@ void PairBody::compute(int eflag, int vflag)
             torque[i][0] += ti[0];
             torque[i][1] += ti[1];
             torque[i][2] += ti[2];
-            
+
             if (newton_pair || j < nlocal) {
               fj[0] = -delx*fpair;
               fj[1] = -dely*fpair;
@@ -365,14 +365,14 @@ void PairBody::settings(int narg, char **arg)
 {
   if (narg != 1) error->all(FLERR,"Illegal pair_style command");
 
-  cut_global = force->numeric(arg[0]);
+  cut_global = force->numeric(FLERR,arg[0]);
 
   // reset cutoffs that have been explicitly set
 
   if (allocated) {
     int i,j;
     for (i = 1; i <= atom->ntypes; i++)
-      for (j = i+1; j <= atom->ntypes; j++)
+      for (j = i; j <= atom->ntypes; j++)
         if (setflag[i][j]) cut[i][j] = cut_global;
   }
 }
@@ -388,14 +388,14 @@ void PairBody::coeff(int narg, char **arg)
   if (!allocated) allocate();
 
   int ilo,ihi,jlo,jhi;
-  force->bounds(arg[0],atom->ntypes,ilo,ihi);
-  force->bounds(arg[1],atom->ntypes,jlo,jhi);
+  force->bounds(FLERR,arg[0],atom->ntypes,ilo,ihi);
+  force->bounds(FLERR,arg[1],atom->ntypes,jlo,jhi);
 
-  double epsilon_one = force->numeric(arg[2]);
-  double sigma_one = force->numeric(arg[3]);
+  double epsilon_one = force->numeric(FLERR,arg[2]);
+  double sigma_one = force->numeric(FLERR,arg[3]);
 
   double cut_one = cut_global;
-  if (narg == 5) cut_one = force->numeric(arg[4]);
+  if (narg == 5) cut_one = force->numeric(FLERR,arg[4]);
 
   int count = 0;
   for (int i = ilo; i <= ihi; i++) {
@@ -423,7 +423,7 @@ void PairBody::init_style()
     error->all(FLERR,"Pair body requires body style nparticle");
   bptr = (BodyNparticle *) avec->bptr;
 
-  neighbor->request(this);
+  neighbor->request(this,instance_me);
 }
 
 /* ----------------------------------------------------------------------
@@ -465,7 +465,7 @@ void PairBody::body2space(int i)
   AtomVecBody::Bonus *bonus = &avec->bonus[ibonus];
   int nsub = bptr->nsub(bonus);
   double *coords = bptr->coords(bonus);
-  
+
   dnum[i] = nsub;
   dfirst[i] = ndiscrete;
 

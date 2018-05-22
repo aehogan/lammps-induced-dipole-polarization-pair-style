@@ -15,8 +15,8 @@
    Contributing authors: Jeremy Lechman (SNL)
 ------------------------------------------------------------------------- */
 
-#include "math.h"
-#include "string.h"
+#include <math.h>
+#include <string.h>
 #include "fix_wall_colloid.h"
 #include "atom.h"
 #include "atom_vec.h"
@@ -78,9 +78,10 @@ void FixWallColloid::wall_particle(int m, int which, double coord)
 {
   double delta,delta2,rinv,r2inv,r4inv,r8inv,fwall;
   double r2,rinv2,r2inv2,r4inv2;
-  double r3,rinv3,r2inv3,r4inv3,r6inv3;
+  double r3,rinv3,r2inv3,r4inv3;
   double rad,rad2,rad4,rad8,diam,new_coeff2;
   double eoffset;
+  double vn;
 
   double **x = atom->x;
   double **f = atom->f;
@@ -129,7 +130,6 @@ void FixWallColloid::wall_particle(int m, int which, double coord)
       rinv3 = 1.0/r3;
       r2inv3 = rinv3*rinv3;
       r4inv3 = r2inv3*r2inv3;
-      r6inv3 = r4inv3*r2inv3;
       ewall[0] += coeff3[m]*((-3.5*diam+delta)*r4inv2*r2inv2*rinv2
                              + (3.5*diam+delta)*r4inv3*r2inv3*rinv3) -
         coeff4[m]*((diam*delta-r2*r3*(log(-r2)-log(r3)))*
@@ -145,7 +145,6 @@ void FixWallColloid::wall_particle(int m, int which, double coord)
       rinv3 = 1.0/r3;
       r2inv3 = rinv3*rinv3;
       r4inv3 = r2inv3*r2inv3;
-      r6inv3 = r4inv3*r2inv3;
       eoffset = coeff3[m]*((-3.5*diam+cutoff[m])*r4inv2*r2inv2*rinv2
                            + (3.5*diam+cutoff[m])*r4inv3*r2inv3*rinv3) -
         coeff4[m]*((diam*cutoff[m]-r2*r3*(log(-r2)-log(r3)))*
@@ -153,6 +152,12 @@ void FixWallColloid::wall_particle(int m, int which, double coord)
       ewall[0] -= eoffset;
 
       ewall[m+1] += fwall;
+
+      if (evflag) {
+        if (side < 0) vn = -fwall*delta;
+        else vn = fwall*delta;
+        v_tally(dim, i, vn);
+      }
     }
 
   if (onflag) error->one(FLERR,"Particle on or inside fix wall surface");

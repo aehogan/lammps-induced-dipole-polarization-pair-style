@@ -45,7 +45,7 @@ void BondQuarticOMP::compute(int eflag, int vflag)
     ev_setup(eflag,vflag);
   } else evflag = 0;
 
- // insure pair->ev_tally() will use 1-4 virial contribution
+  // insure pair->ev_tally() will use 1-4 virial contribution
 
   if (vflag_global == 2)
     force->pair->vflag_either = force->pair->vflag_global = 1;
@@ -62,21 +62,24 @@ void BondQuarticOMP::compute(int eflag, int vflag)
 
     loop_setup_thr(ifrom, ito, tid, inum, nthreads);
     ThrData *thr = fix->get_thr(tid);
+    thr->timer(Timer::START);
     ev_setup_thr(eflag, vflag, nall, eatom, vatom, thr);
 
-    if (evflag) {
-      if (eflag) {
-        if (force->newton_bond) eval<1,1,1>(ifrom, ito, thr);
-        else eval<1,1,0>(ifrom, ito, thr);
+    if (inum > 0) {
+      if (evflag) {
+        if (eflag) {
+          if (force->newton_bond) eval<1,1,1>(ifrom, ito, thr);
+          else eval<1,1,0>(ifrom, ito, thr);
+        } else {
+          if (force->newton_bond) eval<1,0,1>(ifrom, ito, thr);
+          else eval<1,0,0>(ifrom, ito, thr);
+        }
       } else {
-        if (force->newton_bond) eval<1,0,1>(ifrom, ito, thr);
-        else eval<1,0,0>(ifrom, ito, thr);
+        if (force->newton_bond) eval<0,0,1>(ifrom, ito, thr);
+        else eval<0,0,0>(ifrom, ito, thr);
       }
-    } else {
-      if (force->newton_bond) eval<0,0,1>(ifrom, ito, thr);
-      else eval<0,0,0>(ifrom, ito, thr);
     }
-
+    thr->timer(Timer::BOND);
     reduce_thr(this, eflag, vflag, thr);
   } // end of omp parallel region
 }

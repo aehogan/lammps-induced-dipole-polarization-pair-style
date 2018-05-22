@@ -1,4 +1,4 @@
-/* ----------------------------------------------------------------------
+/* -*- c++ -*- ----------------------------------------------------------
    LAMMPS - Large-scale Atomic/Molecular Massively Parallel Simulator
    http://lammps.sandia.gov, Sandia National Laboratories
    Steve Plimpton, sjplimp@sandia.gov
@@ -63,10 +63,6 @@ class PairTriLJ : public Pair {
 
 /* ERROR/WARNING messages:
 
-E: Pair tri/lj requires atom style tri
-
-Self-explanatory.
-
 E: Illegal ... command
 
 Self-explanatory.  Check the input script syntax and compare to the
@@ -76,5 +72,9 @@ command-line option when running LAMMPS to see the offending line.
 E: Incorrect args for pair coefficients
 
 Self-explanatory.  Check the input script or data file.
+
+E: Pair tri/lj requires atom style tri
+
+Self-explanatory.
 
 */

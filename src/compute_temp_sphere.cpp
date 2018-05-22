@@ -11,8 +11,8 @@
    See the README file in the top-level LAMMPS directory.
 ------------------------------------------------------------------------- */
 
-#include "mpi.h"
-#include "string.h"
+#include <mpi.h>
+#include <string.h>
 #include "compute_temp_sphere.h"
 #include "atom.h"
 #include "atom_vec.h"
@@ -20,7 +20,7 @@
 #include "force.h"
 #include "domain.h"
 #include "modify.h"
-#include "fix.h"
+#include "comm.h"
 #include "group.h"
 #include "error.h"
 
@@ -33,7 +33,8 @@ enum{ROTATE,ALL};
 /* ---------------------------------------------------------------------- */
 
 ComputeTempSphere::ComputeTempSphere(LAMMPS *lmp, int narg, char **arg) :
-  Compute(lmp, narg, arg)
+  Compute(lmp, narg, arg),
+  id_bias(NULL)
 {
   if (narg < 3) error->all(FLERR,"Illegal compute temp/sphere command");
 
@@ -44,7 +45,6 @@ ComputeTempSphere::ComputeTempSphere(LAMMPS *lmp, int narg, char **arg) :
   tempflag = 1;
 
   tempbias = 0;
-  id_bias = NULL;
   mode = ALL;
 
   int iarg = 3;
@@ -66,6 +66,11 @@ ComputeTempSphere::ComputeTempSphere(LAMMPS *lmp, int narg, char **arg) :
       iarg += 2;
     } else error->all(FLERR,"Illegal compute temp/sphere command");
   }
+
+  // when computing only the rotational temperature,
+  // do not remove DOFs for translation as set by default
+
+  if (mode == ROTATE) extra_dof = 0;
 
   vector = new double[6];
 
@@ -98,14 +103,23 @@ void ComputeTempSphere::init()
       error->all(FLERR,"Bias compute does not calculate a velocity bias");
     if (tbias->igroup != igroup)
       error->all(FLERR,"Bias compute group does not match compute group");
-    tbias->init();
     if (strcmp(tbias->style,"temp/region") == 0) tempbias = 2;
     else tempbias = 1;
-  }
 
-  fix_dof = 0;
-  for (int i = 0; i < modify->nfix; i++)
-    fix_dof += modify->fix[i]->dof(igroup);
+    // init and setup bias compute because
+    // this compute's setup()->dof_compute() may be called first
+
+    tbias->init();
+    tbias->setup();
+  }
+}
+
+/* ---------------------------------------------------------------------- */
+
+void ComputeTempSphere::setup()
+{
+  dynamic = 0;
+  if (dynamic_user || group->dynamic[igroup]) dynamic = 1;
   dof_compute();
 }
 
@@ -114,6 +128,9 @@ void ComputeTempSphere::init()
 void ComputeTempSphere::dof_compute()
 {
   int count,count_all;
+
+  adjust_dof_fix();
+  natoms_temp = group->count(igroup);
 
   // 6 or 3 dof for extended/point particles for 3d
   // 3 or 2 dof for extended/point particles for 2d
@@ -154,14 +171,13 @@ void ComputeTempSphere::dof_compute()
   // additional adjustments to dof
 
   if (tempbias == 1) {
-    if (mode == ALL) {
-      double natoms = group->count(igroup);
-      dof -= tbias->dof_remove(-1) * natoms;
-    }
+    if (mode == ALL) dof -= tbias->dof_remove(-1) * natoms_temp;
 
   } else if (tempbias == 2) {
     int *mask = atom->mask;
     int nlocal = atom->nlocal;
+
+    tbias->dof_remove_pre();
 
     count = 0;
     if (domain->dimension == 3) {
@@ -239,6 +255,8 @@ double ComputeTempSphere::compute_scalar()
 
   MPI_Allreduce(&t,&scalar,1,MPI_DOUBLE,MPI_SUM,world);
   if (dynamic || tempbias == 2) dof_compute();
+  if (dof < 0.0 && natoms_temp > 0.0)
+    error->all(FLERR,"Temperature compute degrees of freedom < 0");
   scalar *= tfactor;
   return scalar;
 }
@@ -314,6 +332,15 @@ void ComputeTempSphere::remove_bias(int i, double *v)
 }
 
 /* ----------------------------------------------------------------------
+   remove velocity bias from atom I to leave thermal velocity
+------------------------------------------------------------------------- */
+
+void ComputeTempSphere::remove_bias_thr(int i, double *v, double *b)
+{
+  tbias->remove_bias_thr(i,v,b);
+}
+
+/* ----------------------------------------------------------------------
    add back in velocity bias to atom I removed by remove_bias()
    assume remove_bias() was previously called
 ------------------------------------------------------------------------- */
@@ -321,4 +348,14 @@ void ComputeTempSphere::remove_bias(int i, double *v)
 void ComputeTempSphere::restore_bias(int i, double *v)
 {
   tbias->restore_bias(i,v);
+}
+
+/* ----------------------------------------------------------------------
+   add back in velocity bias to atom I removed by remove_bias_thr()
+   assume remove_bias_thr() was previously called with the same buffer b
+------------------------------------------------------------------------- */
+
+void ComputeTempSphere::restore_bias_thr(int i, double *v, double *b)
+{
+  tbias->restore_bias_thr(i,v,b);
 }

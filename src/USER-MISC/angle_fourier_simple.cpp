@@ -5,7 +5,7 @@
 
    Copyright (2003) Sandia Corporation.  Under the terms of Contract
    DE-AC04-94AL85000 with Sandia Corporation, the U.S. Government retains
-   certain rights in this software.  This software is distributed under 
+   certain rights in this software.  This software is distributed under
    the GNU General Public License.
 
    See the README file in the top-level LAMMPS directory.
@@ -16,8 +16,8 @@
    [ based on angle_cosine_squared.cpp Naveen Michaud-Agrawal (Johns Hopkins U)]
 ------------------------------------------------------------------------- */
 
-#include "math.h"
-#include "stdlib.h"
+#include <math.h>
+#include <stdlib.h>
 #include "angle_fourier_simple.h"
 #include "atom.h"
 #include "neighbor.h"
@@ -113,8 +113,7 @@ void AngleFourierSimple::compute(int eflag, int vflag)
 
     // handle sin(n th)/sin(th) singulatiries
 
-    if ( abs(c)-1.0 > 0.0001 )
-    {
+    if ( fabs(c)-1.0 > 0.0001 ) {
       a = k[type]*C[type]*N[type]*sin(nth)/sin(th);
     } else {
       if ( c >= 0.0 ) {
@@ -189,11 +188,11 @@ void AngleFourierSimple::coeff(int narg, char **arg)
   if (!allocated) allocate();
 
   int ilo,ihi;
-  force->bounds(arg[0],atom->nangletypes,ilo,ihi);
+  force->bounds(FLERR,arg[0],atom->nangletypes,ilo,ihi);
 
-  double k_one = force->numeric(arg[1]);
-  double C_one = force->numeric(arg[2]);
-  double N_one = force->numeric(arg[3]);
+  double k_one = force->numeric(FLERR,arg[1]);
+  double C_one = force->numeric(FLERR,arg[2]);
+  double N_one = force->numeric(FLERR,arg[3]);
 
   int count = 0;
   for (int i = ilo; i <= ihi; i++) {
@@ -226,7 +225,7 @@ void AngleFourierSimple::write_restart(FILE *fp)
 }
 
 /* ----------------------------------------------------------------------
-   proc 0 reads coeffs from restart file, bcasts them 
+   proc 0 reads coeffs from restart file, bcasts them
 ------------------------------------------------------------------------- */
 
 void AngleFourierSimple::read_restart(FILE *fp)
@@ -243,6 +242,16 @@ void AngleFourierSimple::read_restart(FILE *fp)
   MPI_Bcast(&N[1],atom->nangletypes,MPI_DOUBLE,0,world);
 
   for (int i = 1; i <= atom->nangletypes; i++) setflag[i] = 1;
+}
+
+/* ----------------------------------------------------------------------
+   proc 0 writes to data file
+------------------------------------------------------------------------- */
+
+void AngleFourierSimple::write_data(FILE *fp)
+{
+  for (int i = 1; i <= atom->nangletypes; i++)
+    fprintf(fp,"%d %g %g %g\n",i,k[i],C[i],N[i]);
 }
 
 /* ---------------------------------------------------------------------- */

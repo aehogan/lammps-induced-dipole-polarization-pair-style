@@ -5,7 +5,7 @@
 
    Copyright (2003) Sandia Corporation.  Under the terms of Contract
    DE-AC04-94AL85000 with Sandia Corporation, the U.S. Government retains
-   certain rights in this software.  This software is distributed under 
+   certain rights in this software.  This software is distributed under
    the GNU General Public License.
 
    See the README file in the top-level LAMMPS directory.
@@ -16,8 +16,8 @@
    [ based on angle_cosine_squared.cpp Naveen Michaud-Agrawal (Johns Hopkins U)]
 ------------------------------------------------------------------------- */
 
-#include "math.h"
-#include "stdlib.h"
+#include <math.h>
+#include <stdlib.h>
 #include "angle_fourier.h"
 #include "atom.h"
 #include "neighbor.h"
@@ -143,7 +143,7 @@ void AngleFourier::compute(int eflag, int vflag)
     }
 
     if (evflag) ev_tally(i1,i2,i3,nlocal,newton_bond,eangle,f1,f3,
-			 delx1,dely1,delz1,delx2,dely2,delz2);
+                         delx1,dely1,delz1,delx2,dely2,delz2);
   }
 }
 
@@ -173,12 +173,12 @@ void AngleFourier::coeff(int narg, char **arg)
   if (!allocated) allocate();
 
   int ilo,ihi;
-  force->bounds(arg[0],atom->nangletypes,ilo,ihi);
+  force->bounds(FLERR,arg[0],atom->nangletypes,ilo,ihi);
 
-  double k_one =  force->numeric(arg[1]);
-  double C0_one = force->numeric(arg[2]);
-  double C1_one = force->numeric(arg[3]);
-  double C2_one = force->numeric(arg[4]);
+  double k_one =  force->numeric(FLERR,arg[1]);
+  double C0_one = force->numeric(FLERR,arg[2]);
+  double C1_one = force->numeric(FLERR,arg[3]);
+  double C2_one = force->numeric(FLERR,arg[4]);
 
   int count = 0;
   for (int i = ilo; i <= ihi; i++) {
@@ -200,7 +200,7 @@ double AngleFourier::equilibrium_angle(int i)
   double ret=MY_PI;
   if ( C2[i] != 0.0 ) {
     ret = (C1[i]/4.0/C2[i]);
-    if ( abs(ret) <= 1.0 ) ret = acos(-ret);
+    if ( fabs(ret) <= 1.0 ) ret = acos(-ret);
   }
   return ret;
 }
@@ -218,7 +218,7 @@ void AngleFourier::write_restart(FILE *fp)
 }
 
 /* ----------------------------------------------------------------------
-   proc 0 reads coeffs from restart file, bcasts them 
+   proc 0 reads coeffs from restart file, bcasts them
 ------------------------------------------------------------------------- */
 
 void AngleFourier::read_restart(FILE *fp)
@@ -237,6 +237,16 @@ void AngleFourier::read_restart(FILE *fp)
   MPI_Bcast(&C2[1],atom->nangletypes,MPI_DOUBLE,0,world);
 
   for (int i = 1; i <= atom->nangletypes; i++) setflag[i] = 1;
+}
+
+/* ----------------------------------------------------------------------
+   proc 0 writes to data file
+------------------------------------------------------------------------- */
+
+void AngleFourier::write_data(FILE *fp)
+{
+  for (int i = 1; i <= atom->nangletypes; i++)
+    fprintf(fp,"%d %g %g %g %g\n",i,k[i],C0[i],C1[i],C2[i]);
 }
 
 /* ---------------------------------------------------------------------- */
@@ -262,7 +272,7 @@ double AngleFourier::single(int type, int i1, int i2, int i3)
   if (c > 1.0) c = 1.0;
   if (c < -1.0) c = -1.0;
   double c2 = 2.0*c*c-1.0;
-  
+
   double eng = k[type]*(C0[type]+C1[type]*c+C2[type]*c2);
   return eng;
 }

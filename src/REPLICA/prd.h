@@ -1,4 +1,4 @@
-/* ----------------------------------------------------------------------
+/* -*- c++ -*- ----------------------------------------------------------
    LAMMPS - Large-scale Atomic/Molecular Massively Parallel Simulator
    http://lammps.sandia.gov, Sandia National Laboratories
    Steve Plimpton, sjplimp@sandia.gov
@@ -32,9 +32,9 @@ class PRD : protected Pointers {
 
  private:
   int me,nprocs;
-  int nsteps,t_event,n_dephase,t_dephase,t_corr;
+  int t_event,n_dephase,t_dephase,t_corr;
   double etol,ftol,temp_dephase;
-  int maxiter,maxeval,temp_flag;
+  int maxiter,maxeval,temp_flag,stepmode,cmode;
   char *loop_setting,*dist_setting;
 
   int equal_size_replicas,natoms;
@@ -46,12 +46,14 @@ class PRD : protected Pointers {
   double time_start;
 
   MPI_Comm comm_replica;
-  int *tagall,*displacements,*imageall;
+  int *counts,*displacements;
+  tagint *tagall;
   double **xall;
+  imageint *imageall;
 
   int ncoincident;
 
-  class RanPark *random_select;
+  class RanPark *random_select,*random_clock;
   class RanMars *random_dephase;
   class Compute *compute_event;
   class FixEventPRD *fix_event;
@@ -60,10 +62,10 @@ class PRD : protected Pointers {
   class Finish *finish;
 
   void dephase();
-  void dynamics();
+  void dynamics(int, double &);
   void quench();
   int check_event(int replica = -1);
-  void share_event(int, int);
+  void share_event(int, int, int);
   void log_event();
   void replicate(int);
   void options(int, char **);
@@ -120,7 +122,11 @@ after the PRD simulation.
 
 E: Too many timesteps
 
-The cummulative timesteps must fit in a 64-bit integer.
+The cumulative timesteps must fit in a 64-bit integer.
+
+E: Cannot use PRD with a changing box
+
+The current box dimensions are not copied between replicas
 
 E: Cannot use PRD with a time-dependent fix defined
 

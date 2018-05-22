@@ -15,8 +15,8 @@
    Contributing author: Mark Stevens (SNL)
 ------------------------------------------------------------------------- */
 
-#include "math.h"
-#include "stdlib.h"
+#include <math.h>
+#include <stdlib.h>
 #include "dihedral_opls.h"
 #include "atom.h"
 #include "comm.h"
@@ -35,13 +35,16 @@ using namespace LAMMPS_NS;
 
 /* ---------------------------------------------------------------------- */
 
-DihedralOPLS::DihedralOPLS(LAMMPS *lmp) : Dihedral(lmp) {}
+DihedralOPLS::DihedralOPLS(LAMMPS *lmp) : Dihedral(lmp)
+{
+  writedata = 1;
+}
 
 /* ---------------------------------------------------------------------- */
 
 DihedralOPLS::~DihedralOPLS()
 {
-  if (allocated) {
+  if (allocated && !copymode) {
     memory->destroy(setflag);
     memory->destroy(k1);
     memory->destroy(k2);
@@ -161,7 +164,9 @@ void DihedralOPLS::compute(int eflag, int vflag)
       MPI_Comm_rank(world,&me);
       if (screen) {
         char str[128];
-        sprintf(str,"Dihedral problem: %d " BIGINT_FORMAT " %d %d %d %d",
+        sprintf(str,"Dihedral problem: %d " BIGINT_FORMAT " "
+                TAGINT_FORMAT " " TAGINT_FORMAT " "
+                TAGINT_FORMAT " " TAGINT_FORMAT,
                 me,update->ntimestep,
                 atom->tag[i1],atom->tag[i2],atom->tag[i3],atom->tag[i4]);
         error->warning(FLERR,str,0);
@@ -284,12 +289,12 @@ void DihedralOPLS::coeff(int narg, char **arg)
   if (!allocated) allocate();
 
   int ilo,ihi;
-  force->bounds(arg[0],atom->ndihedraltypes,ilo,ihi);
+  force->bounds(FLERR,arg[0],atom->ndihedraltypes,ilo,ihi);
 
-  double k1_one = force->numeric(arg[1]);
-  double k2_one = force->numeric(arg[2]);
-  double k3_one = force->numeric(arg[3]);
-  double k4_one = force->numeric(arg[4]);
+  double k1_one = force->numeric(FLERR,arg[1]);
+  double k2_one = force->numeric(FLERR,arg[2]);
+  double k3_one = force->numeric(FLERR,arg[3]);
+  double k4_one = force->numeric(FLERR,arg[4]);
 
   // store 1/2 factor with prefactor
 
@@ -339,3 +344,14 @@ void DihedralOPLS::read_restart(FILE *fp)
 
   for (int i = 1; i <= atom->ndihedraltypes; i++) setflag[i] = 1;
 }
+
+/* ----------------------------------------------------------------------
+   proc 0 writes to data file
+------------------------------------------------------------------------- */
+
+void DihedralOPLS::write_data(FILE *fp)
+{
+  for (int i = 1; i <= atom->ndihedraltypes; i++)
+    fprintf(fp,"%d %g %g %g %g\n",i,2.0*k1[i],2.0*k2[i],2.0*k3[i],2.0*k4[i]);
+}
+

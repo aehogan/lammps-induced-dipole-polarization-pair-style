@@ -11,8 +11,9 @@
    See the README file in the top-level LAMMPS directory.
 ------------------------------------------------------------------------- */
 
-#include "math.h"
-#include "stdlib.h"
+#include <math.h>
+#include <stdlib.h>
+#include <string.h>
 #include "bond_harmonic.h"
 #include "atom.h"
 #include "neighbor.h"
@@ -26,13 +27,16 @@ using namespace LAMMPS_NS;
 
 /* ---------------------------------------------------------------------- */
 
-BondHarmonic::BondHarmonic(LAMMPS *lmp) : Bond(lmp) {}
+BondHarmonic::BondHarmonic(LAMMPS *lmp) : Bond(lmp)
+{
+  reinitflag = 1;
+}
 
 /* ---------------------------------------------------------------------- */
 
 BondHarmonic::~BondHarmonic()
 {
-  if (allocated) {
+  if (allocated && !copymode) {
     memory->destroy(setflag);
     memory->destroy(k);
     memory->destroy(r0);
@@ -121,10 +125,10 @@ void BondHarmonic::coeff(int narg, char **arg)
   if (!allocated) allocate();
 
   int ilo,ihi;
-  force->bounds(arg[0],atom->nbondtypes,ilo,ihi);
+  force->bounds(FLERR,arg[0],atom->nbondtypes,ilo,ihi);
 
-  double k_one = force->numeric(arg[1]);
-  double r0_one = force->numeric(arg[2]);
+  double k_one = force->numeric(FLERR,arg[1]);
+  double r0_one = force->numeric(FLERR,arg[2]);
 
   int count = 0;
   for (int i = ilo; i <= ihi; i++) {
@@ -174,12 +178,38 @@ void BondHarmonic::read_restart(FILE *fp)
   for (int i = 1; i <= atom->nbondtypes; i++) setflag[i] = 1;
 }
 
+/* ----------------------------------------------------------------------
+   proc 0 writes to data file
+------------------------------------------------------------------------- */
+
+void BondHarmonic::write_data(FILE *fp)
+{
+  for (int i = 1; i <= atom->nbondtypes; i++)
+    fprintf(fp,"%d %g %g\n",i,k[i],r0[i]);
+}
+
 /* ---------------------------------------------------------------------- */
 
-double BondHarmonic::single(int type, double rsq, int i, int j)
+double BondHarmonic::single(int type, double rsq, int i, int j,
+                        double &fforce)
 {
   double r = sqrt(rsq);
   double dr = r - r0[type];
   double rk = k[type] * dr;
+  fforce = 0;
+  if (r > 0.0) fforce = -2.0*rk/r;
   return rk*dr;
 }
+
+/* ----------------------------------------------------------------------
+    Return ptr to internal members upon request.
+------------------------------------------------------------------------ */
+void *BondHarmonic::extract( char *str, int &dim )
+{
+  dim = 1;
+  if( strcmp(str,"kappa")==0) return (void*) k;
+  if( strcmp(str,"r0")==0) return (void*) r0;
+  return NULL;
+}
+
+

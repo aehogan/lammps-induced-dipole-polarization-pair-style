@@ -1,4 +1,4 @@
-/* ----------------------------------------------------------------------
+/* -*- c++ -*- ----------------------------------------------------------
  LAMMPS - Large-scale Atomic/Molecular Massively Parallel Simulator
  http://lammps.sandia.gov, Sandia National Laboratories
  Steve Plimpton, sjplimp@sandia.gov
@@ -69,7 +69,7 @@ class PairAWPMDCut : public Pair {
   void virial_eradius_compute();
 
 
-  AWPMD_split *wpmd; // solver oblect
+  AWPMD_split *wpmd; // solver object
   double ermscale; // scale of width mass for motion
   double width_pbc; // setting for width pbc
   double half_box_length; // calculated by coeff function

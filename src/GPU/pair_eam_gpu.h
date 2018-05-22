@@ -1,4 +1,4 @@
-/* ----------------------------------------------------------------------
+/* -*- c++ -*- ----------------------------------------------------------
    LAMMPS - Large-scale Atomic/Molecular Massively Parallel Simulator
    http://lammps.sandia.gov, Sandia National Laboratories
    Steve Plimpton, sjplimp@sandia.gov
@@ -20,7 +20,7 @@ PairStyle(eam/gpu,PairEAMGPU)
 #ifndef LMP_PAIR_EAM_GPU_H
 #define LMP_PAIR_EAM_GPU_H
 
-#include "stdio.h"
+#include <stdio.h>
 #include "pair_eam.h"
 
 namespace LAMMPS_NS {
@@ -34,16 +34,16 @@ class PairEAMGPU : public PairEAM {
   void init_style();
   double single(int, int, int, int, double, double, double, double &);
   double memory_usage();
+  void *extract(const char *, int &) { return NULL; }
 
-  int pack_comm(int, int *, double *, int, int *);
-  void unpack_comm(int, int, double *);
+  int pack_forward_comm(int, int *, double *, int, int *);
+  void unpack_forward_comm(int, int, double *);
 
  enum { GPU_FORCE, GPU_NEIGH, GPU_HYB_NEIGH };
 
  protected:
   int gpu_mode;
   double cpu_time;
-  int *gpulist;
   void *fp_pinned;
   bool fp_single;
 };

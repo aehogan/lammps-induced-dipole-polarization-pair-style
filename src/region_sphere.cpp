@@ -11,14 +11,15 @@
    See the README file in the top-level LAMMPS directory.
 ------------------------------------------------------------------------- */
 
-#include "math.h"
-#include "stdlib.h"
-#include "string.h"
+#include <math.h>
+#include <stdlib.h>
+#include <string.h>
 #include "region_sphere.h"
 #include "update.h"
 #include "input.h"
 #include "variable.h"
 #include "error.h"
+#include "force.h"
 
 using namespace LAMMPS_NS;
 
@@ -31,9 +32,9 @@ RegSphere::RegSphere(LAMMPS *lmp, int narg, char **arg) :
 {
   options(narg-6,&arg[6]);
 
-  xc = xscale*atof(arg[2]);
-  yc = yscale*atof(arg[3]);
-  zc = zscale*atof(arg[4]);
+  xc = xscale*force->numeric(FLERR,arg[2]);
+  yc = yscale*force->numeric(FLERR,arg[3]);
+  zc = zscale*force->numeric(FLERR,arg[4]);
 
   rstr = NULL;
   if (strstr(arg[5],"v_") == arg[5]) {
@@ -46,7 +47,7 @@ RegSphere::RegSphere(LAMMPS *lmp, int narg, char **arg) :
     variable_check();
     shape_update();
   } else {
-    radius = xscale*atof(arg[5]);
+    radius = xscale*force->numeric(FLERR,arg[5]);
     rstyle = CONSTANT;
   }
 
@@ -69,6 +70,7 @@ RegSphere::RegSphere(LAMMPS *lmp, int narg, char **arg) :
 
   cmax = 1;
   contact = new Contact[cmax];
+  tmax = 1;
 }
 
 /* ---------------------------------------------------------------------- */
@@ -124,6 +126,9 @@ int RegSphere::surface_interior(double *x, double cutoff)
     contact[0].delx = delx*(1.0-radius/r);
     contact[0].dely = dely*(1.0-radius/r);
     contact[0].delz = delz*(1.0-radius/r);
+    contact[0].radius = -radius;
+    contact[0].iwall = 0;
+    contact[0].varflag = 1;
     return 1;
   }
   return 0;
@@ -149,6 +154,9 @@ int RegSphere::surface_exterior(double *x, double cutoff)
     contact[0].delx = delx*(1.0-radius/r);
     contact[0].dely = dely*(1.0-radius/r);
     contact[0].delz = delz*(1.0-radius/r);
+    contact[0].radius = radius;
+    contact[0].iwall = 0;
+    contact[0].varflag = 1;
     return 1;
   }
   return 0;
@@ -177,3 +185,42 @@ void RegSphere::variable_check()
   if (!input->variable->equalstyle(rvar))
     error->all(FLERR,"Variable for region sphere is invalid style");
 }
+
+
+/* ----------------------------------------------------------------------
+   Set values needed to calculate velocity due to shape changes.
+   These values do not depend on the contact, so this function is
+   called once per timestep by fix/wall/gran/region.
+
+------------------------------------------------------------------------- */
+
+void RegSphere::set_velocity_shape()
+{
+  xcenter[0] = xc;
+  xcenter[1] = yc;
+  xcenter[2] = zc;
+  forward_transform(xcenter[0], xcenter[1], xcenter[2]);
+  if (update->ntimestep > 0) rprev = prev[4];
+  else rprev = radius;
+  prev[4] = radius;
+}
+
+
+
+/* ----------------------------------------------------------------------
+   add velocity due to shape change to wall velocity
+------------------------------------------------------------------------- */
+
+void RegSphere::velocity_contact_shape(double *vwall, double *xc)
+{
+  double delx, dely, delz; // Displacement of contact point in x,y,z
+
+  delx = (xc[0] - xcenter[0])*(1 - rprev/radius);
+  dely = (xc[1] - xcenter[1])*(1 - rprev/radius);
+  delz = (xc[2] - xcenter[2])*(1 - rprev/radius);
+
+  vwall[0] += delx/update->dt;
+  vwall[1] += dely/update->dt;
+  vwall[2] += delz/update->dt;
+}
+

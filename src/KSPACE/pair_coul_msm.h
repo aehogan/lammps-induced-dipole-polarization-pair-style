@@ -1,4 +1,4 @@
-/* ----------------------------------------------------------------------
+/* -*- c++ -*- ----------------------------------------------------------
    LAMMPS - Large-scale Atomic/Molecular Massively Parallel Simulator
    http://lammps.sandia.gov, Sandia National Laboratories
    Steve Plimpton, sjplimp@sandia.gov
@@ -40,28 +40,8 @@ class PairCoulMSM : public PairCoulLong {
 
 /* ERROR/WARNING messages:
 
-E: Illegal ... command
+E: Must use 'kspace_modify pressure/scalar no' to obtain per-atom virial with kspace_style MSM
 
-Self-explanatory.  Check the input script syntax and compare to the
-documentation for the command.  You can use -echo screen as a
-command-line option when running LAMMPS to see the offending line.
-
-E: Incorrect args for pair coefficients
-
-Self-explanatory.  Check the input script or data file.
-
-E: Pair style lj/cut/coul/msm requires atom attribute q
-
-The atom style defined does not have this attribute.
-
-E: Pair cutoff < Respa interior cutoff
-
-One or more pairwise cutoffs are too short to use with the specified
-rRESPA cutoffs.
-
-E: Pair style is incompatible with KSpace style
-
-If a pair style with a long-range Coulombic component is selected,
-then a kspace style must also be used.
+The kspace scalar pressure option cannot be used to obtain per-atom virial.
 
 */

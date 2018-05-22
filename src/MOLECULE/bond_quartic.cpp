@@ -15,8 +15,8 @@
    Contributing authors: Chris Lorenz and Mark Stevens (SNL)
 ------------------------------------------------------------------------- */
 
-#include "math.h"
-#include "stdlib.h"
+#include <math.h>
+#include <stdlib.h>
 #include "bond_quartic.h"
 #include "atom.h"
 #include "neighbor.h"
@@ -59,7 +59,7 @@ void BondQuartic::compute(int eflag, int vflag)
   double delx,dely,delz,ebond,fbond,evdwl,fpair;
   double r,rsq,dr,r2,ra,rb,sr2,sr6;
 
-  ebond = evdwl = 0.0;
+  ebond = evdwl = sr6 = 0.0;
   if (eflag || vflag) ev_setup(eflag,vflag);
   else evflag = 0;
 
@@ -203,13 +203,13 @@ void BondQuartic::coeff(int narg, char **arg)
   if (!allocated) allocate();
 
   int ilo,ihi;
-  force->bounds(arg[0],atom->nbondtypes,ilo,ihi);
+  force->bounds(FLERR,arg[0],atom->nbondtypes,ilo,ihi);
 
-  double k_one = force->numeric(arg[1]);
-  double b1_one = force->numeric(arg[2]);
-  double b2_one = force->numeric(arg[3]);
-  double rc_one = force->numeric(arg[4]);
-  double u0_one = force->numeric(arg[5]);
+  double k_one = force->numeric(FLERR,arg[1]);
+  double b1_one = force->numeric(FLERR,arg[2]);
+  double b2_one = force->numeric(FLERR,arg[3]);
+  double rc_one = force->numeric(FLERR,arg[4]);
+  double u0_one = force->numeric(FLERR,arg[5]);
 
   int count = 0;
   for (int i = ilo; i <= ihi; i++) {
@@ -233,12 +233,12 @@ void BondQuartic::init_style()
 {
   if (force->pair == NULL || force->pair->single_enable == 0)
     error->all(FLERR,"Pair style does not support bond_style quartic");
-  if (force->angle)
-    error->all(FLERR,"Bond style quartic cannot be used with 3,4-body interactions");
-  if (force->dihedral)
-    error->all(FLERR,"Bond style quartic cannot be used with 3,4-body interactions");
-  if (force->improper)
-    error->all(FLERR,"Bond style quartic cannot be used with 3,4-body interactions");
+  if (force->angle || force->dihedral || force->improper)
+    error->all(FLERR,
+               "Bond style quartic cannot be used with 3,4-body interactions");
+  if (atom->molecular == 2)
+    error->all(FLERR,
+               "Bond style quartic cannot be used with atom style template");
 
   // special bonds must be 1 1 1
 
@@ -293,10 +293,20 @@ void BondQuartic::read_restart(FILE *fp)
   for (int i = 1; i <= atom->nbondtypes; i++) setflag[i] = 1;
 }
 
+/* ----------------------------------------------------------------------
+   proc 0 writes to data file
+------------------------------------------------------------------------- */
+
+void BondQuartic::write_data(FILE *fp)
+{
+  for (int i = 1; i <= atom->nbondtypes; i++)
+    fprintf(fp,"%d %g %g %g %g %g\n",i,k[i],b1[i],b2[i],rc[i],u0[i]);
+}
 
 /* ---------------------------------------------------------------------- */
 
-double BondQuartic::single(int type, double rsq, int i, int j)
+double BondQuartic::single(int type, double rsq, int i, int j,
+                           double &fforce)
 {
   double r,dr,r2,ra,rb,sr2,sr6;
 
@@ -325,10 +335,13 @@ double BondQuartic::single(int type, double rsq, int i, int j)
   rb = dr - b2[type];
 
   eng += k[type]*r2*ra*rb + u0[type];
+  fforce = -k[type]/r * (r2*(ra+rb) + 2.0*dr*ra*rb);
+
   if (rsq < TWO_1_3) {
     sr2 = 1.0/rsq;
     sr6 = sr2*sr2*sr2;
     eng += 4.0*sr6*(sr6-1.0) + 1.0;
+    fforce += 48.0*sr6*(sr6-0.5)/rsq;
   }
 
   return eng;

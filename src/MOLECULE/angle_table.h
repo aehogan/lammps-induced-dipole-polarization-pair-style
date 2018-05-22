@@ -1,4 +1,4 @@
-/* ----------------------------------------------------------------------
+/* -*- c++ -*- ----------------------------------------------------------
    LAMMPS - Large-scale Atomic/Molecular Massively Parallel Simulator
    http://lammps.sandia.gov, Sandia National Laboratories
    Steve Plimpton, sjplimp@sandia.gov
@@ -20,7 +20,7 @@ AngleStyle(table,AngleTable)
 #ifndef LMP_ANGLE_TABLE_H
 #define LMP_ANGLE_TABLE_H
 
-#include "stdio.h"
+#include <stdio.h>
 #include "angle.h"
 
 namespace LAMMPS_NS {
@@ -102,7 +102,8 @@ Self-explanatory.
 E: Cannot open file %s
 
 The specified file cannot be opened.  Check that the path and name are
-correct.
+correct. If the file is a compressed file, also check that the gzip
+executable can be found and run.
 
 E: Did not find keyword in table file
 

@@ -1,4 +1,4 @@
-/* ----------------------------------------------------------------------
+/* -*- c++ -*- ----------------------------------------------------------
    LAMMPS - Large-scale Atomic/Molecular Massively Parallel Simulator
    http://lammps.sandia.gov, Sandia National Laboratories
    Steve Plimpton, sjplimp@sandia.gov
@@ -36,8 +36,8 @@ class PairREAX : public Pair {
   double init_one(int, int);
   double memory_usage();
 
-  int pack_comm(int, int *, double *, int, int *);
-  void unpack_comm(int, int, double *);
+  int pack_forward_comm(int, int *, double *, int, int *);
+  void unpack_forward_comm(int, int, double *);
   int pack_reverse_comm(int, int, double *);
   void unpack_reverse_comm(int, int *, double *);
 
@@ -97,6 +97,10 @@ class PairREAX : public Pair {
 
 /* ERROR/WARNING messages:
 
+W: pair style reax is now deprecated and will soon be retired. Users should switch to pair_style reax/c
+
+Self-explanatory.
+
 E: Reax_defs.h setting for NATDEF is too small
 
 Edit the setting in the ReaxFF library and re-compile the
@@ -128,6 +132,10 @@ This is a requirement to use the ReaxFF potential.
 E: Pair style reax requires newton pair on
 
 This is a requirement to use the ReaxFF potential.
+
+E: Pair style reax requires atom attribute q
+
+The atom style defined does not have this attribute.
 
 W: Not using real units with pair reax
 

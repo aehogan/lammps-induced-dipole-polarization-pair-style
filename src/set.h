@@ -1,4 +1,4 @@
-/* ----------------------------------------------------------------------
+/* -*- c++ -*- ----------------------------------------------------------
    LAMMPS - Large-scale Atomic/Molecular Massively Parallel Simulator
    http://lammps.sandia.gov, Sandia National Laboratories
    Steve Plimpton, sjplimp@sandia.gov
@@ -32,14 +32,22 @@ class Set : protected Pointers {
  private:
   char *id;
   int *select;
-  int style,ivalue,newtype,count;
+  int style,ivalue,newtype,count,index_custom;
   int ximage,yimage,zimage,ximageflag,yimageflag,zimageflag;
   double dvalue,xvalue,yvalue,zvalue,wvalue,fraction;
+  int cc_index;
+
+  int varflag,varflag1,varflag2,varflag3,varflag4;
+  int ivar1,ivar2,ivar3,ivar4;
+  double *vec1,*vec2,*vec3,*vec4;
+
+  int discflag;
 
   void selection(int);
   void set(int);
   void setrandom(int);
   void topology(int);
+  void varparse(char *, int);
 };
 
 }
@@ -77,31 +85,51 @@ E: Cannot set this attribute for this atom style
 
 The attribute being set does not exist for the defined atom style.
 
-E: Invalid mass in set command
-
-Self-explanatory.
-
-E: Invalid shape in set command
-
-Self-explanatory.
-
-E: Invalid length in set command
-
-Self-explanatory.
-
 E: Invalid dipole length in set command
 
 Self-explanatory.
 
-E: Invalid diameter in set command
+E: Invalid density in set command
 
-Self-explanatory.
+Density must be > 0.0.
+
+E: Invalid volume in set command
+
+Volume must be > 0.0.
 
 E: Cannot set non-zero image flag for non-periodic dimension
 
 Self-explanatory.
 
-E: Cannot set meso_rho for this atom style
+E: Cannot set meso/e for this atom style
+
+Self-explanatory.
+
+E: Cannot set meso/cv for this atom style
+
+Self-explanatory.
+
+E: Cannot set meso/rho for this atom style
+
+Self-explanatory.
+
+E: Cannot set smd/mass/density for this atom style
+
+Self-explanatory.
+
+E: Cannot set smd/contact/radius for this atom style
+
+Self-explanatory.
+
+E: Cannot set dpd/theta for this atom style
+
+Self-explanatory.
+
+E: Set command integer vector does not exist
+
+Self-explanatory.
+
+E: Set command floating point vector does not exist
 
 Self-explanatory.
 
@@ -121,13 +149,38 @@ E: Set region ID does not exist
 
 Region ID specified in set command does not exist.
 
+E: Invalid mass in set command
+
+Self-explanatory.
+
+E: Invalid diameter in set command
+
+Self-explanatory.
+
+E: Invalid shape in set command
+
+Self-explanatory.
+
+E: Invalid length in set command
+
+Self-explanatory.
+
 E: Cannot set quaternion for atom that has none
+
+Self-explanatory.
+
+E: Cannot set quaternion with xy components for 2d system
 
 Self-explanatory.
 
 E: Cannot set theta for atom that is not a line
 
 Self-explanatory.
+
+E: Cannot set bond topology types for atom style template
+
+The bond, angle, etc types cannot be changed for this atom style since
+they are static settings in the molecule template files.
 
 E: Bond atom missing in set command
 
@@ -152,5 +205,13 @@ E: Improper atom missing in set command
 The set command cannot find one or more atoms in a particular improper
 on a particular processor.  The pairwise cutoff is too short or the
 atoms are too far apart to make a valid improper.
+
+E: Variable name for set command does not exist
+
+Self-explanatory.
+
+E: Variable for set command is invalid style
+
+Only atom-style variables can be used.
 
 */

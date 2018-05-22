@@ -11,15 +11,14 @@
    See the README file in the top-level LAMMPS directory.
 ------------------------------------------------------------------------- */
 
-#include "mpi.h"
-#include "stdlib.h"
-#include "string.h"
+#include <mpi.h>
+#include <stdlib.h>
+#include <string.h>
 #include "compute_temp_ramp.h"
 #include "atom.h"
 #include "update.h"
 #include "force.h"
 #include "group.h"
-#include "modify.h"
 #include "fix.h"
 #include "domain.h"
 #include "lattice.h"
@@ -59,9 +58,6 @@ ComputeTempRamp::ComputeTempRamp(LAMMPS *lmp, int narg, char **arg) :
 
   // setup scaling
 
-  if (scaleflag && domain->lattice == NULL)
-    error->all(FLERR,"Use of compute temp/ramp with undefined lattice");
-
   if (scaleflag) {
     xscale = domain->lattice->xlattice;
     yscale = domain->lattice->ylattice;
@@ -77,14 +73,14 @@ ComputeTempRamp::ComputeTempRamp(LAMMPS *lmp, int narg, char **arg) :
   else error->all(FLERR,"Illegal compute temp/ramp command");
 
   if (v_dim == 0) {
-    v_lo = xscale*atof(arg[4]);
-    v_hi = xscale*atof(arg[5]);
+    v_lo = xscale*force->numeric(FLERR,arg[4]);
+    v_hi = xscale*force->numeric(FLERR,arg[5]);
   } else if (v_dim == 1) {
-    v_lo = yscale*atof(arg[4]);
-    v_hi = yscale*atof(arg[5]);
+    v_lo = yscale*force->numeric(FLERR,arg[4]);
+    v_hi = yscale*force->numeric(FLERR,arg[5]);
   } else if (v_dim == 2) {
-    v_lo = zscale*atof(arg[4]);
-    v_hi = zscale*atof(arg[5]);
+    v_lo = zscale*force->numeric(FLERR,arg[4]);
+    v_hi = zscale*force->numeric(FLERR,arg[5]);
   }
 
   if (strcmp(arg[6],"x") == 0) coord_dim = 0;
@@ -93,14 +89,14 @@ ComputeTempRamp::ComputeTempRamp(LAMMPS *lmp, int narg, char **arg) :
   else error->all(FLERR,"Illegal compute temp/ramp command");
 
   if (coord_dim == 0) {
-    coord_lo = xscale*atof(arg[7]);
-    coord_hi = xscale*atof(arg[8]);
+    coord_lo = xscale*force->numeric(FLERR,arg[7]);
+    coord_hi = xscale*force->numeric(FLERR,arg[8]);
   } else if (coord_dim == 1) {
-    coord_lo = yscale*atof(arg[7]);
-    coord_hi = yscale*atof(arg[8]);
+    coord_lo = yscale*force->numeric(FLERR,arg[7]);
+    coord_hi = yscale*force->numeric(FLERR,arg[8]);
   } else if (coord_dim == 2) {
-    coord_lo = zscale*atof(arg[7]);
-    coord_hi = zscale*atof(arg[8]);
+    coord_lo = zscale*force->numeric(FLERR,arg[7]);
+    coord_hi = zscale*force->numeric(FLERR,arg[8]);
   }
 
   maxbias = 0;
@@ -118,11 +114,10 @@ ComputeTempRamp::~ComputeTempRamp()
 
 /* ---------------------------------------------------------------------- */
 
-void ComputeTempRamp::init()
+void ComputeTempRamp::setup()
 {
-  fix_dof = 0;
-  for (int i = 0; i < modify->nfix; i++)
-    fix_dof += modify->fix[i]->dof(igroup);
+  dynamic = 0;
+  if (dynamic_user || group->dynamic[igroup]) dynamic = 1;
   dof_compute();
 }
 
@@ -130,9 +125,9 @@ void ComputeTempRamp::init()
 
 void ComputeTempRamp::dof_compute()
 {
-  double natoms = group->count(igroup);
-  int nper = domain->dimension;
-  dof = nper * natoms;
+  adjust_dof_fix();
+  natoms_temp = group->count(igroup);
+  dof = domain->dimension * natoms_temp;
   dof -= extra_dof + fix_dof;
   if (dof > 0) tfactor = force->mvv2e / (dof * force->boltz);
   else tfactor = 0.0;
@@ -175,6 +170,8 @@ double ComputeTempRamp::compute_scalar()
 
   MPI_Allreduce(&t,&scalar,1,MPI_DOUBLE,MPI_SUM,world);
   if (dynamic) dof_compute();
+  if (dof < 0.0 && natoms_temp > 0.0)
+    error->all(FLERR,"Temperature compute degrees of freedom < 0");
   scalar *= tfactor;
   return scalar;
 }
@@ -238,6 +235,19 @@ void ComputeTempRamp::remove_bias(int i, double *v)
 }
 
 /* ----------------------------------------------------------------------
+   remove velocity bias from atom I to leave thermal velocity
+------------------------------------------------------------------------- */
+
+void ComputeTempRamp::remove_bias_thr(int i, double *v, double *b)
+{
+  double fraction = (atom->x[i][coord_dim] - coord_lo) / (coord_hi - coord_lo);
+  fraction = MAX(fraction,0.0);
+  fraction = MIN(fraction,1.0);
+  b[v_dim] = v_lo + fraction*(v_hi - v_lo);
+  v[v_dim] -= b[v_dim];
+}
+
+/* ----------------------------------------------------------------------
    remove velocity bias from all atoms to leave thermal velocity
 ------------------------------------------------------------------------- */
 
@@ -247,7 +257,7 @@ void ComputeTempRamp::remove_bias_all()
   int *mask = atom->mask;
   int nlocal = atom->nlocal;
 
-  if (nlocal > maxbias) {
+  if (atom->nmax > maxbias) {
     memory->destroy(vbiasall);
     maxbias = atom->nmax;
     memory->create(vbiasall,maxbias,3,"temp/ramp:vbiasall");
@@ -275,6 +285,16 @@ void ComputeTempRamp::restore_bias(int i, double *v)
 }
 
 /* ----------------------------------------------------------------------
+   add back in velocity bias to atom I removed by remove_bias_thr()
+   assume remove_bias_thr() was previously called with the same buffer b
+------------------------------------------------------------------------- */
+
+void ComputeTempRamp::restore_bias_thr(int i, double *v, double *b)
+{
+  v[v_dim] += b[v_dim];
+}
+
+/* ----------------------------------------------------------------------
    add back in velocity bias to all atoms removed by remove_bias_all()
    assume remove_bias_all() was previously called
 ------------------------------------------------------------------------- */
@@ -294,6 +314,6 @@ void ComputeTempRamp::restore_bias_all()
 
 double ComputeTempRamp::memory_usage()
 {
-  double bytes = maxbias * sizeof(double);
+  double bytes = 3*maxbias * sizeof(double);
   return bytes;
 }

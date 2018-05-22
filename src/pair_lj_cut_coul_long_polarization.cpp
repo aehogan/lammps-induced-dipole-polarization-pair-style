@@ -5,7 +5,7 @@
 
    Copyright (2003) Sandia Corporation.  Under the terms of Contract
    DE-AC04-94AL85000 with Sandia Corporation, the U.S. Government retains
-   certain rights in this software.  This software is distributed under 
+   certain rights in this software.  This software is distributed under
    the GNU General Public License.
 
    See the README file in the top-level LAMMPS directory.
@@ -16,10 +16,10 @@
                         Adam Hogan (USF)
 ------------------------------------------------------------------------- */
 
-#include "math.h"
-#include "stdio.h"
-#include "stdlib.h"
-#include "string.h"
+#include <math.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
 #include "pair_lj_cut_coul_long_polarization.h"
 #include "atom.h"
 #include "comm.h"
@@ -34,10 +34,8 @@
 #include "math_const.h"
 #include "memory.h"
 #include "error.h"
-#include "mpi.h"
 #include "float.h"
 #include "domain.h"
-#include "unistd.h"
 
 using namespace LAMMPS_NS;
 using namespace MathConst;
@@ -56,11 +54,13 @@ enum{DAMPING_EXPONENTIAL,DAMPING_NONE};
 
 PairLJCutCoulLongPolarization::PairLJCutCoulLongPolarization(LAMMPS *lmp) : Pair(lmp)
 {
-  /* check for possible errors */
-  if (atom->static_polarizability_flag==0) error->all(FLERR,"Pair style lj/cut/coul/long/polarization requires atom attribute polarizability");
-
+  ewaldflag = pppmflag = 1;
   respa_enable = 0;
+  writedata = 1;
   ftable = NULL;
+  qdist = 0.0;
+
+  /* polarization stuff */
   /* set defaults */
   iterations_max = 50;
   damping_type = DAMPING_NONE;
@@ -87,6 +87,7 @@ PairLJCutCoulLongPolarization::PairLJCutCoulLongPolarization(LAMMPS *lmp) : Pair
   memory->create(ranked_array,nlocal,"pair:ranked_array");
   memory->create(rank_metric,nlocal,"pair:rank_metric");
   nlocal_old = nlocal;
+  /* end polarization stuff */
 }
 
 /* ---------------------------------------------------------------------- */
@@ -108,19 +109,22 @@ PairLJCutCoulLongPolarization::~PairLJCutCoulLongPolarization()
     memory->destroy(offset);
   }
   if (ftable) free_tables();
-  /* destroy all the arrays! */
+
+  /* polarization stuff */
   memory->destroy(ef_induced);
   memory->destroy(mu_induced_new);
   memory->destroy(mu_induced_old);
   memory->destroy(dipole_field_matrix);
   memory->destroy(ranked_array);
   memory->destroy(rank_metric);
+  /* end polarization stuff */
 }
 
 /* ---------------------------------------------------------------------- */
 
 void PairLJCutCoulLongPolarization::compute(int eflag, int vflag)
 {
+  /* polarization stuff */
   int nlocal = atom->nlocal;
   int nghost = atom->nghost;
   int ntotal = nlocal + nghost;
@@ -151,12 +155,13 @@ void PairLJCutCoulLongPolarization::compute(int eflag, int vflag)
     ef_static[i][2] = 0;
   }
   double ef_temp;
+  /* end polarization stuff */
 
-  int ii,j,jj,inum,jnum,itype,jtype,itable;
+  int /*i,*/ii,j,jj,inum,jnum,itype,jtype,itable;
   double qtmp,xtmp,ytmp,ztmp,delx,dely,delz,evdwl,ecoul,fpair;
   double fraction,table;
-  double r,rinv,r2inv,r6inv,forcecoul,forcelj,factor_coul,factor_lj;
-  double grij,expm2,prefactor,t,erfc_ewald_stuff;
+  double r,r2inv,r6inv,forcecoul,forcelj,factor_coul,factor_lj;
+  double grij,expm2,prefactor,t,erfc;
   int *ilist,*jlist,*numneigh,**firstneigh;
   double rsq;
 
@@ -168,6 +173,7 @@ void PairLJCutCoulLongPolarization::compute(int eflag, int vflag)
   double **f = atom->f;
   double *q = atom->q;
   int *type = atom->type;
+  //int nlocal = atom->nlocal;
   double *special_coul = force->special_coul;
   double *special_lj = force->special_lj;
   int newton_pair = force->newton_pair;
@@ -181,6 +187,7 @@ void PairLJCutCoulLongPolarization::compute(int eflag, int vflag)
   double *static_polarizability = atom->static_polarizability;
   int *molecule = atom->molecule;
 
+  /* polarization stuff */
   /* sort the dipoles most likey to change if using polar_gs_ranked */
   if (polar_gs_ranked) {
     /* communicate static polarizabilities */
@@ -218,8 +225,10 @@ void PairLJCutCoulLongPolarization::compute(int eflag, int vflag)
       }
     }
   }
+  /* end polarization stuff */
 
-  /* loop over neighbors of my atoms */
+  // loop over neighbors of my atoms
+
   for (ii = 0; ii < inum; ii++) {
     i = ilist[ii];
     qtmp = q[i];
@@ -244,15 +253,16 @@ void PairLJCutCoulLongPolarization::compute(int eflag, int vflag)
 
       if (rsq < cutsq[itype][jtype]) {
         r2inv = 1.0/rsq;
+
         if (rsq < cut_coulsq) {
-          r = sqrt(rsq);
           if (!ncoultablebits || rsq <= tabinnersq) {
+            r = sqrt(rsq);
             grij = g_ewald * r;
             expm2 = exp(-grij*grij);
             t = 1.0 / (1.0 + EWALD_P*grij);
-            erfc_ewald_stuff = t * (A1+t*(A2+t*(A3+t*(A4+t*A5)))) * expm2;
+            erfc = t * (A1+t*(A2+t*(A3+t*(A4+t*A5)))) * expm2;
             prefactor = qqrd2e * qtmp*q[j]/r;
-            forcecoul = prefactor * (erfc_ewald_stuff + EWALD_F*grij*expm2);
+            forcecoul = prefactor * (erfc + EWALD_F*grij*expm2);
             if (factor_coul < 1.0) forcecoul -= (1.0-factor_coul)*prefactor;
           } else {
             union_int_float_t rsq_lookup;
@@ -288,9 +298,8 @@ void PairLJCutCoulLongPolarization::compute(int eflag, int vflag)
 
         if (eflag) {
           if (rsq < cut_coulsq) {
-            if (!ncoultablebits || rsq <= tabinnersq) {
-              ecoul = prefactor*erfc_ewald_stuff;
-            }
+            if (!ncoultablebits || rsq <= tabinnersq)
+              ecoul = prefactor*erfc;
             else {
               table = etable[itable] + fraction*detable[itable];
               ecoul = qtmp*q[j] * table;
@@ -304,12 +313,14 @@ void PairLJCutCoulLongPolarization::compute(int eflag, int vflag)
             evdwl *= factor_lj;
           } else evdwl = 0.0;
         }
+
         if (evflag) ev_tally(i,j,nlocal,newton_pair,
-                 evdwl,ecoul,fpair,delx,dely,delz);
+                             evdwl,ecoul,fpair,delx,dely,delz);
       }
     }
   }
 
+  /* polarization stuff */
   double f_shift = -1.0/(cut_coul*cut_coul); 
   double dvdrr;
   double xjimage[3];
@@ -433,7 +444,8 @@ void PairLJCutCoulLongPolarization::compute(int eflag, int vflag)
       rsq = xsq + ysq + zsq;
 
       r2inv = 1.0/rsq;
-      rinv = sqrt(r2inv);
+
+      double rinv = sqrt(r2inv);
       r = 1.0/rinv;
       r3inv = r2inv*rinv;
 
@@ -627,105 +639,9 @@ void PairLJCutCoulLongPolarization::compute(int eflag, int vflag)
     printf("pos of atom 0: %.5f,%.5f,%.5f\n",x[0][0],x[0][1],x[0][2]);
   }
   force->pair->eng_pol = u_polar;
+  /* end polarization stuff */
 
-
-  /* the fdotr virial is probably off, haven't looked into it deeply */
   if (vflag_fdotr) virial_fdotr_compute();
-
-  /* debugging information, energy is given in kelvins in MPMC so there are conversions to compare between the two programs */
-  if (debug)
-  {
-    FILE *file = NULL;
-    int myrank;
-    MPI_Comm_rank(MPI_COMM_WORLD, &myrank);
-    char file_name[100];
-    sprintf(file_name,"tensor%d.csv",myrank);
-    file = fopen(file_name, "w");
-    for (i=0;i<3*nlocal;i++)
-    {
-      for (j=0;j<3*nlocal;j++)
-      {
-        if (j!=0) fprintf(file,",");
-        if (screen) fprintf(file,"%f",dipole_field_matrix[i][j]);
-      }
-    if (screen) fprintf(file,"\n");
-    }
-    fclose(file);
-    double *charge = atom->q;
-    sprintf(file_name,"pos%d.xyz",myrank);
-    file = fopen(file_name, "w");
-    fprintf(file,"%d\n",ntotal);
-    fprintf(file,"\n");
-    for (i=0;i<ntotal;i++)
-    {
-      fprintf(file,"H %f %f %f %f\n",x[i][0],x[i][1],x[i][2],charge[i]);
-    }
-    fclose(file);
-
-    sprintf(file_name,"e_static%d.csv",myrank);
-    file = fopen(file_name, "w");
-    if (screen) fprintf(file,"-ef_static-\n\n");
-    for (i=0;i<nlocal;i++)
-    {
-      for (j=0;j<3;j++)
-      {
-        if (j!=0) fprintf(file,",");
-        if (screen) fprintf(file,"%f",ef_static[i][j]);
-      }
-    if (screen) fprintf(file,"\n");
-    }
-    if (screen) fprintf(file,"\n-force-\n\n");
-    for (i=0;i<nlocal;i++)
-    {
-      for (j=0;j<3;j++)
-      {
-        if (j!=0) fprintf(file,",");
-        if (screen) fprintf(file,"%f",f[i][j]);
-      }
-    if (screen) fprintf(file,"\n");
-    }
-    fclose(file);
-    double u_polar = 0.0;
-    for (i=0;i<nlocal;i++)
-    {
-      for (j=0;j<3;j++)
-      {
-        u_polar += ((ef_static[i][j])*22.432653052265)*(mu_induced[i][j]*22.432653052265); //convert to K*A for comparison
-      }
-    }
-    u_polar *= -0.5;
-    fprintf(screen,"u_polar (K) %d: %f\n",myrank,u_polar);
-
-    sprintf(file_name,"mu%d.csv",myrank);
-    file = fopen(file_name, "w");
-    fprintf(file,"u_polar: %f\n\n",u_polar);
-    for (i=0;i<nlocal;i++)
-    {
-      fprintf(file,"pos: %.20f,%.20f,%.20f ef_static: %.10f,%.10f,%.10f mu: ",x[i][0],x[i][1],x[i][2],ef_static[i][0]*22.432653052265,ef_static[i][1]*22.432653052265,ef_static[i][2]*22.432653052265); //convert to sqrt(K) for comparison
-      for (j=0;j<3;j++)
-      {
-        if (j!=0) fprintf(file,",");
-        if (screen) fprintf(file,"%.10f",mu_induced[i][j]*22.432653052265); //convert to sqrt(K*A) for comparison
-      }
-    if (screen) fprintf(file,"\n");
-    }
-    if (screen) fprintf(file,"\n\n\n");
-    fclose(file);
-
-    sprintf(file_name,"e_induced%d.csv",myrank);
-    file = fopen(file_name, "w");
-    for (i=0;i<nlocal;i++)
-    {
-      for (j=0;j<3;j++)
-      {
-        if (j!=0) fprintf(file,",");
-        if (screen) fprintf(file,"%f",ef_induced[i][j]);
-      }
-    if (screen) fprintf(file,"\n");
-    }
-    if (screen) fprintf(file,"\n\n\n");
-    fclose(file);
-  }
 }
 
 /* ----------------------------------------------------------------------
@@ -761,12 +677,13 @@ void PairLJCutCoulLongPolarization::allocate()
 
 void PairLJCutCoulLongPolarization::settings(int narg, char **arg)
 {
-  if (narg < 1) error->all(FLERR,"Illegal pair_style command");
+ if (narg < 1 ) error->all(FLERR,"Illegal pair_style command");
 
-  cut_lj_global = force->numeric(arg[0]);
+  cut_lj_global = force->numeric(FLERR,arg[0]);
   if (narg == 1) cut_coul = cut_lj_global;
-  else cut_coul = force->numeric(arg[1]);
+  else cut_coul = force->numeric(FLERR,arg[1]);
 
+  /* polarization stuff */
   int iarg;
   iarg = 2;
   while (iarg < narg)
@@ -774,7 +691,7 @@ void PairLJCutCoulLongPolarization::settings(int narg, char **arg)
     if (iarg+2 > narg) error->all(FLERR,"Illegal pair_style command");
     if (strcmp("precision",arg[iarg])==0)
     {
-      polar_precision = force->numeric(arg[iarg+1]);
+      polar_precision = force->numeric(FLERR,arg[iarg+1]);
     }
     else if (strcmp("zodid",arg[iarg])==0)
     {
@@ -791,11 +708,11 @@ void PairLJCutCoulLongPolarization::settings(int narg, char **arg)
     }
     else if (strcmp("damp",arg[iarg])==0)
     {
-      polar_damp = force->numeric(arg[iarg+1]);
+      polar_damp = force->numeric(FLERR,arg[iarg+1]);
     }
     else if (strcmp("max_iterations",arg[iarg])==0)
     {
-      iterations_max = force->inumeric(arg[iarg+1]);
+      iterations_max = force->inumeric(FLERR,arg[iarg+1]);
     }
     else if (strcmp("damp_type",arg[iarg])==0)
     {
@@ -819,7 +736,7 @@ void PairLJCutCoulLongPolarization::settings(int narg, char **arg)
     }
     else if (strcmp("polar_gamma",arg[iarg])==0)
     {
-      polar_gamma = force->numeric(arg[iarg+1]);
+      polar_gamma = force->numeric(FLERR,arg[iarg+1]);
     }
     else if (strcmp("debug",arg[iarg])==0)
     {
@@ -836,13 +753,15 @@ void PairLJCutCoulLongPolarization::settings(int narg, char **arg)
     else error->all(FLERR,"Illegal pair_style command");
     iarg+=2;
   }
+  /* end polarization stuff */
 
   // reset cutoffs that have been explicitly set
+
   if (allocated) {
     int i,j;
     for (i = 1; i <= atom->ntypes; i++)
-      for (j = i+1; j <= atom->ntypes; j++)
-  if (setflag[i][j]) cut_lj[i][j] = cut_lj_global;
+      for (j = i; j <= atom->ntypes; j++)
+        if (setflag[i][j]) cut_lj[i][j] = cut_lj_global;
   }
 }
 
@@ -852,18 +771,19 @@ void PairLJCutCoulLongPolarization::settings(int narg, char **arg)
 
 void PairLJCutCoulLongPolarization::coeff(int narg, char **arg)
 {
-  if (narg < 4 || narg > 5) error->all(FLERR,"Incorrect args for pair coefficients");
+  if (narg < 4 || narg > 5)
+    error->all(FLERR,"Incorrect args for pair coefficients");
   if (!allocated) allocate();
 
   int ilo,ihi,jlo,jhi;
-  force->bounds(arg[0],atom->ntypes,ilo,ihi);
-  force->bounds(arg[1],atom->ntypes,jlo,jhi);
+  force->bounds(FLERR,arg[0],atom->ntypes,ilo,ihi);
+  force->bounds(FLERR,arg[1],atom->ntypes,jlo,jhi);
 
-  double epsilon_one = force->numeric(arg[2]);
-  double sigma_one = force->numeric(arg[3]);
+  double epsilon_one = force->numeric(FLERR,arg[2]);
+  double sigma_one = force->numeric(FLERR,arg[3]);
 
   double cut_lj_one = cut_lj_global;
-  if (narg == 5) cut_lj_one = force->numeric(arg[4]);
+  if (narg == 5) cut_lj_one = force->numeric(FLERR,arg[4]);
 
   int count = 0;
   for (int i = ilo; i <= ihi; i++) {
@@ -888,36 +808,47 @@ void PairLJCutCoulLongPolarization::init_style()
   if (!atom->q_flag)
     error->all(FLERR,"Pair style lj/cut/coul/long requires atom attribute q");
 
-  // request regular neighbor lists
+  /* polarization stuff */
+  if (!atom->static_polarizability_flag)
+    error->all(FLERR,"Pair style lj/cut/coul/long/polarization requires atom attribute polarizability");
+  /* end polarization stuff */
+
+  // request regular or rRESPA neighbor list
 
   int irequest;
+  int respa = 0;
 
-  irequest = neighbor->request(this);
+  if (update->whichflag == 1 && strstr(update->integrate_style,"respa")) {
+    if (((Respa *) update->integrate)->level_inner >= 0) respa = 1;
+    if (((Respa *) update->integrate)->level_middle >= 0) respa = 2;
+  }
+
+  irequest = neighbor->request(this,instance_me);
+
+  if (respa >= 1) {
+    neighbor->requests[irequest]->respaouter = 1;
+    neighbor->requests[irequest]->respainner = 1;
+  }
+  if (respa == 2) neighbor->requests[irequest]->respamiddle = 1;
 
   cut_coulsq = cut_coul * cut_coul;
 
-  cut_respa = NULL;
+  // set rRESPA cutoffs
 
-  // ensure use of KSpace long-range solver, set g_ewald
+  if (strstr(update->integrate_style,"respa") &&
+      ((Respa *) update->integrate)->level_inner >= 0)
+    cut_respa = ((Respa *) update->integrate)->cutoff;
+  else cut_respa = NULL;
+
+  // insure use of KSpace long-range solver, set g_ewald
 
   if (force->kspace == NULL)
-    error->all(FLERR,"Pair style is incompatible with KSpace style");
-  else
-    g_ewald = force->kspace->g_ewald;
+    error->all(FLERR,"Pair style requires a KSpace style");
+  g_ewald = force->kspace->g_ewald;
 
   // setup force tables
 
-  if (ncoultablebits) init_tables();
-}
-
-/* ----------------------------------------------------------------------
-   neighbor callback to inform pair style of neighbor list to use
-   regular or rRESPA
-------------------------------------------------------------------------- */
-
-void PairLJCutCoulLongPolarization::init_list(int id, NeighList *ptr)
-{
-  if (id == 0) list = ptr;
+  if (ncoultablebits) init_tables(cut_coul,cut_respa);
 }
 
 /* ----------------------------------------------------------------------
@@ -928,12 +859,14 @@ double PairLJCutCoulLongPolarization::init_one(int i, int j)
 {
   if (setflag[i][j] == 0) {
     epsilon[i][j] = mix_energy(epsilon[i][i],epsilon[j][j],
-             sigma[i][i],sigma[j][j]);
+                               sigma[i][i],sigma[j][j]);
     sigma[i][j] = mix_distance(sigma[i][i],sigma[j][j]);
     cut_lj[i][j] = mix_distance(cut_lj[i][i],cut_lj[j][j]);
   }
 
-  double cut = MAX(cut_lj[i][j],cut_coul);
+  // include TIP4P qdist in full cutoff, qdist = 0.0 if not TIP4P
+
+  double cut = MAX(cut_lj[i][j],cut_coul+2.0*qdist);
   cut_ljsq[i][j] = cut_lj[i][j] * cut_lj[i][j];
 
   lj1[i][j] = 48.0 * epsilon[i][j] * pow(sigma[i][j],12.0);
@@ -941,7 +874,7 @@ double PairLJCutCoulLongPolarization::init_one(int i, int j)
   lj3[i][j] = 4.0 * epsilon[i][j] * pow(sigma[i][j],12.0);
   lj4[i][j] = 4.0 * epsilon[i][j] * pow(sigma[i][j],6.0);
 
-  if (offset_flag) {
+  if (offset_flag && (cut_lj[i][j] > 0.0)) {
     double ratio = sigma[i][j] / cut_lj[i][j];
     offset[i][j] = 4.0 * epsilon[i][j] * (pow(ratio,12.0) - pow(ratio,6.0));
   } else offset[i][j] = 0.0;
@@ -972,188 +905,19 @@ double PairLJCutCoulLongPolarization::init_one(int i, int j)
       if (type[k] == j) count[1] += 1.0;
     }
     MPI_Allreduce(count,all,2,MPI_DOUBLE,MPI_SUM,world);
-        
+
     double sig2 = sigma[i][j]*sigma[i][j];
     double sig6 = sig2*sig2*sig2;
     double rc3 = cut_lj[i][j]*cut_lj[i][j]*cut_lj[i][j];
     double rc6 = rc3*rc3;
     double rc9 = rc3*rc6;
-    etail_ij = 8.0*MY_PI*all[0]*all[1]*epsilon[i][j] * 
-      sig6 * (sig6 - 3.0*rc6) / (9.0*rc9); 
-    ptail_ij = 16.0*MY_PI*all[0]*all[1]*epsilon[i][j] * 
-      sig6 * (2.0*sig6 - 3.0*rc6) / (9.0*rc9); 
-  } 
+    etail_ij = 8.0*MY_PI*all[0]*all[1]*epsilon[i][j] *
+      sig6 * (sig6 - 3.0*rc6) / (9.0*rc9);
+    ptail_ij = 16.0*MY_PI*all[0]*all[1]*epsilon[i][j] *
+      sig6 * (2.0*sig6 - 3.0*rc6) / (9.0*rc9);
+  }
 
   return cut;
-}
-
-/* ----------------------------------------------------------------------
-   setup force tables used in compute routines
-------------------------------------------------------------------------- */
-
-void PairLJCutCoulLongPolarization::init_tables()
-{
-  int masklo,maskhi;
-  double r,grij,expm2,derfc,rsw;
-  double qqrd2e = force->qqrd2e;
-
-  tabinnersq = tabinner*tabinner;
-  init_bitmap(tabinner,cut_coul,ncoultablebits,
-        masklo,maskhi,ncoulmask,ncoulshiftbits);
-  
-  int ntable = 1;
-  for (int i = 0; i < ncoultablebits; i++) ntable *= 2;
-  
-  // linear lookup tables of length N = 2^ncoultablebits
-  // stored value = value at lower edge of bin
-  // d values = delta from lower edge to upper edge of bin
-
-  if (ftable) free_tables();
-  
-  memory->create(rtable,ntable,"pair:rtable");
-  memory->create(ftable,ntable,"pair:ftable");
-  memory->create(ctable,ntable,"pair:ctable");
-  memory->create(etable,ntable,"pair:etable");
-  memory->create(drtable,ntable,"pair:drtable");
-  memory->create(dftable,ntable,"pair:dftable");
-  memory->create(dctable,ntable,"pair:dctable");
-  memory->create(detable,ntable,"pair:detable");
-
-  if (cut_respa == NULL) {
-    vtable = ptable = dvtable = dptable = NULL;
-  } else {
-    memory->create(vtable,ntable*sizeof(double),"pair:vtable");
-    memory->create(ptable,ntable*sizeof(double),"pair:ptable");
-    memory->create(dvtable,ntable*sizeof(double),"pair:dvtable");
-    memory->create(dptable,ntable*sizeof(double),"pair:dptable");
-  }
-
-  union_int_float_t rsq_lookup;
-  union_int_float_t minrsq_lookup;
-  int itablemin;
-  minrsq_lookup.i = 0 << ncoulshiftbits;
-  minrsq_lookup.i |= maskhi;
-    
-  for (int i = 0; i < ntable; i++) {
-    rsq_lookup.i = i << ncoulshiftbits;
-    rsq_lookup.i |= masklo;
-    if (rsq_lookup.f < tabinnersq) {
-      rsq_lookup.i = i << ncoulshiftbits;
-      rsq_lookup.i |= maskhi;
-    }
-    r = sqrtf(rsq_lookup.f);
-    grij = g_ewald * r;
-    expm2 = exp(-grij*grij);
-    derfc = erfc(grij);
-    if (cut_respa == NULL) {
-      rtable[i] = rsq_lookup.f;
-      ftable[i] = qqrd2e/r * (derfc + EWALD_F*grij*expm2);
-      ctable[i] = qqrd2e/r;
-      etable[i] = qqrd2e/r * derfc;
-    } else {
-      rtable[i] = rsq_lookup.f;
-      ftable[i] = qqrd2e/r * (derfc + EWALD_F*grij*expm2 - 1.0);
-      ctable[i] = 0.0;
-      etable[i] = qqrd2e/r * derfc;
-      ptable[i] = qqrd2e/r;
-      vtable[i] = qqrd2e/r * (derfc + EWALD_F*grij*expm2);
-      if (rsq_lookup.f > cut_respa[2]*cut_respa[2]) {
-  if (rsq_lookup.f < cut_respa[3]*cut_respa[3]) {
-    rsw = (r - cut_respa[2])/(cut_respa[3] - cut_respa[2]); 
-    ftable[i] += qqrd2e/r * rsw*rsw*(3.0 - 2.0*rsw);
-    ctable[i] = qqrd2e/r * rsw*rsw*(3.0 - 2.0*rsw);
-  } else {
-    ftable[i] = qqrd2e/r * (derfc + EWALD_F*grij*expm2);
-    ctable[i] = qqrd2e/r;
-  }
-      }
-    }
-    minrsq_lookup.f = MIN(minrsq_lookup.f,rsq_lookup.f);
-  }
-
-  tabinnersq = minrsq_lookup.f;
-  
-  int ntablem1 = ntable - 1;
-  
-  for (int i = 0; i < ntablem1; i++) {
-    drtable[i] = 1.0/(rtable[i+1] - rtable[i]);
-    dftable[i] = ftable[i+1] - ftable[i];
-    dctable[i] = ctable[i+1] - ctable[i];
-    detable[i] = etable[i+1] - etable[i];
-  }
-
-  if (cut_respa) {
-    for (int i = 0; i < ntablem1; i++) {
-      dvtable[i] = vtable[i+1] - vtable[i];
-      dptable[i] = ptable[i+1] - ptable[i];
-    }
-  }
-  
-  // get the delta values for the last table entries 
-  // tables are connected periodically between 0 and ntablem1
-    
-  drtable[ntablem1] = 1.0/(rtable[0] - rtable[ntablem1]);
-  dftable[ntablem1] = ftable[0] - ftable[ntablem1];
-  dctable[ntablem1] = ctable[0] - ctable[ntablem1];
-  detable[ntablem1] = etable[0] - etable[ntablem1];
-  if (cut_respa) {
-    dvtable[ntablem1] = vtable[0] - vtable[ntablem1];
-    dptable[ntablem1] = ptable[0] - ptable[ntablem1];
-  }
-
-  // get the correct delta values at itablemax    
-  // smallest r is in bin itablemin
-  // largest r is in bin itablemax, which is itablemin-1,
-  //   or ntablem1 if itablemin=0
-  // deltas at itablemax only needed if corresponding rsq < cut*cut
-  // if so, compute deltas between rsq and cut*cut 
-
-  double f_tmp,c_tmp,e_tmp,p_tmp,v_tmp;
-  itablemin = minrsq_lookup.i & ncoulmask;
-  itablemin >>= ncoulshiftbits;  
-  int itablemax = itablemin - 1; 
-  if (itablemin == 0) itablemax = ntablem1;     
-  rsq_lookup.i = itablemax << ncoulshiftbits;
-  rsq_lookup.i |= maskhi;
-
-  if (rsq_lookup.f < cut_coulsq) {
-    rsq_lookup.f = cut_coulsq;  
-    r = sqrtf(rsq_lookup.f);
-    grij = g_ewald * r;
-    expm2 = exp(-grij*grij);
-    derfc = erfc(grij);
-
-    if (cut_respa == NULL) {
-      f_tmp = qqrd2e/r * (derfc + EWALD_F*grij*expm2);
-      c_tmp = qqrd2e/r;
-      e_tmp = qqrd2e/r * derfc;
-    } else {
-      f_tmp = qqrd2e/r * (derfc + EWALD_F*grij*expm2 - 1.0);
-      c_tmp = 0.0;
-      e_tmp = qqrd2e/r * derfc;
-      p_tmp = qqrd2e/r;
-      v_tmp = qqrd2e/r * (derfc + EWALD_F*grij*expm2);
-      if (rsq_lookup.f > cut_respa[2]*cut_respa[2]) {
-        if (rsq_lookup.f < cut_respa[3]*cut_respa[3]) {
-          rsw = (r - cut_respa[2])/(cut_respa[3] - cut_respa[2]); 
-          f_tmp += qqrd2e/r * rsw*rsw*(3.0 - 2.0*rsw);
-          c_tmp = qqrd2e/r * rsw*rsw*(3.0 - 2.0*rsw);
-        } else {
-          f_tmp = qqrd2e/r * (derfc + EWALD_F*grij*expm2);
-          c_tmp = qqrd2e/r;
-        }
-      }
-    }
-
-    drtable[itablemax] = 1.0/(rsq_lookup.f - rtable[itablemax]);   
-    dftable[itablemax] = f_tmp - ftable[itablemax];
-    dctable[itablemax] = c_tmp - ctable[itablemax];
-    detable[itablemax] = e_tmp - etable[itablemax];
-    if (cut_respa) {
-      dvtable[itablemax] = v_tmp - vtable[itablemax];
-      dptable[itablemax] = p_tmp - ptable[itablemax];
-    }   
-  }
 }
 
 /* ----------------------------------------------------------------------
@@ -1166,7 +930,6 @@ void PairLJCutCoulLongPolarization::write_restart(FILE *fp)
 
   int i,j;
   for (i = 1; i <= atom->ntypes; i++)
-  {
     for (j = i; j <= atom->ntypes; j++) {
       fwrite(&setflag[i][j],sizeof(int),1,fp);
       if (setflag[i][j]) {
@@ -1175,7 +938,6 @@ void PairLJCutCoulLongPolarization::write_restart(FILE *fp)
         fwrite(&cut_lj[i][j],sizeof(double),1,fp);
       }
     }
-  }
 }
 
 /* ----------------------------------------------------------------------
@@ -1191,9 +953,7 @@ void PairLJCutCoulLongPolarization::read_restart(FILE *fp)
   int i,j;
   int me = comm->me;
   for (i = 1; i <= atom->ntypes; i++)
-  {
-    for (j = i; j <= atom->ntypes; j++)
-    {
+    for (j = i; j <= atom->ntypes; j++) {
       if (me == 0) fread(&setflag[i][j],sizeof(int),1,fp);
       MPI_Bcast(&setflag[i][j],1,MPI_INT,0,world);
       if (setflag[i][j]) {
@@ -1207,7 +967,6 @@ void PairLJCutCoulLongPolarization::read_restart(FILE *fp)
         MPI_Bcast(&cut_lj[i][j],1,MPI_DOUBLE,0,world);
       }
     }
-  }
 }
 
 /* ----------------------------------------------------------------------
@@ -1220,17 +979,9 @@ void PairLJCutCoulLongPolarization::write_restart_settings(FILE *fp)
   fwrite(&cut_coul,sizeof(double),1,fp);
   fwrite(&offset_flag,sizeof(int),1,fp);
   fwrite(&mix_flag,sizeof(int),1,fp);
-
-  fwrite(&iterations_max,sizeof(int),1,fp);
-  fwrite(&damping_type,sizeof(int),1,fp);
-  fwrite(&polar_damp,sizeof(double),1,fp);
-  fwrite(&zodid,sizeof(int),1,fp);
-  fwrite(&polar_precision,sizeof(double),1,fp);
-  fwrite(&fixed_iteration,sizeof(int),1,fp);
-  fwrite(&polar_gs,sizeof(int),1,fp);
-  fwrite(&polar_gs_ranked,sizeof(int),1,fp);
-  fwrite(&polar_gamma,sizeof(double),1,fp);
-  fwrite(&debug,sizeof(int),1,fp);
+  fwrite(&tail_flag,sizeof(int),1,fp);
+  fwrite(&ncoultablebits,sizeof(int),1,fp);
+  fwrite(&tabinner,sizeof(double),1,fp);
 }
 
 /* ----------------------------------------------------------------------
@@ -1244,61 +995,47 @@ void PairLJCutCoulLongPolarization::read_restart_settings(FILE *fp)
     fread(&cut_coul,sizeof(double),1,fp);
     fread(&offset_flag,sizeof(int),1,fp);
     fread(&mix_flag,sizeof(int),1,fp);
-
-    fread(&iterations_max,sizeof(int),1,fp);
-    fread(&damping_type,sizeof(int),1,fp);
-    fread(&polar_damp,sizeof(double),1,fp);
-    fread(&zodid,sizeof(int),1,fp);
-    fread(&polar_precision,sizeof(double),1,fp);
-    fread(&fixed_iteration,sizeof(int),1,fp);
-    fread(&polar_gs,sizeof(int),1,fp);
-    fread(&polar_gs_ranked,sizeof(int),1,fp);
-    fread(&polar_gamma,sizeof(double),1,fp);
-    fread(&debug,sizeof(int),1,fp);
+    fread(&tail_flag,sizeof(int),1,fp);
+    fread(&ncoultablebits,sizeof(int),1,fp);
+    fread(&tabinner,sizeof(double),1,fp);
   }
   MPI_Bcast(&cut_lj_global,1,MPI_DOUBLE,0,world);
   MPI_Bcast(&cut_coul,1,MPI_DOUBLE,0,world);
   MPI_Bcast(&offset_flag,1,MPI_INT,0,world);
   MPI_Bcast(&mix_flag,1,MPI_INT,0,world);
+  MPI_Bcast(&tail_flag,1,MPI_INT,0,world);
+  MPI_Bcast(&ncoultablebits,1,MPI_INT,0,world);
+  MPI_Bcast(&tabinner,1,MPI_DOUBLE,0,world);
+}
 
-  MPI_Bcast(&iterations_max,1,MPI_INT,0,world);
-  MPI_Bcast(&damping_type,1,MPI_INT,0,world);
-  MPI_Bcast(&polar_damp,1,MPI_DOUBLE,0,world);
-  MPI_Bcast(&zodid,1,MPI_INT,0,world);
-  MPI_Bcast(&polar_precision,1,MPI_DOUBLE,0,world);
-  MPI_Bcast(&fixed_iteration,1,MPI_INT,0,world);
-  MPI_Bcast(&polar_gs,1,MPI_INT,0,world);
-  MPI_Bcast(&polar_gs_ranked,1,MPI_INT,0,world);
-  MPI_Bcast(&polar_gamma,1,MPI_DOUBLE,0,world);
-  MPI_Bcast(&debug,1,MPI_INT,0,world);
+
+/* ----------------------------------------------------------------------
+   proc 0 writes to data file
+------------------------------------------------------------------------- */
+
+void PairLJCutCoulLongPolarization::write_data(FILE *fp)
+{
+  for (int i = 1; i <= atom->ntypes; i++)
+    fprintf(fp,"%d %g %g\n",i,epsilon[i][i],sigma[i][i]);
 }
 
 /* ----------------------------------------------------------------------
-   free memory for tables used in pair computations
+   proc 0 writes all pairs to data file
 ------------------------------------------------------------------------- */
 
-void PairLJCutCoulLongPolarization::free_tables()
+void PairLJCutCoulLongPolarization::write_data_all(FILE *fp)
 {
-  memory->destroy(rtable);
-  memory->destroy(drtable);
-  memory->destroy(ftable);
-  memory->destroy(dftable);
-  memory->destroy(ctable);
-  memory->destroy(dctable);
-  memory->destroy(etable);
-  memory->destroy(detable);
-  memory->destroy(vtable);
-  memory->destroy(dvtable);
-  memory->destroy(ptable);
-  memory->destroy(dptable);
+  for (int i = 1; i <= atom->ntypes; i++)
+    for (int j = i; j <= atom->ntypes; j++)
+      fprintf(fp,"%d %d %g %g %g\n",i,j,epsilon[i][j],sigma[i][j],cut_lj[i][j]);
 }
 
 /* ---------------------------------------------------------------------- */
 
 double PairLJCutCoulLongPolarization::single(int i, int j, int itype, int jtype,
-         double rsq,
-         double factor_coul, double factor_lj,
-         double &fforce)
+                                 double rsq,
+                                 double factor_coul, double factor_lj,
+                                 double &fforce)
 {
   double r2inv,r6inv,r,grij,expm2,t,erfc,prefactor;
   double fraction,table,forcecoul,forcelj,phicoul,philj;
@@ -1365,6 +1102,9 @@ void *PairLJCutCoulLongPolarization::extract(const char *str, int &dim)
 {
   dim = 0;
   if (strcmp(str,"cut_coul") == 0) return (void *) &cut_coul;
+  dim = 2;
+  if (strcmp(str,"epsilon") == 0) return (void *) epsilon;
+  if (strcmp(str,"sigma") == 0) return (void *) sigma;
   return NULL;
 }
 
@@ -1499,6 +1239,7 @@ int PairLJCutCoulLongPolarization::DipoleSolverIterative()
 
 /* ---------------------------------------------------------------------- */
 
+/* polarization stuff */
 void PairLJCutCoulLongPolarization::build_dipole_field_matrix()
 {
   int N = atom->nlocal;
@@ -1619,3 +1360,6 @@ void PairLJCutCoulLongPolarization::unpack_comm(int n, int first, double *buf)
     mu_induced[i][2] = buf[m++];
   }
 }
+
+/* end polarization stuff */
+

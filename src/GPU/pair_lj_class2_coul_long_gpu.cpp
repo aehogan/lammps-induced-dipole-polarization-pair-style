@@ -15,9 +15,9 @@
    Contributing author: Mike Brown (SNL)
 ------------------------------------------------------------------------- */
 
-#include "math.h"
-#include "stdio.h"
-#include "stdlib.h"
+#include <math.h>
+#include <stdio.h>
+#include <stdlib.h>
 #include "pair_lj_class2_coul_long_gpu.h"
 #include "atom.h"
 #include "atom_vec.h"
@@ -32,7 +32,7 @@
 #include "universe.h"
 #include "update.h"
 #include "domain.h"
-#include "string.h"
+#include <string.h>
 #include "kspace.h"
 #include "gpu_extra.h"
 
@@ -43,6 +43,8 @@
 #define A3        1.421413741
 #define A4       -1.453152027
 #define A5        1.061405429
+
+using namespace LAMMPS_NS;
 
 // External functions from cuda library for atom decomposition
 
@@ -57,8 +59,8 @@ int c2cl_gpu_init(const int ntypes, double **cutsq, double **host_lj1,
 void c2cl_gpu_clear();
 int ** c2cl_gpu_compute_n(const int ago, const int inum,
                           const int nall, double **host_x, int *host_type,
-                          double *sublo, double *subhi, int *tag,
-                          int **nspecial, int **special, const bool eflag,
+                          double *sublo, double *subhi, tagint *tag,
+                          int **nspecial, tagint **special, const bool eflag,
                           const bool vflag, const bool eatom, const bool vatom,
                           int &host_start, int **ilist, int **jnum,
                           const double cpu_time, bool &success, double *host_q,
@@ -71,14 +73,13 @@ void c2cl_gpu_compute(const int ago, const int inum, const int nall,
                       const int nlocal, double *boxlo, double *prd);
 double c2cl_gpu_bytes();
 
-using namespace LAMMPS_NS;
-
 /* ---------------------------------------------------------------------- */
 
 PairLJClass2CoulLongGPU::PairLJClass2CoulLongGPU(LAMMPS *lmp) :
   PairLJClass2CoulLong(lmp), gpu_mode(GPU_FORCE)
 {
   cpu_time = 0.0;
+  reinitflag = 0;
   GPU_EXTRA::gpu_ready(lmp->modify, lmp->error);
 }
 
@@ -165,7 +166,7 @@ void PairLJClass2CoulLongGPU::init_style()
   // insure use of KSpace long-range solver, set g_ewald
 
   if (force->kspace == NULL)
-    error->all(FLERR,"Pair style is incompatible with KSpace style");
+    error->all(FLERR,"Pair style requires a KSpace style");
   g_ewald = force->kspace->g_ewald;
 
   int maxspecial=0;
@@ -179,7 +180,7 @@ void PairLJClass2CoulLongGPU::init_style()
   GPU_EXTRA::check_flag(success,error,world);
 
   if (gpu_mode == GPU_FORCE) {
-    int irequest = neighbor->request(this);
+    int irequest = neighbor->request(this,instance_me);
     neighbor->requests[irequest]->half = 0;
     neighbor->requests[irequest]->full = 1;
   }

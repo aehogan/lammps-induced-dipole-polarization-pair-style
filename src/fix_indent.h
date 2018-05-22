@@ -1,4 +1,4 @@
-/* ----------------------------------------------------------------------
+/* -*- c++ -*- ----------------------------------------------------------
    LAMMPS - Large-scale Atomic/Molecular Massively Parallel Simulator
    http://lammps.sandia.gov, Sandia National Laboratories
    Steve Plimpton, sjplimp@sandia.gov
@@ -39,7 +39,7 @@ class FixIndent : public Fix {
   double compute_vector(int);
 
  private:
-  int istyle,scaleflag,thermo_flag,eflag_enable,side;
+  int istyle,scaleflag,side;
   double k,k3;
   char *xstr,*ystr,*zstr,*rstr,*pstr;
   int xvar,yvar,zvar,rvar,pvar;
@@ -47,7 +47,7 @@ class FixIndent : public Fix {
   int indenter_flag,planeside;
   double indenter[4],indenter_all[4];
   int cdim,varflag;
-  int nlevels_respa;
+  int ilevel_respa;
 
   void options(int, char **);
 };
@@ -64,11 +64,6 @@ E: Illegal ... command
 Self-explanatory.  Check the input script syntax and compare to the
 documentation for the command.  You can use -echo screen as a
 command-line option when running LAMMPS to see the offending line.
-
-E: Use of fix indent with undefined lattice
-
-The lattice command must be used to define a lattice before using the
-fix indent command.
 
 E: Variable name for fix indent does not exist
 

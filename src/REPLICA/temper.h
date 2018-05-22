@@ -1,4 +1,4 @@
-/* ----------------------------------------------------------------------
+/* -*- c++ -*- ----------------------------------------------------------
    LAMMPS - Large-scale Atomic/Molecular Massively Parallel Simulator
    http://lammps.sandia.gov, Sandia National Laboratories
    Steve Plimpton, sjplimp@sandia.gov
@@ -96,7 +96,7 @@ temperature (nvt or langevin).
 
 E: Too many timesteps
 
-The cummulative timesteps must fit in a 64-bit integer.
+The cumulative timesteps must fit in a 64-bit integer.
 
 E: Tempering could not find thermo_pe compute
 

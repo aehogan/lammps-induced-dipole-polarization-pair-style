@@ -15,10 +15,10 @@
    Contributing authors: Trung Dac Nguyen (ORNL), W. Michael Brown (ORNL)
 ------------------------------------------------------------------------- */
 
-#include "math.h"
-#include "stdio.h"
-#include "stdlib.h"
-#include "string.h"
+#include <math.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
 #include "pair_eam_gpu.h"
 #include "atom.h"
 #include "force.h"
@@ -31,9 +31,9 @@
 #include "neigh_request.h"
 #include "gpu_extra.h"
 
-using namespace LAMMPS_NS;
-
 #define MAXLINE 1024
+
+using namespace LAMMPS_NS;
 
 // External functions from cuda library for atom decomposition
 
@@ -41,15 +41,15 @@ int eam_gpu_init(const int ntypes, double host_cutforcesq,
                  int **host_type2rhor, int **host_type2z2r,
                  int *host_type2frho, double ***host_rhor_spline,
                  double ***host_z2r_spline, double ***host_frho_spline,
-                 double rdr, double rdrho, double rhomax, 
-                 int nrhor, int nrho, int nz2r, int nfrho, int nr, 
-                 const int nlocal, const int nall, const int max_nbors, 
-                 const int maxspecial, const double cell_size, int &gpu_mode, 
+                 double rdr, double rdrho, double rhomax,
+                 int nrhor, int nrho, int nz2r, int nfrho, int nr,
+                 const int nlocal, const int nall, const int max_nbors,
+                 const int maxspecial, const double cell_size, int &gpu_mode,
                  FILE *screen, int &fp_size);
 void eam_gpu_clear();
 int** eam_gpu_compute_n(const int ago, const int inum_full, const int nall,
                         double **host_x, int *host_type, double *sublo,
-                        double *subhi, int *tag, int **nspecial, int **special,
+                        double *subhi, tagint *tag, int **nspecial, tagint **special,
                         const bool eflag, const bool vflag, const bool eatom,
                         const bool vatom, int &host_start, int **ilist,
                         int **jnum,  const double cpu_time, bool &success,
@@ -69,6 +69,7 @@ double eam_gpu_bytes();
 PairEAMGPU::PairEAMGPU(LAMMPS *lmp) : PairEAM(lmp), gpu_mode(GPU_FORCE)
 {
   respa_enable = 0;
+  reinitflag = 0;
   cpu_time = 0.0;
   GPU_EXTRA::gpu_ready(lmp->modify, lmp->error);
 }
@@ -94,19 +95,13 @@ double PairEAMGPU::memory_usage()
 
 void PairEAMGPU::compute(int eflag, int vflag)
 {
-  int i,j,ii,jj,m,jnum,itype,jtype;
-  double evdwl,*coeff;
-
-  evdwl = 0.0;
   if (eflag || vflag) ev_setup(eflag,vflag);
   else evflag = vflag_fdotr = eflag_global = eflag_atom = 0;
 
-  int nlocal = atom->nlocal;
-  int newton_pair = force->newton_pair;
-
   // compute density on each atom on GPU
 
-  int nall = atom->nlocal + atom->nghost;
+  int nlocal = atom->nlocal;
+  int nall = nlocal + atom->nghost;
   int inum, host_start, inum_dev;
 
   bool success = true;
@@ -186,7 +181,7 @@ void PairEAMGPU::init_style()
   GPU_EXTRA::check_flag(success,error,world);
 
   if (gpu_mode == GPU_FORCE) {
-    int irequest = neighbor->request(this);
+    int irequest = neighbor->request(this,instance_me);
     neighbor->requests[irequest]->half = 0;
     neighbor->requests[irequest]->full = 1;
   }
@@ -242,8 +237,8 @@ double PairEAMGPU::single(int i, int j, int itype, int jtype,
 
 /* ---------------------------------------------------------------------- */
 
-int PairEAMGPU::pack_comm(int n, int *list, double *buf, int pbc_flag,
-                          int *pbc)
+int PairEAMGPU::pack_forward_comm(int n, int *list, double *buf,
+                                  int pbc_flag,int *pbc)
 {
   int i,j,m;
 
@@ -263,12 +258,12 @@ int PairEAMGPU::pack_comm(int n, int *list, double *buf, int pbc_flag,
     }
   }
 
-  return 1;
+  return m;
 }
 
 /* ---------------------------------------------------------------------- */
 
-void PairEAMGPU::unpack_comm(int n, int first, double *buf)
+void PairEAMGPU::unpack_forward_comm(int n, int first, double *buf)
 {
   int i,m,last;
 

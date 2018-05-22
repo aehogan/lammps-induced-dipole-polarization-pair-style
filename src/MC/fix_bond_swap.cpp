@@ -11,9 +11,9 @@
    See the README file in the top-level LAMMPS directory.
 ------------------------------------------------------------------------- */
 
-#include "math.h"
-#include "stdlib.h"
-#include "string.h"
+#include <math.h>
+#include <stdlib.h>
+#include <string.h>
 #include "fix_bond_swap.h"
 #include "atom.h"
 #include "force.h"
@@ -29,6 +29,7 @@
 #include "modify.h"
 #include "compute.h"
 #include "random_mars.h"
+#include "citeme.h"
 #include "memory.h"
 #include "error.h"
 
@@ -37,26 +38,51 @@
 using namespace LAMMPS_NS;
 using namespace FixConst;
 
+static const char cite_fix_bond_swap[] =
+  "neighbor multi command:\n\n"
+  "@Article{Auhl03,\n"
+  " author = {R. Auhl, R. Everaers, G. S. Grest, K. Kremer, S. J. Plimpton},\n"
+  " title = {Equilibration of long chain polymer melts in computer simulations},\n"
+  " journal = {J.~Chem.~Phys.},\n"
+  " year =    2003,\n"
+  " volume =  119,\n"
+  " pages =   {12718--12728}\n"
+  "}\n\n";
+
 /* ---------------------------------------------------------------------- */
 
 FixBondSwap::FixBondSwap(LAMMPS *lmp, int narg, char **arg) :
-  Fix(lmp, narg, arg)
+  Fix(lmp, narg, arg),
+  tflag(0), alist(NULL), id_temp(NULL), type(NULL), x(NULL), list(NULL),
+  temperature(NULL), random(NULL)
 {
-  if (narg != 6) error->all(FLERR,"Illegal fix bond/swap command");
+  if (lmp->citeme) lmp->citeme->add(cite_fix_bond_swap);
 
+  if (narg != 7) error->all(FLERR,"Illegal fix bond/swap command");
+
+  nevery = force->inumeric(FLERR,arg[3]);
+  if (nevery <= 0) error->all(FLERR,"Illegal fix bond/swap command");
+
+  force_reneighbor = 1;
+  next_reneighbor = -1;
   vector_flag = 1;
   size_vector = 2;
   global_freq = 1;
   extvector = 0;
 
-  fraction = atof(arg[3]);
-  double cutoff = atof(arg[4]);
+  fraction = force->numeric(FLERR,arg[4]);
+  double cutoff = force->numeric(FLERR,arg[5]);
   cutsq = cutoff*cutoff;
 
   // initialize Marsaglia RNG with processor-unique seed
 
-  int seed = atoi(arg[5]);
+  int seed = force->inumeric(FLERR,arg[6]);
   random = new RanMars(lmp,seed + comm->me);
+
+  // error check
+
+  if (atom->molecular != 1)
+    error->all(FLERR,"Cannot use fix bond/swap with non-molecular systems");
 
   // create a new compute temp style
   // id = fix-ID + temp, compute group = fix group
@@ -101,7 +127,7 @@ FixBondSwap::~FixBondSwap()
 int FixBondSwap::setmask()
 {
   int mask = 0;
-  mask |= PRE_NEIGHBOR;
+  mask |= POST_INTEGRATE;
   return mask;
 }
 
@@ -112,7 +138,8 @@ void FixBondSwap::init()
   // require an atom style with molecule IDs
 
   if (atom->molecule == NULL)
-    error->all(FLERR,"Must use atom style with molecule IDs with fix bond/swap");
+    error->all(FLERR,
+               "Must use atom style with molecule IDs with fix bond/swap");
 
   int icompute = modify->find_compute(id_temp);
   if (icompute < 0)
@@ -139,11 +166,12 @@ void FixBondSwap::init()
       force->special_lj[3] != 1.0)
     error->all(FLERR,"Fix bond/swap requires special_bonds = 0,1,1");
 
-  // need a half neighbor list, built when ever re-neighboring occurs
+  // need a half neighbor list, built every Nevery steps
 
-  int irequest = neighbor->request((void *) this);
+  int irequest = neighbor->request(this,instance_me);
   neighbor->requests[irequest]->pair = 0;
   neighbor->requests[irequest]->fix = 1;
+  neighbor->requests[irequest]->occasional = 1;
 
   // zero out stats
 
@@ -159,17 +187,26 @@ void FixBondSwap::init_list(int id, NeighList *ptr)
   list = ptr;
 }
 
-/* ---------------------------------------------------------------------- */
+/* ----------------------------------------------------------------------
+   look for and perform swaps
+   NOTE: used to do this every pre_neighbor(), but think that is a bug
+         b/c was doing it after exchange() and before neighbor->build()
+         which is when neigh lists are actually out-of-date or even bogus,
+         now do it based on user-specified Nevery, and trigger reneigh
+         if any swaps performed, like fix bond/create
+------------------------------------------------------------------------- */
 
-void FixBondSwap::pre_neighbor()
+void FixBondSwap::post_integrate()
 {
   int i,j,ii,jj,m,inum,jnum;
   int inext,iprev,ilast,jnext,jprev,jlast,ibond,iangle,jbond,jangle;
-  int itag,inexttag,iprevtag,ilasttag,jtag,jnexttag,jprevtag,jlasttag;
   int ibondtype,jbondtype,iangletype,inextangletype,jangletype,jnextangletype;
-  int i1,i2,i3,j1,j2,j3,tmp;
+  tagint itag,inexttag,iprevtag,ilasttag,jtag,jnexttag,jprevtag,jlasttag;
+  tagint i1,i2,i3,j1,j2,j3;
   int *ilist,*jlist,*numneigh,**firstneigh;
   double delta,factor;
+
+  if (update->ntimestep % nevery) return;
 
   // compute current temp for Boltzmann factor test
 
@@ -177,25 +214,26 @@ void FixBondSwap::pre_neighbor()
 
   // local ptrs to atom arrays
 
-  int *tag = atom->tag;
+  tagint *tag = atom->tag;
   int *mask = atom->mask;
-  int *molecule = atom->molecule;
+  tagint *molecule = atom->molecule;
   int *num_bond = atom->num_bond;
-  int **bond_atom = atom->bond_atom;
+  tagint **bond_atom = atom->bond_atom;
   int **bond_type = atom->bond_type;
   int *num_angle = atom->num_angle;
-  int **angle_atom1 = atom->angle_atom1;
-  int **angle_atom2 = atom->angle_atom2;
-  int **angle_atom3 = atom->angle_atom3;
+  tagint **angle_atom1 = atom->angle_atom1;
+  tagint **angle_atom2 = atom->angle_atom2;
+  tagint **angle_atom3 = atom->angle_atom3;
   int **angle_type = atom->angle_type;
   int **nspecial = atom->nspecial;
-  int **special = atom->special;
+  tagint **special = atom->special;
   int newton_bond = force->newton_bond;
   int nlocal = atom->nlocal;
 
   type = atom->type;
   x = atom->x;
 
+  neighbor->build_one(list,1);
   inum = list->inum;
   ilist = list->ilist;
   numneigh = list->numneigh;
@@ -204,7 +242,7 @@ void FixBondSwap::pre_neighbor()
   // randomize list of my owned atoms that are in fix group
   // grow atom list if necessary
 
-  if (nlocal > nmax) {
+  if (atom->nmax > nmax) {
     memory->destroy(alist);
     nmax = atom->nmax;
     memory->create(alist,nmax,"bondswap:alist");
@@ -217,6 +255,7 @@ void FixBondSwap::pre_neighbor()
       alist[neligible++] = i;
   }
 
+  int tmp;
   for (i = 0; i < neligible; i++) {
     j = static_cast<int> (random->uniform() * neligible);
     tmp = alist[i];
@@ -397,6 +436,13 @@ void FixBondSwap::pre_neighbor()
   }
 
  done:
+
+  // trigger immediate reneighboring if any swaps occurred
+
+  int accept_any;
+  MPI_Allreduce(&accept,&accept_any,1,MPI_INT,MPI_SUM,world);
+  if (accept_any) next_reneighbor = update->ntimestep;
+
   if (!accept) return;
   naccept++;
 
@@ -608,11 +654,13 @@ int FixBondSwap::modify_param(int narg, char **arg)
     strcpy(id_temp,arg[1]);
 
     int icompute = modify->find_compute(id_temp);
-    if (icompute < 0) error->all(FLERR,"Could not find fix_modify temperature ID");
+    if (icompute < 0)
+      error->all(FLERR,"Could not find fix_modify temperature ID");
     temperature = modify->compute[icompute];
 
     if (temperature->tempflag == 0)
-      error->all(FLERR,"Fix_modify temperature ID does not compute temperature");
+      error->all(FLERR,"Fix_modify temperature ID does not "
+                 "compute temperature");
     if (temperature->igroup != igroup && comm->me == 0)
       error->warning(FLERR,"Group for fix_modify temp != fix group");
     return 2;
@@ -650,8 +698,9 @@ double FixBondSwap::pair_eng(int i, int j)
 
 double FixBondSwap::bond_eng(int btype, int i, int j)
 {
+  double tmp;
   double rsq = dist_rsq(i,j);
-  return force->bond->single(btype,rsq,i,j);
+  return force->bond->single(btype,rsq,i,j,tmp);
 }
 
 /* ---------------------------------------------------------------------- */

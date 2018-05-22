@@ -1,4 +1,4 @@
-/* ----------------------------------------------------------------------
+/* -*- c++ -*- ----------------------------------------------------------
    LAMMPS - Large-scale Atomic/Molecular Massively Parallel Simulator
    http://lammps.sandia.gov, Sandia National Laboratories
    Steve Plimpton, sjplimp@sandia.gov
@@ -26,12 +26,29 @@ class Special : protected Pointers {
 
  private:
   int me,nprocs;
-  int **onetwo,**onethree,**onefour;
-  int dihedral_flag;
+  tagint **onetwo,**onethree,**onefour;
 
-  void combine();
+  // data used by ring callback methods
+
+  int *count;
+  int **dflag;
+
+  void dedup();
   void angle_trim();
   void dihedral_trim();
+  void combine();
+  void fix_alteration();
+
+  // callback functions for ring communication
+
+  static void ring_one(int, char *, void *);
+  static void ring_two(int, char *, void *);
+  static void ring_three(int, char *, void *);
+  static void ring_four(int, char *, void *);
+  static void ring_five(int, char *, void *);
+  static void ring_six(int, char *, void *);
+  static void ring_seven(int, char *, void *);
+  static void ring_eight(int, char *, void *);
 };
 
 }

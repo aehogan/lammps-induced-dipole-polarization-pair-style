@@ -1,4 +1,4 @@
-/* ----------------------------------------------------------------------
+/* -*- c++ -*- ----------------------------------------------------------
    LAMMPS - Large-scale Atomic/Molecular Massively Parallel Simulator
    http://lammps.sandia.gov, Sandia National Laboratories
    Steve Plimpton, sjplimp@sandia.gov
@@ -27,6 +27,7 @@ namespace LAMMPS_NS {
 class FixRespa : public Fix {
   friend class Respa;
   friend class FixShake;
+  friend class FixRattle;
 
  public:
   FixRespa(class LAMMPS *, int, char **);
@@ -36,13 +37,15 @@ class FixRespa : public Fix {
 
   double memory_usage();
   void grow_arrays(int);
-  void copy_arrays(int, int);
+  void copy_arrays(int, int, int);
   int pack_exchange(int, double *);
   int unpack_exchange(int, double *);
 
  private:
   int nlevels;
-  double ***f_level;            // force at each rRESPA level
+  int store_torque;  // 1 if torques should be stored in addition to forces
+  double ***f_level; // force at each rRESPA level
+  double ***t_level; // torque at each rRESPA level
 };
 
 }

@@ -1,4 +1,4 @@
-/* ----------------------------------------------------------------------
+/* -*- c++ -*- ----------------------------------------------------------
    LAMMPS - Large-scale Atomic/Molecular Massively Parallel Simulator
    http://lammps.sandia.gov, Sandia National Laboratories
    Steve Plimpton, sjplimp@sandia.gov
@@ -20,7 +20,7 @@ BondStyle(harmonic/shift/cut,BondHarmonicShiftCut)
 #ifndef LMP_BOND_HARMONIC_SHIFT_CUT_H
 #define LMP_BOND_HARMONIC_SHIFT_CUT_H
 
-#include "stdio.h"
+#include <stdio.h>
 #include "bond.h"
 
 namespace LAMMPS_NS {
@@ -34,7 +34,8 @@ class BondHarmonicShiftCut : public Bond {
   double equilibrium_distance(int);
   void write_restart(FILE *);
   void read_restart(FILE *);
-  double single(int, double, int, int);
+  void write_data(FILE *);
+  double single(int, double, int, int, double &);
 
  protected:
   double *k,*r0,*r1;

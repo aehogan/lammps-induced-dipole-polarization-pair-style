@@ -12,7 +12,7 @@
    Contributing author: Axel Kohlmeyer (Temple U)
 ------------------------------------------------------------------------- */
 
-#include "math.h"
+#include <math.h>
 #include "pair_brownian_omp.h"
 #include "atom.h"
 #include "comm.h"
@@ -25,12 +25,14 @@
 #include "variable.h"
 #include "random_mars.h"
 #include "math_const.h"
+#include "math_special.h"
 
 #include "fix_wall.h"
 
 #include "suffix.h"
 using namespace LAMMPS_NS;
 using namespace MathConst;
+using namespace MathSpecial;
 
 #define EPSILON 1.0e-10
 
@@ -46,6 +48,7 @@ PairBrownianOMP::PairBrownianOMP(LAMMPS *lmp) :
   suffix_flag |= Suffix::OMP;
   respa_enable = 0;
   random_thr = NULL;
+  nthreads = 0;
 }
 
 /* ---------------------------------------------------------------------- */
@@ -53,7 +56,7 @@ PairBrownianOMP::PairBrownianOMP(LAMMPS *lmp) :
 PairBrownianOMP::~PairBrownianOMP()
 {
   if (random_thr) {
-    for (int i=1; i < comm->nthreads; ++i)
+    for (int i=1; i < nthreads; ++i)
       delete random_thr[i];
 
     delete[] random_thr;
@@ -70,7 +73,6 @@ void PairBrownianOMP::compute(int eflag, int vflag)
   } else evflag = vflag_fdotr = 0;
 
   const int nall = atom->nlocal + atom->nghost;
-  const int nthreads = comm->nthreads;
   const int inum = list->inum;
 
   // This section of code adjusts R0/RT0/RS0 if necessary due to changes
@@ -105,22 +107,33 @@ void PairBrownianOMP::compute(int eflag, int vflag)
       double vol_f = vol_P/vol_T;
       if (flaglog == 0) {
         R0  = 6*MY_PI*mu*rad*(1.0 + 2.16*vol_f);
-        RT0 = 8*MY_PI*mu*pow(rad,3.0);
+        RT0 = 8*MY_PI*mu*cube(rad);
         //RS0 = 20.0/3.0*MY_PI*mu*pow(rad,3)*(1.0 + 3.33*vol_f + 2.80*vol_f*vol_f);
       } else {
         R0  = 6*MY_PI*mu*rad*(1.0 + 2.725*vol_f - 6.583*vol_f*vol_f);
-        RT0 = 8*MY_PI*mu*pow(rad,3.0)*(1.0 + 0.749*vol_f - 2.469*vol_f*vol_f);
+        RT0 = 8*MY_PI*mu*cube(rad)*(1.0 + 0.749*vol_f - 2.469*vol_f*vol_f);
         //RS0 = 20.0/3.0*MY_PI*mu*pow(rad,3)*(1.0 + 3.64*vol_f - 6.95*vol_f*vol_f);
       }
     }
 
+  // number of threads has changed. reallocate pool of pRNGs
+  if (nthreads != comm->nthreads) {
+    if (random_thr) {
+      for (int i=1; i < nthreads; ++i)
+        delete random_thr[i];
 
-  if (!random_thr)
+      delete[] random_thr;
+    }
+
+    nthreads = comm->nthreads;
     random_thr = new RanMars*[nthreads];
+    for (int i=1; i < nthreads; ++i)
+      random_thr[i] = NULL;
 
-  // to ensure full compatibility with the serial Brownian style
-  // we use is random number generator instance for thread 0
-  random_thr[0] = random;
+    // to ensure full compatibility with the serial Brownian style
+    // we use is random number generator instance for thread 0
+    random_thr[0] = random;
+  }
 
 #if defined(_OPENMP)
 #pragma omp parallel default(none) shared(eflag,vflag)
@@ -130,13 +143,15 @@ void PairBrownianOMP::compute(int eflag, int vflag)
 
     loop_setup_thr(ifrom, ito, tid, inum, nthreads);
     ThrData *thr = fix->get_thr(tid);
+    thr->timer(Timer::START);
     ev_setup_thr(eflag, vflag, nall, eatom, vatom, thr);
 
     // generate a random number generator instance for
     // all threads != 0. make sure we use unique seeds.
-    if (random_thr && tid > 0)
+    if ((tid > 0) && (random_thr[tid] == NULL))
       random_thr[tid] = new RanMars(Pair::lmp, seed + comm->me
                                     + comm->nprocs*tid);
+
     if (flaglog) {
       if (evflag) {
         if (force->newton_pair) eval<1,1,1>(ifrom, ito, thr);
@@ -155,6 +170,7 @@ void PairBrownianOMP::compute(int eflag, int vflag)
       }
     }
 
+    thr->timer(Timer::PAIR);
     reduce_thr(this, eflag, vflag, thr);
   } // end of omp parallel region
 }
@@ -254,7 +270,7 @@ void PairBrownianOMP::eval(int iifrom, int iito, ThrData * const thr)
         if (FLAGLOG) {
           a_sq = 6.0*MY_PI*mu*radi*(1.0/4.0/h_sep + 9.0/40.0*log(1.0/h_sep));
           a_sh = 6.0*MY_PI*mu*radi*(1.0/6.0*log(1.0/h_sep));
-          a_pu = 8.0*MY_PI*mu*pow(radi,3.0)*(3.0/160.0*log(1.0/h_sep));
+          a_pu = 8.0*MY_PI*mu*cube(radi)*(3.0/160.0*log(1.0/h_sep));
         } else
           a_sq = 6.0*MY_PI*mu*radi*(1.0/4.0/h_sep);
 
@@ -391,8 +407,8 @@ double PairBrownianOMP::memory_usage()
 {
   double bytes = memory_usage_thr();
   bytes += PairBrownian::memory_usage();
-  bytes += comm->nthreads * sizeof(RanMars*);
-  bytes += comm->nthreads * sizeof(RanMars);
+  bytes += nthreads * sizeof(RanMars*);
+  bytes += nthreads * sizeof(RanMars);
 
   return bytes;
 }

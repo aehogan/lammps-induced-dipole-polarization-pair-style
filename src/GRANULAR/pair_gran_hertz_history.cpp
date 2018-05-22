@@ -15,18 +15,20 @@
    Contributing authors: Leo Silbert (SNL), Gary Grest (SNL)
 ------------------------------------------------------------------------- */
 
-#include "math.h"
-#include "stdlib.h"
-#include "stdio.h"
-#include "string.h"
+#include <math.h>
+#include <stdlib.h>
+#include <stdio.h>
+#include <string.h>
 #include "pair_gran_hertz_history.h"
 #include "atom.h"
 #include "update.h"
 #include "force.h"
 #include "fix.h"
+#include "fix_neigh_history.h"
 #include "neighbor.h"
 #include "neigh_list.h"
 #include "comm.h"
+#include "memory.h"
 #include "error.h"
 
 using namespace LAMMPS_NS;
@@ -40,7 +42,7 @@ PairGranHertzHistory::PairGranHertzHistory(LAMMPS *lmp) :
 
 void PairGranHertzHistory::compute(int eflag, int vflag)
 {
-  int i,j,ii,jj,inum,jnum,itype,jtype;
+  int i,j,ii,jj,inum,jnum;
   double xtmp,ytmp,ztmp,delx,dely,delz,fx,fy,fz;
   double radi,radj,radsum,rsq,r,rinv,rsqinv;
   double vr1,vr2,vr3,vnnr,vn1,vn2,vn3,vt1,vt2,vt3;
@@ -56,16 +58,26 @@ void PairGranHertzHistory::compute(int eflag, int vflag)
   if (eflag || vflag) ev_setup(eflag,vflag);
   else evflag = vflag_fdotr = 0;
 
-  computeflag = 1;
   int shearupdate = 1;
   if (update->setupflag) shearupdate = 0;
 
-  // update rigid body ptrs and values for ghost atoms if using FixRigid masses
+  // update rigid body info for owned & ghost atoms if using FixRigid masses
+  // body[i] = which body atom I is in, -1 if none
+  // mass_body = mass of each rigid body
 
   if (fix_rigid && neighbor->ago == 0) {
     int tmp;
-    body = (int *) fix_rigid->extract("body",tmp);
-    mass_rigid = (double *) fix_rigid->extract("masstotal",tmp);
+    int *body = (int *) fix_rigid->extract("body",tmp);
+    double *mass_body = (double *) fix_rigid->extract("masstotal",tmp);
+    if (atom->nmax > nmax) {
+      memory->destroy(mass_rigid);
+      nmax = atom->nmax;
+      memory->create(mass_rigid,nmax,"pair:mass_rigid");
+    }
+    int nlocal = atom->nlocal;
+    for (i = 0; i < nlocal; i++)
+      if (body[i] >= 0) mass_rigid[i] = mass_body[body[i]];
+      else mass_rigid[i] = 0.0;
     comm->forward_comm_pair(this);
   }
 
@@ -76,17 +88,16 @@ void PairGranHertzHistory::compute(int eflag, int vflag)
   double **torque = atom->torque;
   double *radius = atom->radius;
   double *rmass = atom->rmass;
-  double *mass = atom->mass;
-  int *type = atom->type;
   int *mask = atom->mask;
   int nlocal = atom->nlocal;
+  int newton_pair = force->newton_pair;
 
   inum = list->inum;
   ilist = list->ilist;
   numneigh = list->numneigh;
   firstneigh = list->firstneigh;
-  firsttouch = list->listgranhistory->firstneigh;
-  firstshear = list->listgranhistory->firstdouble;
+  firsttouch = fix_history->firstflag;
+  firstshear = fix_history->firstvalue;
 
   // loop over neighbors of my atoms
 
@@ -156,16 +167,11 @@ void PairGranHertzHistory::compute(int eflag, int vflag)
         // if I or J part of rigid body, use body mass
         // if I or J is frozen, meff is other particle
 
-        if (rmass) {
-          mi = rmass[i];
-          mj = rmass[j];
-        } else {
-          mi = mass[type[i]];
-          mj = mass[type[j]];
-        }
+        mi = rmass[i];
+        mj = rmass[j];
         if (fix_rigid) {
-          if (body[i] >= 0) mi = mass_rigid[body[i]];
-          if (body[j] >= 0) mj = mass_rigid[body[j]];
+          if (mass_rigid[i] > 0.0) mi = mass_rigid[i];
+          if (mass_rigid[j] > 0.0) mj = mass_rigid[j];
         }
 
         meff = mi*mj / (mi+mj);
@@ -250,7 +256,7 @@ void PairGranHertzHistory::compute(int eflag, int vflag)
         torque[i][1] -= radi*tor2;
         torque[i][2] -= radi*tor3;
 
-        if (j < nlocal) {
+        if (newton_pair || j < nlocal) {
           f[j][0] -= fx;
           f[j][1] -= fy;
           f[j][2] -= fz;
@@ -259,11 +265,13 @@ void PairGranHertzHistory::compute(int eflag, int vflag)
           torque[j][2] -= radj*tor3;
         }
 
-        if (evflag) ev_tally_xyz(i,j,nlocal,0,
+        if (evflag) ev_tally_xyz(i,j,nlocal,newton_pair,
                                  0.0,0.0,fx,fy,fz,delx,dely,delz);
       }
     }
   }
+
+  if (vflag_fdotr) virial_fdotr_compute();
 }
 
 /* ----------------------------------------------------------------------
@@ -274,20 +282,20 @@ void PairGranHertzHistory::settings(int narg, char **arg)
 {
   if (narg != 6) error->all(FLERR,"Illegal pair_style command");
 
-  kn = force->numeric(arg[0]);
+  kn = force->numeric(FLERR,arg[0]);
   if (strcmp(arg[1],"NULL") == 0) kt = kn * 2.0/7.0;
-  else kt = force->numeric(arg[1]);
+  else kt = force->numeric(FLERR,arg[1]);
 
-  gamman = force->numeric(arg[2]);
+  gamman = force->numeric(FLERR,arg[2]);
   if (strcmp(arg[3],"NULL") == 0) gammat = 0.5 * gamman;
-  else gammat = force->numeric(arg[3]);
+  else gammat = force->numeric(FLERR,arg[3]);
 
-  xmu = force->numeric(arg[4]);
-  dampflag = force->inumeric(arg[5]);
+  xmu = force->numeric(FLERR,arg[4]);
+  dampflag = force->inumeric(FLERR,arg[5]);
   if (dampflag == 0) gammat = 0.0;
 
   if (kn < 0.0 || kt < 0.0 || gamman < 0.0 || gammat < 0.0 ||
-      xmu < 0.0 || xmu > 1.0 || dampflag < 0 || dampflag > 1)
+      xmu < 0.0 || xmu > 10000.0 || dampflag < 0 || dampflag > 1)
     error->all(FLERR,"Illegal pair_style command");
 
   // convert Kn and Kt from pressure units to force/distance^2
@@ -317,7 +325,7 @@ double PairGranHertzHistory::single(int i, int j, int itype, int jtype,
 
   if (rsq >= radsum*radsum) {
     fforce = 0.0;
-    svector[0] = svector[1] = svector[2] = svector[3] = 0.0;
+    for (int m = 0; m < single_extra; m++) svector[m] = 0.0;
     return 0.0;
   }
 
@@ -362,25 +370,14 @@ double PairGranHertzHistory::single(int i, int j, int itype, int jtype,
   // if I or J is frozen, meff is other particle
 
   double *rmass = atom->rmass;
-  double *mass = atom->mass;
-  int *type = atom->type;
   int *mask = atom->mask;
 
-  if (rmass) {
-    mi = rmass[i];
-    mj = rmass[j];
-  } else {
-    mi = mass[type[i]];
-    mj = mass[type[j]];
-  }
+  mi = rmass[i];
+  mj = rmass[j];
   if (fix_rigid) {
-    // NOTE: need to make sure ghost atoms have updated body?
-    // depends on where single() is called from
-    int tmp;
-    body = (int *) fix_rigid->extract("body",tmp);
-    mass_rigid = (double *) fix_rigid->extract("masstotal",tmp);
-    if (body[i] >= 0) mi = mass_rigid[body[i]];
-    if (body[j] >= 0) mj = mass_rigid[body[j]];
+    // NOTE: insure mass_rigid is current for owned+ghost atoms?
+    if (mass_rigid[i] > 0.0) mi = mass_rigid[i];
+    if (mass_rigid[j] > 0.0) mj = mass_rigid[j];
   }
 
   meff = mi*mj / (mi+mj);
@@ -409,15 +406,14 @@ double PairGranHertzHistory::single(int i, int j, int itype, int jtype,
   // start from neighprev, since will typically be next neighbor
   // reset neighprev to 0 as necessary
 
-  int *jlist = list->firstneigh[i];
   int jnum = list->numneigh[i];
-  int *touch = list->listgranhistory->firstneigh[i];
-  double *allshear = list->listgranhistory->firstdouble[i];
+  int *jlist = list->firstneigh[i];
+  double *allshear = fix_history->firstvalue[i];
 
   for (int jj = 0; jj < jnum; jj++) {
     neighprev++;
     if (neighprev >= jnum) neighprev = 0;
-    if (touch[neighprev] == j) break;
+    if (jlist[neighprev] == j) break;
   }
 
   double *shear = &allshear[3*neighprev];
@@ -449,12 +445,22 @@ double PairGranHertzHistory::single(int i, int j, int itype, int jtype,
     } else fs1 = fs2 = fs3 = fs = 0.0;
   }
 
-  // set all forces and return no energy
+  // set force and return no energy
 
   fforce = ccel;
+
+  // set single_extra quantities
+
   svector[0] = fs1;
   svector[1] = fs2;
   svector[2] = fs3;
   svector[3] = fs;
+  svector[4] = vn1;
+  svector[5] = vn2;
+  svector[6] = vn3;
+  svector[7] = vt1;
+  svector[8] = vt2;
+  svector[9] = vt3;
+
   return 0.0;
 }

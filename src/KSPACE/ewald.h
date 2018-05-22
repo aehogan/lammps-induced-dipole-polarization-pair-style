@@ -1,4 +1,4 @@
-/* ----------------------------------------------------------------------
+/* -*- c++ -*- ----------------------------------------------------------
    LAMMPS - Large-scale Atomic/Molecular Massively Parallel Simulator
    http://lammps.sandia.gov, Sandia National Laboratories
    Steve Plimpton, sjplimp@sandia.gov
@@ -38,11 +38,12 @@ class Ewald : public KSpace {
  protected:
   int kxmax,kymax,kzmax;
   int kcount,kmax,kmax3d,kmax_created;
-  double gsqmx,qsum,qsqsum,q2,volume;
+  double gsqmx,volume;
   int nmax;
 
   double unitk[3];
   int *kxvecs,*kyvecs,*kzvecs;
+  int kxmax_orig,kymax_orig,kzmax_orig;
   double *ug;
   double **eg,**vg;
   double **ek;
@@ -62,8 +63,15 @@ class Ewald : public KSpace {
   void deallocate();
   void slabcorr();
 
+  // triclinic
+
+  int triclinic;
+  void eik_dot_r_triclinic();
+  void coeffs_triclinic();
+
   // group-group interactions
 
+  void slabcorr_groups(int,int,int);
   void allocate_groups();
   void deallocate_groups();
 };
@@ -80,10 +88,6 @@ E: Illegal ... command
 Self-explanatory.  Check the input script syntax and compare to the
 documentation for the command.  You can use -echo screen as a
 command-line option when running LAMMPS to see the offending line.
-
-E: Cannot use Ewald with triclinic box
-
-This feature is not yet supported.
 
 E: Cannot use Ewald with 2d simulation
 
@@ -105,25 +109,20 @@ E: Incorrect boundaries with slab Ewald
 Must have periodic x,y dimensions and non-periodic z dimension to use
 2d slab option with Ewald.
 
+E: Cannot (yet) use Ewald with triclinic box and slab correction
+
+This feature is not yet supported.
+
 E: KSpace style is incompatible with Pair style
 
-Setting a kspace style requires that a pair style with a long-range
-Coulombic component be selected.
-
-E: Cannot use kspace solver on system with no charge
-
-No atoms in system have a non-zero charge.
-
-W: System is not charge neutral, net charge = %g
-
-The total charge on all atoms on the system is not 0.0, which
-is not valid for Ewald or PPPM.
+Setting a kspace style requires that a pair style with matching
+long-range Coulombic or dispersion components be used.
 
 E: KSpace accuracy must be > 0
 
 The kspace accuracy designated in the input must be greater than zero.
 
-E: Cannot (yet) use Kspace slab correction with compute group/group
+E: Cannot (yet) use K-space slab correction with compute group/group for triclinic systems
 
 This option is not yet supported.
 

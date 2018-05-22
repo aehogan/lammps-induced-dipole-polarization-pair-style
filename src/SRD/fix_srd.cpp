@@ -15,9 +15,9 @@
    Contributing authors: Jeremy Lechman (SNL), Pieter in 't Veld (BASF)
 ------------------------------------------------------------------------- */
 
-#include "math.h"
-#include "string.h"
-#include "stdlib.h"
+#include <math.h>
+#include <string.h>
+#include <stdlib.h>
 #include "fix_srd.h"
 #include "math_extra.h"
 #include "atom.h"
@@ -37,6 +37,7 @@
 #include "random_mars.h"
 #include "random_park.h"
 #include "math_const.h"
+#include "citeme.h"
 #include "memory.h"
 #include "error.h"
 
@@ -61,14 +62,33 @@ enum{NO_REMAP,X_REMAP,V_REMAP};                   // same as fix_deform.cpp
 #define TOLERANCE 0.00001
 #define MAXITER 20
 
+static const char cite_fix_srd[] =
+  "fix srd command:\n\n"
+  "@Article{Petersen10,\n"
+  " author = {M. K. Petersen, J. B. Lechman, S. J. Plimpton, G. S. Grest, P. J. in 't Veld, P. R. Schunk},\n"
+  " title =   {Mesoscale Hydrodynamics via Stochastic Rotation Dynamics: Comparison with Lennard-Jones Fluid},"
+  " journal = {J.~Chem.~Phys.},\n"
+  " year =    2010,\n"
+  " volume =  132,\n"
+  " pages =   {174106}\n"
+  "}\n\n";
+
 //#define SRD_DEBUG 1
 //#define SRD_DEBUG_ATOMID 58
 //#define SRD_DEBUG_TIMESTEP 449
 
 /* ---------------------------------------------------------------------- */
 
-FixSRD::FixSRD(LAMMPS *lmp, int narg, char **arg) : Fix(lmp, narg, arg)
+FixSRD::FixSRD(LAMMPS *lmp, int narg, char **arg) : Fix(lmp, narg, arg),
+  wallfix(NULL), wallwhich(NULL), xwall(NULL), xwallhold(NULL),
+  vwall(NULL), fwall(NULL), avec_ellipsoid(NULL), avec_line(NULL),
+  avec_tri(NULL), random(NULL), randomshift(NULL), flocal(NULL),
+  tlocal(NULL), biglist(NULL), binhead(NULL), binnext(NULL), sbuf1(NULL),
+  sbuf2(NULL), rbuf1(NULL), rbuf2(NULL), nbinbig(NULL), binbig(NULL),
+  binsrd(NULL), stencil(NULL)
 {
+  if (lmp->citeme) lmp->citeme->add(cite_fix_srd);
+
   if (narg < 8) error->all(FLERR,"Illegal fix srd command");
 
   restart_pbc = 1;
@@ -77,15 +97,15 @@ FixSRD::FixSRD(LAMMPS *lmp, int narg, char **arg) : Fix(lmp, narg, arg)
   global_freq = 1;
   extvector = 0;
 
-  nevery = atoi(arg[3]);
+  nevery = force->inumeric(FLERR,arg[3]);
 
   bigexist = 1;
   if (strcmp(arg[4],"NULL") == 0) bigexist = 0;
   else biggroup = group->find(arg[4]);
 
-  temperature_srd = atof(arg[5]);
-  gridsrd = atof(arg[6]);
-  int seed = atoi(arg[7]);
+  temperature_srd = force->numeric(FLERR,arg[5]);
+  gridsrd = force->numeric(FLERR,arg[6]);
+  int seed = force->inumeric(FLERR,arg[7]);
 
   // parse options
 
@@ -108,7 +128,7 @@ FixSRD::FixSRD(LAMMPS *lmp, int narg, char **arg) : Fix(lmp, narg, arg)
   while (iarg < narg) {
     if (strcmp(arg[iarg],"lamda") == 0) {
       if (iarg+2 > narg) error->all(FLERR,"Illegal fix srd command");
-      lamda = atof(arg[iarg+1]);
+      lamda = force->numeric(FLERR,arg[iarg+1]);
       lamdaflag = 1;
       iarg += 2;
     } else if (strcmp(arg[iarg],"collision") == 0) {
@@ -138,22 +158,22 @@ FixSRD::FixSRD(LAMMPS *lmp, int narg, char **arg) : Fix(lmp, narg, arg)
       iarg += 2;
     } else if (strcmp(arg[iarg],"radius") == 0) {
       if (iarg+2 > narg) error->all(FLERR,"Illegal fix srd command");
-      radfactor = atof(arg[iarg+1]);
+      radfactor = force->numeric(FLERR,arg[iarg+1]);
       iarg += 2;
     } else if (strcmp(arg[iarg],"bounce") == 0) {
       if (iarg+2 > narg) error->all(FLERR,"Illegal fix srd command");
-      maxbounceallow = atoi(arg[iarg+1]);
+      maxbounceallow = force->inumeric(FLERR,arg[iarg+1]);
       iarg += 2;
     } else if (strcmp(arg[iarg],"search") == 0) {
       if (iarg+2 > narg) error->all(FLERR,"Illegal fix srd command");
-      gridsearch = atof(arg[iarg+1]);
+      gridsearch = force->numeric(FLERR,arg[iarg+1]);
       iarg += 2;
     } else if (strcmp(arg[iarg],"cubic") == 0) {
       if (iarg+3 > narg) error->all(FLERR,"Illegal fix srd command");
       if (strcmp(arg[iarg+1],"error") == 0) cubicflag = CUBIC_ERROR;
       else if (strcmp(arg[iarg+1],"warn") == 0) cubicflag = CUBIC_WARN;
       else error->all(FLERR,"Illegal fix srd command");
-      cubictol = atof(arg[iarg+2]);
+      cubictol = force->numeric(FLERR,arg[iarg+2]);
       iarg += 3;
     } else if (strcmp(arg[iarg],"shift") == 0) {
       if (iarg+3 > narg) error->all(FLERR,"Illegal fix srd command");
@@ -161,7 +181,7 @@ FixSRD::FixSRD(LAMMPS *lmp, int narg, char **arg) : Fix(lmp, narg, arg)
       else if (strcmp(arg[iarg+1],"yes") == 0) shiftuser = SHIFT_YES;
       else if (strcmp(arg[iarg+1],"possible") == 0) shiftuser = SHIFT_POSSIBLE;
       else error->all(FLERR,"Illegal fix srd command");
-      shiftseed = atoi(arg[iarg+2]);
+      shiftseed = force->inumeric(FLERR,arg[iarg+2]);
       iarg += 3;
     } else if (strcmp(arg[iarg],"tstat") == 0) {
       if (iarg+2 > narg) error->all(FLERR,"Illegal fix srd command");
@@ -171,9 +191,9 @@ FixSRD::FixSRD(LAMMPS *lmp, int narg, char **arg) : Fix(lmp, narg, arg)
       iarg += 2;
     } else if (strcmp(arg[iarg],"rescale") == 0) {
       if (iarg+2 > narg) error->all(FLERR,"Illegal fix srd command");
-      if (strcmp(arg[iarg+1],"no") == 0) 
+      if (strcmp(arg[iarg+1],"no") == 0)
         rescale_rotate = rescale_collide = 0;
-      else if (strcmp(arg[iarg+1],"yes") == 0) 
+      else if (strcmp(arg[iarg+1],"yes") == 0)
         rescale_rotate = rescale_collide = 1;
       else if (strcmp(arg[iarg+1],"rotate") == 0) {
         rescale_rotate = 1;
@@ -320,9 +340,12 @@ void FixSRD::init()
   if (bigexist && comm->ghost_velocity == 0)
     error->all(FLERR,"Fix srd requires ghost atoms store velocity");
   if (bigexist && collidestyle == NOSLIP && !atom->torque_flag)
-    error->all(FLERR,"Fix SRD no-slip requires atom attribute torque");
+    error->all(FLERR,"Fix srd no-slip requires atom attribute torque");
   if (initflag && update->dt != dt_big)
     error->all(FLERR,"Cannot change timestep once fix srd is setup");
+  if (comm->style != 0)
+    error->universe_all(FLERR,"Fix srd can only currently be used with "
+                        "comm_style brick");
 
   // orthogonal vs triclinic simulation box
   // could be static or shearing box
@@ -355,18 +378,17 @@ void FixSRD::init()
 
   change_size = change_shape = deformflag = 0;
   if (domain->nonperiodic == 2) change_size = 1;
-  for (int i = 0; i < modify->nfix; i++)
-    if (modify->fix[i]->box_change) {
-      if (modify->fix[i]->box_change_size) change_size = 1;
-      if (modify->fix[i]->box_change_shape) change_shape = 1;
-      if (strcmp(modify->fix[i]->style,"deform") == 0) {
-        deformflag = 1;
-        FixDeform *deform = (FixDeform *) modify->fix[i];
-        if (deform->box_change_shape && deform->remapflag != V_REMAP)
-          error->all(FLERR,"Using fix srd with inconsistent "
-                     "fix deform remap option");
-      }
+  for (int i = 0; i < modify->nfix; i++) {
+    if (modify->fix[i]->box_change_size) change_size = 1;
+    if (modify->fix[i]->box_change_shape) change_shape = 1;
+    if (strcmp(modify->fix[i]->style,"deform") == 0) {
+      deformflag = 1;
+      FixDeform *deform = (FixDeform *) modify->fix[i];
+      if (deform->box_change_shape && deform->remapflag != V_REMAP)
+        error->all(FLERR,"Using fix srd with inconsistent "
+                   "fix deform remap option");
     }
+  }
 
   if (deformflag && tstat == 0 && me == 0)
     error->warning(FLERR,
@@ -452,11 +474,10 @@ void FixSRD::pre_neighbor()
 {
   int i,j,m,ix,iy,iz,jx,jy,jz,ibin,jbin,lo,hi;
   double rsq,cutbinsq;
-  double xlamda[3];
 
   // grow SRD per-atom bin arrays if necessary
 
-  if (atom->nlocal > nmax) {
+  if (atom->nmax > nmax) {
     nmax = atom->nmax;
     memory->destroy(binsrd);
     memory->destroy(binnext);
@@ -559,10 +580,12 @@ void FixSRD::pre_neighbor()
 
           if (jx < 0 || jx >= nbin2x || jy < 0 || jy >= nbin2y ||
               jz < 0 || jz >= nbin2z) {
-            printf("Big particle %d %d %g %g %g\n",
-                   atom->tag[i],i,x[i][0],x[i][1],x[i][2]);
-            printf("Bin indices: %d %d %d, %d %d %d, %d %d %d\n",
-                   ix,iy,iz,jx,jy,jz,nbin2x,nbin2y,nbin2z);
+            if (screen) {
+              fprintf(screen,"Big particle " TAGINT_FORMAT " %d %g %g %g\n",
+                      atom->tag[i],i,x[i][0],x[i][1],x[i][2]);
+              fprintf(screen,"Bin indices: %d %d %d, %d %d %d, %d %d %d\n",
+                      ix,iy,iz,jx,jy,jz,nbin2x,nbin2y,nbin2z);
+            }
             error->one(FLERR,"Fix SRD: bad stencil bin for big particle");
           }
           rsq = point_bin_distance(x[i],jx,jy,jz);
@@ -685,7 +708,6 @@ void FixSRD::pre_neighbor()
 void FixSRD::post_force(int vflag)
 {
   int i,m,ix,iy,iz;
-  double xlamda[3];
 
   // zero per-timestep stats
 
@@ -729,7 +751,8 @@ void FixSRD::post_force(int vflag)
         if (ix < 0 || ix >= nbin2x || iy < 0 || iy >= nbin2y ||
             iz < 0 || iz >= nbin2z) {
           if (screen) {
-            fprintf(screen,"SRD particle %d on step " BIGINT_FORMAT "\n",
+            fprintf(screen,"SRD particle " TAGINT_FORMAT
+                    " on step " BIGINT_FORMAT "\n",
                     atom->tag[i],update->ntimestep);
             fprintf(screen,"v = %g %g %g\n",v[i][0],v[i][1],v[i][2]);
             fprintf(screen,"x = %g %g %g\n",x[i][0],x[i][1],x[i][2]);
@@ -788,7 +811,7 @@ void FixSRD::post_force(int vflag)
   }
 
   // if wall has moved too far, trigger reneigh on next step
-  // analagous to neighbor check for big particle moving 1/2 of skin distance
+  // analogous to neighbor check for big particle moving 1/2 of skin distance
 
   if (wallexist) {
     for (m = 0; m < nwall; m++)
@@ -815,8 +838,8 @@ void FixSRD::reset_velocities()
 {
   int i,j,n,ix,iy,iz,ibin,axis,sign,irandom;
   double u[3],vsum[3];
-  double vx,vy,vz,vsq,tbin,scale;
-  double *vave,*vnew,*xlamda;
+  double vsq,tbin,scale;
+  double *vave,*xlamda;
   double vstream[3];
 
   // if requested, perform a dynamic shift of bin positions
@@ -931,6 +954,7 @@ void FixSRD::reset_velocities()
   double *h_ratelo = domain->h_ratelo;
 
   for (i = 0; i < nbins; i++) {
+    vbin[i].value[0] = 0.0;
     n = vbin[i].n;
     if (n == 0) continue;
     vave = vbin[i].vsum;
@@ -963,11 +987,20 @@ void FixSRD::reset_velocities()
       v[j][2] = u[2] + vave[2];
     }
 
-    // NOTE: vsq needs to be summed across shared bins in parallel
-    // like vave above via the vbin_comm() call
-    // else the computed scale factor below is incomplete for a shared bin
+    if (n > 1) vbin[i].value[0] = vsq;
+  }
 
-    if (tstat && n > 1) {
+  if (shifts[shiftflag].commflag) xbin_comm(shiftflag,1);
+
+  if (tstat) {
+    for (i = 0; i < nbins; i++){
+      n = vbin[i].n;
+      if (n <= 1) continue;
+
+      // vsum is already average velocity
+
+      vave = vbin[i].vsum;
+
       if (deformflag) {
         xlamda = vbin[i].xctr;
         vstream[0] = h_rate[0]*xlamda[0] + h_rate[5]*xlamda[1] +
@@ -983,9 +1016,8 @@ void FixSRD::reset_velocities()
       // tbin = thermal temperature of particles in bin
       // scale = scale factor for thermal velocity
 
-      tbin = vsq/(n-dof_tstat) * tfactor;
+      tbin = vbin[i].value[0]/(n-dof_tstat) * tfactor;
       scale = sqrt(temperature_srd/tbin);
-
       vsq = 0.0;
       for (j = binhead[i]; j >= 0; j = binnext[j]) {
         u[0] = (v[j][0] - vave[0]) * scale;
@@ -996,13 +1028,19 @@ void FixSRD::reset_velocities()
         v[j][1] = u[1] + vstream[1];
         v[j][2] = u[2] + vstream[2];
       }
+      vbin[i].value[0] = vsq;
     }
 
-    // sum partial contribution of my particles to T even if I don't own bin
-    // but only count bin if I own it, so each bin is counted exactly once
+    if (shifts[shiftflag].commflag) xbin_comm(shiftflag,1);
+  }
 
-    if (n > 1) srd_bin_temp += vsq/(n-dof_temp);
-    if (vbin[i].owner) srd_bin_count++;
+  for (i = 0; i < nbins; i++){
+    if (vbin[i].owner) {
+      if (vbin[i].n > 1) {
+        srd_bin_temp += vbin[i].value[0]/(vbin[i].n-dof_temp);
+        srd_bin_count++;
+      }
+    }
   }
 
   srd_bin_temp *= tfactor;
@@ -1029,7 +1067,6 @@ void FixSRD::vbin_comm(int ishift)
 {
   BinComm *bcomm1,*bcomm2;
   MPI_Request request1,request2;
-  MPI_Status status;
 
   // send/recv bins in both directions in each dimension
   // don't send if nsend = 0
@@ -1077,11 +1114,11 @@ void FixSRD::vbin_comm(int ishift)
                  bcomm2->sendproc,0,world);
       }
       if (bcomm1->nrecv) {
-        MPI_Wait(&request1,&status);
+        MPI_Wait(&request1,MPI_STATUS_IGNORE);
         vbin_unpack(rbuf1,vbin,bcomm1->nrecv,bcomm1->recvlist);
       }
       if (bcomm2->nrecv) {
-        MPI_Wait(&request2,&status);
+        MPI_Wait(&request2,MPI_STATUS_IGNORE);
         vbin_unpack(rbuf2,vbin,bcomm2->nrecv,bcomm2->recvlist);
       }
     }
@@ -1125,6 +1162,102 @@ void FixSRD::vbin_unpack(double *buf, BinAve *vbin, int n, int *list)
 }
 
 /* ----------------------------------------------------------------------
+   communicate summed particle vsq info for bins that overlap 1 or more procs
+------------------------------------------------------------------------- */
+
+void FixSRD::xbin_comm(int ishift, int nval)
+{
+  BinComm *bcomm1,*bcomm2;
+  MPI_Request request1,request2;
+
+  // send/recv bins in both directions in each dimension
+  // don't send if nsend = 0
+  //   due to static bins aliging with proc boundary
+  //   due to dynamic bins across non-periodic global boundary
+  // copy to self if sendproc = me
+  // MPI send to another proc if sendproc != me
+  // don't recv if nrecv = 0
+  // copy from self if recvproc = me
+  // MPI recv from another proc if recvproc != me
+
+  BinAve *vbin = shifts[ishift].vbin;
+  int *procgrid = comm->procgrid;
+
+  int iswap = 0;
+  for (int idim = 0; idim < dimension; idim++) {
+    bcomm1 = &shifts[ishift].bcomm[iswap++];
+    bcomm2 = &shifts[ishift].bcomm[iswap++];
+
+    if (procgrid[idim] == 1) {
+      if (bcomm1->nsend)
+        xbin_pack(vbin,bcomm1->nsend,bcomm1->sendlist,sbuf1,nval);
+      if (bcomm2->nsend)
+        xbin_pack(vbin,bcomm2->nsend,bcomm2->sendlist,sbuf2,nval);
+      if (bcomm1->nrecv)
+        xbin_unpack(sbuf1,vbin,bcomm1->nrecv,bcomm1->recvlist,nval);
+      if (bcomm2->nrecv)
+        xbin_unpack(sbuf2,vbin,bcomm2->nrecv,bcomm2->recvlist,nval);
+
+    } else {
+      if (bcomm1->nrecv)
+        MPI_Irecv(rbuf1,bcomm1->nrecv*nval,MPI_DOUBLE,bcomm1->recvproc,0,
+                  world,&request1);
+      if (bcomm2->nrecv)
+        MPI_Irecv(rbuf2,bcomm2->nrecv*nval,MPI_DOUBLE,bcomm2->recvproc,0,
+                  world,&request2);
+      if (bcomm1->nsend) {
+        xbin_pack(vbin,bcomm1->nsend,bcomm1->sendlist,sbuf1,nval);
+        MPI_Send(sbuf1,bcomm1->nsend*nval,MPI_DOUBLE,
+                 bcomm1->sendproc,0,world);
+      }
+      if (bcomm2->nsend) {
+        xbin_pack(vbin,bcomm2->nsend,bcomm2->sendlist,sbuf2,nval);
+        MPI_Send(sbuf2,bcomm2->nsend*nval,MPI_DOUBLE,
+                 bcomm2->sendproc,0,world);
+      }
+      if (bcomm1->nrecv) {
+        MPI_Wait(&request1,MPI_STATUS_IGNORE);
+        xbin_unpack(rbuf1,vbin,bcomm1->nrecv,bcomm1->recvlist,nval);
+      }
+      if (bcomm2->nrecv) {
+        MPI_Wait(&request2,MPI_STATUS_IGNORE);
+        xbin_unpack(rbuf2,vbin,bcomm2->nrecv,bcomm2->recvlist,nval);
+      }
+    }
+  }
+}
+
+/* ----------------------------------------------------------------------
+   pack velocity bin data into a message buffer for sending
+------------------------------------------------------------------------- */
+
+void FixSRD::xbin_pack(BinAve *vbin, int n, int *list, double *buf, int nval)
+{
+  int j, k;
+  int m = 0;
+  for (int i = 0; i < n; i++) {
+    j = list[i];
+    for (k = 0; k < nval; k++)
+      buf[m++] = vbin[j].value[k];
+  }
+}
+
+/* ----------------------------------------------------------------------
+   unpack velocity bin data from a message buffer and sum values to my bins
+------------------------------------------------------------------------- */
+
+void FixSRD::xbin_unpack(double *buf, BinAve *vbin, int n, int *list, int nval)
+{
+  int j, k;
+  int m = 0;
+  for (int i = 0; i < n; i++) {
+    j = list[i];
+    for (k = 0; k < nval; k++)
+      vbin[j].value[k] += buf[m++];
+  }
+}
+
+/* ----------------------------------------------------------------------
    detect all collisions between SRD and BIG particles or WALLS
    assume SRD can be inside at most one BIG particle or WALL at a time
    unoverlap SRDs for each collision
@@ -1132,7 +1265,7 @@ void FixSRD::vbin_unpack(double *buf, BinAve *vbin, int n, int *list)
 
 void FixSRD::collisions_single()
 {
-  int i,j,k,m,type,nbig,ibin,ibounce,inside,collide_flag,lineside;
+  int i,j,k,m,type,nbig,ibin,ibounce,inside,collide_flag;
   double dt,t_remain;
   double norm[3],xscoll[3],xbcoll[3],vsnew[3];
   Big *big;
@@ -1209,20 +1342,22 @@ void FixSRD::collisions_single()
             ninside++;
             if (insideflag == INSIDE_ERROR || insideflag == INSIDE_WARN) {
               char str[128];
-              if (type != WALL)
+              if (type != WALL) {
                 sprintf(str,
-                        "SRD particle %d started "
-                        "inside big particle %d on step " BIGINT_FORMAT
-                        " bounce %d",
+                        "SRD particle " TAGINT_FORMAT " started "
+                        "inside big particle " TAGINT_FORMAT
+                        " on step " BIGINT_FORMAT " bounce %d",
                         atom->tag[i],atom->tag[j],update->ntimestep,ibounce+1);
-              else
+                if (insideflag == INSIDE_ERROR) error->one(FLERR,str);
+                error->warning(FLERR,str);
+              } else{
                 sprintf(str,
-                        "SRD particle %d started "
-                        "inside big particle %d on step " BIGINT_FORMAT
-                        " bounce %d",
-                        atom->tag[i],atom->tag[j],update->ntimestep,ibounce+1);
-              if (insideflag == INSIDE_ERROR) error->one(FLERR,str);
-              error->warning(FLERR,str);
+                        "SRD particle " TAGINT_FORMAT " started "
+                        "inside wall %d on step " BIGINT_FORMAT " bounce %d",
+                        atom->tag[i],j,update->ntimestep,ibounce+1);
+                if (insideflag == INSIDE_ERROR) error->one(FLERR,str);
+                error->warning(FLERR,str);
+              }
             }
             break;
           }
@@ -1366,13 +1501,22 @@ void FixSRD::collisions_multi()
             ninside++;
             if (insideflag == INSIDE_ERROR || insideflag == INSIDE_WARN) {
               char str[128];
-              sprintf(str,
-                      "SRD particle %d started "
-                      "inside big particle %d on step " BIGINT_FORMAT
-                      " bounce %d",
-                      atom->tag[i],atom->tag[j],update->ntimestep,ibounce+1);
-              if (insideflag == INSIDE_ERROR) error->one(FLERR,str);
-              error->warning(FLERR,str);
+              if (type != WALL) {
+                sprintf(str,
+                        "SRD particle " TAGINT_FORMAT " started "
+                        "inside big particle " TAGINT_FORMAT
+                        " on step " BIGINT_FORMAT " bounce %d",
+                        atom->tag[i],atom->tag[j],update->ntimestep,ibounce+1);
+                if (insideflag == INSIDE_ERROR) error->one(FLERR,str);
+                error->warning(FLERR,str);
+              } else{
+                sprintf(str,
+                        "SRD particle " TAGINT_FORMAT " started "
+                        "inside wall %d on step " BIGINT_FORMAT " bounce %d",
+                        atom->tag[i],j,update->ntimestep,ibounce+1);
+                if (insideflag == INSIDE_ERROR) error->one(FLERR,str);
+                error->warning(FLERR,str);
+              }
             }
             t_first = 0.0;
             break;
@@ -1511,7 +1655,6 @@ int FixSRD::inside_line(double *xs, double *xb, double *vs, double *vb,
                         Big *big, double dt_step)
 {
   double pmc0[2],pmc1[2],n0[2],n1[2];
-  double n1_n0[2],pmc1_pmc0[2];
 
   // 1 and 2 = start and end of timestep
   // pmc = P - C, where P = position of S, C = position of B
@@ -1885,7 +2028,7 @@ double FixSRD::collision_ellipsoid_exact(double *xs, double *xb,
   double vs_vb[3],xs_xb[3],omega_ex[3],omega_ey[3],omega_ez[3];
   double excoll[3],eycoll[3],ezcoll[3],delta[3],xbody[3],nbody[3];
   double ax,bx,cx,ay,by,cy,az,bz,cz;
-  double a,b,c,scale;
+  double a,b,c;
 
   double *omega = big->omega;
   double *ex = big->ex;
@@ -2368,7 +2511,8 @@ int FixSRD::update_srd(int i, double dt, double *xscoll, double *vsnew,
       xs[2] < srdlo[2] || xs[2] > srdhi[2]) {
     if (screen) {
       error->warning(FLERR,"Fix srd particle moved outside valid domain");
-      fprintf(screen,"  particle %d on proc %d at timestep " BIGINT_FORMAT,
+      fprintf(screen,"  particle " TAGINT_FORMAT
+              " on proc %d at timestep " BIGINT_FORMAT,
               atom->tag[i],me,update->ntimestep);
       fprintf(screen,"  xnew %g %g %g\n",xs[0],xs[1],xs[2]);
       fprintf(screen,"  srdlo/hi x %g %g\n",srdlo[0],srdhi[0]);
@@ -2773,7 +2917,6 @@ void FixSRD::big_static()
   int *ellipsoid = atom->ellipsoid;
   int *line = atom->line;
   int *tri = atom->tri;
-  int *type = atom->type;
 
   double skinhalf = 0.5 * neighbor->skin;
 
@@ -3642,7 +3785,7 @@ int FixSRD::pack_reverse_comm(int n, int first, double *buf)
     }
   }
 
-  return comm_reverse;
+  return m;
 }
 
 /* ---------------------------------------------------------------------- */
@@ -3751,7 +3894,7 @@ void FixSRD::velocity_stats(int groupnum)
 
 double FixSRD::newton_raphson(double t1, double t2)
 {
-  double f1,f2,df,tlo,thi;
+  double f1,df,tlo,thi;
   lineside(t1,f1,df);
   if (f1 < 0.0) {
     tlo = t1;
@@ -3870,7 +4013,8 @@ void FixSRD::print_collision(int i, int j, int ibounce,
   double **v = atom->v;
 
   if (type != WALL) {
-    printf("COLLISION between SRD %d and BIG %d\n",atom->tag[i],atom->tag[j]);
+    printf("COLLISION between SRD " TAGINT_FORMAT
+           " and BIG " TAGINT_FORMAT "\n",atom->tag[i],atom->tag[j]);
     printf("  bounce # = %d\n",ibounce+1);
     printf("  local indices: %d %d\n",i,j);
     printf("  timestep = %g\n",dt);
@@ -3915,7 +4059,8 @@ void FixSRD::print_collision(int i, int j, int ibounce,
   } else {
     int dim = wallwhich[j] / 2;
 
-    printf("COLLISION between SRD %d and WALL %d\n",atom->tag[i],j);
+    printf("COLLISION between SRD " TAGINT_FORMAT " and WALL %d\n",
+           atom->tag[i],j);
     printf("  bounce # = %d\n",ibounce+1);
     printf("  local indices: %d %d\n",i,j);
     printf("  timestep = %g\n",dt);

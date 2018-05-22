@@ -11,10 +11,10 @@
    See the README file in the top-level LAMMPS directory.
 ------------------------------------------------------------------------- */
 
-#include "math.h"
-#include "stdio.h"
-#include "stdlib.h"
-#include "string.h"
+#include <math.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
 #include "pair_coul_debye.h"
 #include "atom.h"
 #include "comm.h"
@@ -85,7 +85,8 @@ void PairCoulDebye::compute(int eflag, int vflag)
         r = sqrt(rsq);
         rinv = 1.0/r;
         screening = exp(-kappa*r);
-        forcecoul = qqrd2e * qtmp*q[j] * screening * (kappa + rinv);
+        forcecoul = qqrd2e * scale[itype][jtype] *
+          qtmp*q[j] * screening * (kappa + rinv);
         fpair = factor_coul*forcecoul * r2inv;
 
         f[i][0] += delx*fpair;
@@ -97,7 +98,8 @@ void PairCoulDebye::compute(int eflag, int vflag)
           f[j][2] -= delz*fpair;
         }
 
-        if (eflag) ecoul = factor_coul * qqrd2e * qtmp*q[j] * rinv * screening;
+        if (eflag) ecoul = factor_coul * qqrd2e *
+            scale[itype][jtype] * qtmp*q[j] * rinv * screening;
 
         if (evflag) ev_tally(i,j,nlocal,newton_pair,
                              0.0,ecoul,fpair,delx,dely,delz);
@@ -116,15 +118,15 @@ void PairCoulDebye::settings(int narg, char **arg)
 {
   if (narg != 2) error->all(FLERR,"Illegal pair_style command");
 
-  kappa = force->numeric(arg[0]);
-  cut_global = force->numeric(arg[1]);
+  kappa = force->numeric(FLERR,arg[0]);
+  cut_global = force->numeric(FLERR,arg[1]);
 
   // reset cutoffs that have been explicitly set
 
   if (allocated) {
     int i,j;
     for (i = 1; i <= atom->ntypes; i++)
-      for (j = i+1; j <= atom->ntypes; j++)
+      for (j = i; j <= atom->ntypes; j++)
         if (setflag[i][j]) cut[i][j] = cut_global;
   }
 }

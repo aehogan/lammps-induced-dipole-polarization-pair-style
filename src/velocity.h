@@ -1,4 +1,4 @@
-/* ----------------------------------------------------------------------
+/* -*- c++ -*- ----------------------------------------------------------
    LAMMPS - Large-scale Atomic/Molecular Massively Parallel Simulator
    http://lammps.sandia.gov, Sandia National Laboratories
    Steve Plimpton, sjplimp@sandia.gov
@@ -35,7 +35,8 @@ class Velocity : protected Pointers {
  private:
   int igroup,groupbit;
   int style;
-  int dist_flag,sum_flag,momentum_flag,rotation_flag,loop_flag,scale_flag;
+  int dist_flag,sum_flag,momentum_flag,rotation_flag;
+  int bias_flag,loop_flag,scale_flag,rfix;
   double xscale,yscale,zscale;
   class Compute *temperature;
 
@@ -93,11 +94,6 @@ E: Atom IDs must be consecutive for velocity create loop all
 
 Self-explanatory.
 
-E: Use of velocity with undefined lattice
-
-If units = lattice (the default) for the velocity set or velocity ramp
-command, then a lattice must first be defined via the lattice command.
-
 E: Variable name for velocity set does not exist
 
 Self-explanatory.
@@ -118,14 +114,17 @@ E: Velocity ramp in z for a 2d problem
 
 Self-explanatory.
 
+E: Velocity rigid used with non-rigid fix-ID
+
+Self-explanatory.
+
 E: Attempting to rescale a 0.0 temperature
 
 Cannot rescale a temperature that is already 0.0.
 
-E: Cannot zero momentum of 0 atoms
+E: Cannot zero momentum of no atoms
 
-The collection of atoms for which momentum is being computed has no
-atoms.
+Self-explanatory.
 
 E: Could not find velocity temperature ID
 
@@ -136,5 +135,17 @@ E: Velocity temperature ID does not compute temperature
 
 The compute ID given to the velocity command must compute
 temperature.
+
+E: Fix ID for velocity does not exist
+
+Self-explanatory.
+
+E: Cannot use velocity bias command without temp keyword
+
+Self-explanatory.
+
+E: Velocity temperature ID does calculate a velocity bias
+
+The specified compute must compute a bias for temperature.
 
 */

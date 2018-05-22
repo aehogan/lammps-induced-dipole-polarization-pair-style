@@ -1,492 +1,664 @@
+// -*- c++ -*-
+
+// This file is part of the Collective Variables module (Colvars).
+// The original version of Colvars and its updates are located at:
+// https://github.com/colvars/colvars
+// Please update all Colvars source files before making any changes.
+// If you wish to distribute your changes, please submit them to the
+// Colvars repository at GitHub.
+
 #include "colvarmodule.h"
+#include "colvarproxy.h"
 #include "colvarvalue.h"
 #include "colvarbias.h"
+#include "colvargrid.h"
 
 
-colvarbias::colvarbias (std::string const &conf, char const *key)
-  : colvarparse(), has_data (false)
+colvarbias::colvarbias(char const *key)
+  : bias_type(to_lower_cppstr(key))
 {
-  cvm::log ("Initializing a new \""+std::string (key)+"\" instance.\n");
+  init_cvb_requires();
 
-  size_t rank = 1;
-  std::string const key_str (key);
+  rank = 1;
 
-  if (to_lower_cppstr (key_str) == std::string ("abf")) {
-    rank = cvm::n_abf_biases+1;
-  }
-  if (to_lower_cppstr (key_str) == std::string ("harmonic")) {
-    rank = cvm::n_harm_biases+1;
-  }
-  if (to_lower_cppstr (key_str) == std::string ("histogram")) {
-    rank = cvm::n_histo_biases+1;
-  }
-  if (to_lower_cppstr (key_str) == std::string ("metadynamics")) {
-    rank = cvm::n_meta_biases+1;
-  }
+  has_data = false;
+  b_output_energy = false;
+  reset();
+  state_file_step = 0;
+  description = "uninitialized " + cvm::to_str(key) + " bias";
+}
 
-  get_keyval (conf, "name", name, key_str+cvm::to_str (rank));
 
-  for (std::vector<colvarbias *>::iterator bi = cvm::biases.begin();
-       bi != cvm::biases.end();
-       bi++) {
-    if ((*bi)->name == this->name)
-      cvm::fatal_error ("Error: this bias cannot have the same name, \""+this->name+
-                        "\", of another bias.\n");
-  }
+int colvarbias::init(std::string const &conf)
+{
+  colvarparse::init(conf);
 
-  // lookup the associated colvars
-  std::vector<std::string> colvars_str;
-  if (get_keyval (conf, "colvars", colvars_str)) {
-    for (size_t i = 0; i < colvars_str.size(); i++) {
-      add_colvar (colvars_str[i]);
+  size_t i = 0;
+
+  if (name.size() == 0) {
+
+    // first initialization
+
+    cvm::log("Initializing a new \""+bias_type+"\" instance.\n");
+    rank = cvm::main()->num_biases_type(bias_type);
+    get_keyval(conf, "name", name, bias_type+cvm::to_str(rank));
+
+    {
+      colvarbias *bias_with_name = cvm::bias_by_name(this->name);
+      if (bias_with_name != NULL) {
+        if ((bias_with_name->rank != this->rank) ||
+            (bias_with_name->bias_type != this->bias_type)) {
+          cvm::error("Error: this bias cannot have the same name, \""+this->name+
+                     "\", as another bias.\n", INPUT_ERROR);
+          return INPUT_ERROR;
+        }
+      }
     }
+
+    description = "bias " + name;
+
+    {
+      // lookup the associated colvars
+      std::vector<std::string> colvar_names;
+      if (get_keyval(conf, "colvars", colvar_names)) {
+        if (num_variables()) {
+          cvm::error("Error: cannot redefine the colvars that a bias was already defined on.\n",
+                     INPUT_ERROR);
+          return INPUT_ERROR;
+        }
+        for (i = 0; i < colvar_names.size(); i++) {
+          add_colvar(colvar_names[i]);
+        }
+      }
+    }
+
+    if (!num_variables()) {
+      cvm::error("Error: no collective variables specified.\n", INPUT_ERROR);
+      return INPUT_ERROR;
+    }
+  } else {
+    cvm::log("Reinitializing bias \""+name+"\".\n");
   }
 
-  if (!colvars.size()) {
-    cvm::fatal_error ("Error: no collective variables specified.\n");
+  output_prefix = cvm::output_prefix();
+
+  get_keyval(conf, "outputEnergy", b_output_energy, b_output_energy);
+
+  get_keyval(conf, "timeStepFactor", time_step_factor, 1);
+  if (time_step_factor < 1) {
+    cvm::error("Error: timeStepFactor must be 1 or greater.\n");
+    return COLVARS_ERROR;
   }
+
+  // Now that children are defined, we can solve dependencies
+  enable(f_cvb_active);
+  if (cvm::debug()) print_state();
+
+  return COLVARS_OK;
+}
+
+
+int colvarbias::reset()
+{
+  bias_energy = 0.0;
+  for (size_t i = 0; i < num_variables(); i++) {
+    colvar_forces[i].reset();
+  }
+  return COLVARS_OK;
 }
 
 
 colvarbias::colvarbias()
-  : colvarparse(), has_data (false)
+  : colvarparse(), has_data(false)
 {}
 
 
-void colvarbias::add_colvar (std::string const &cv_name)
+colvarbias::~colvarbias()
 {
-  if (colvar *cvp = cvm::colvar_p (cv_name)) {
-    cvp->enable (colvar::task_gradients);
-    if (cvm::debug())
-      cvm::log ("Applying this bias to collective variable \""+
-                cvp->name+"\".\n"); 
-    colvars.push_back (cvp);
-    colvar_forces.push_back (colvarvalue (cvp->type()));
-  } else {
-    cvm::fatal_error ("Error: cannot find a colvar named \""+
-                      cv_name+"\".\n");
+  colvarbias::clear();
+}
+
+
+int colvarbias::clear()
+{
+  free_children_deps();
+
+  // Remove references to this bias from colvars
+  for (std::vector<colvar *>::iterator cvi = colvars.begin();
+       cvi != colvars.end();
+       ++cvi) {
+    for (std::vector<colvarbias *>::iterator bi = (*cvi)->biases.begin();
+         bi != (*cvi)->biases.end();
+         ++bi) {
+      if ( *bi == this) {
+        (*cvi)->biases.erase(bi);
+        break;
+      }
+    }
   }
+
+  colvarmodule *cv = cvm::main();
+  // ...and from the colvars module
+  for (std::vector<colvarbias *>::iterator bi = cv->biases.begin();
+       bi != cv->biases.end();
+       ++bi) {
+    if ( *bi == this) {
+      cv->biases.erase(bi);
+      break;
+    }
+  }
+
+  return COLVARS_OK;
+}
+
+
+int colvarbias::clear_state_data()
+{
+  // no mutable content to delete for base class
+  return COLVARS_OK;
+}
+
+
+int colvarbias::add_colvar(std::string const &cv_name)
+{
+  if (colvar *cv = cvm::colvar_by_name(cv_name)) {
+
+    if (cvm::debug()) {
+      cvm::log("Applying this bias to collective variable \""+
+               cv->name+"\".\n");
+    }
+
+    colvars.push_back(cv);
+
+    colvar_forces.push_back(colvarvalue());
+    colvar_forces.back().type(cv->value()); // make sure each force is initialized to zero
+    colvar_forces.back().is_derivative(); // colvar constraints are not applied to the force
+    colvar_forces.back().reset();
+
+    previous_colvar_forces.push_back(colvar_forces.back());
+
+    cv->biases.push_back(this); // add back-reference to this bias to colvar
+
+    if (is_enabled(f_cvb_apply_force)) {
+      cv->enable(f_cv_gradient);
+    }
+
+    // Add dependency link.
+    // All biases need at least the value of each colvar
+    // although possibly not at all timesteps
+    add_child(cv);
+
+  } else {
+    cvm::error("Error: cannot find a colvar named \""+
+               cv_name+"\".\n", INPUT_ERROR);
+    return INPUT_ERROR;
+  }
+
+  return COLVARS_OK;
+}
+
+
+int colvarbias::update()
+{
+  if (cvm::debug()) {
+    cvm::log("Updating the "+bias_type+" bias \""+this->name+"\".\n");
+  }
+
+  has_data = true;
+
+  bias_energy = 0.0;
+  for (size_t ir = 0; ir < num_variables(); ir++) {
+    colvar_forces[ir].reset();
+  }
+
+  return COLVARS_OK;
 }
 
 
 void colvarbias::communicate_forces()
 {
-  for (size_t i = 0; i < colvars.size(); i++) {
+  size_t i = 0;
+  for (i = 0; i < num_variables(); i++) {
     if (cvm::debug()) {
-      cvm::log ("Communicating a force to colvar \""+
-                colvars[i]->name+"\", of type \""+
-                colvarvalue::type_desc[colvars[i]->type()]+"\".\n");
+      cvm::log("Communicating a force to colvar \""+
+               variables(i)->name+"\".\n");
     }
-    colvars[i]->add_bias_force (colvar_forces[i]);
+    // Impulse-style multiple timestep
+    // Note that biases with different values of time_step_factor
+    // may send forces to the same colvar
+    // which is why rescaling has to happen now: the colvar is not
+    // aware of this bias' time_step_factor
+    variables(i)->add_bias_force(cvm::real(time_step_factor) * colvar_forces[i]);
   }
-}    
-
-
-
-colvarbias_harmonic::colvarbias_harmonic (std::string const &conf,
-                                          char const *key)
-  : colvarbias (conf, key), 
-    target_nsteps (0),
-    target_nstages (0)
-{
-  get_keyval (conf, "forceConstant", force_k, 1.0);
-  for (size_t i = 0; i < colvars.size(); i++) {
-    if (colvars[i]->width != 1.0)
-      cvm::log ("The force constant for colvar \""+colvars[i]->name+
-                "\" will be rescaled to "+
-                cvm::to_str (force_k/(colvars[i]->width*colvars[i]->width))+
-                " according to the specified width.\n");
+  for (i = 0; i < num_variables(); i++) {
+    previous_colvar_forces[i] = colvar_forces[i];
   }
-
-  // get the initial restraint centers
-  colvar_centers.resize (colvars.size());
-  colvar_centers_raw.resize (colvars.size());
-  for (size_t i = 0; i < colvars.size(); i++) {
-    colvar_centers[i].type (colvars[i]->type());
-    colvar_centers_raw[i].type (colvars[i]->type());
-  }
-  if (get_keyval (conf, "centers", colvar_centers, colvar_centers)) {
-    for (size_t i = 0; i < colvars.size(); i++) {
-      colvar_centers[i].apply_constraints();
-      colvar_centers_raw[i] = colvar_centers[i];
-    }
-  } else {
-    colvar_centers.clear();
-    cvm::fatal_error ("Error: must define the initial centers of the restraints.\n");
-  }
-
-  if (colvar_centers.size() != colvars.size())
-    cvm::fatal_error ("Error: number of harmonic centers does not match "
-                      "that of collective variables.\n");
-
-  if (get_keyval (conf, "targetCenters", target_centers, colvar_centers)) {
-    b_chg_centers = true;
-    for (size_t i = 0; i < target_centers.size(); i++) {
-      target_centers[i].apply_constraints();
-    }
-  } else {
-    b_chg_centers = false;
-    target_centers.clear();
-  }
-
-  if (get_keyval (conf, "targetForceConstant", target_force_k, 0.0)) {
-    if (b_chg_centers)
-      cvm::fatal_error ("Error: cannot specify both targetCenters and targetForceConstant.\n");
-
-    starting_force_k = force_k;
-    b_chg_force_k = true;
-
-    get_keyval (conf, "targetEquilSteps", target_equil_steps, 0);
-
-    get_keyval (conf, "lambdaSchedule", lambda_schedule, lambda_schedule);
-    if (lambda_schedule.size()) {
-      // There is one more lambda-point than stages
-      target_nstages = lambda_schedule.size() - 1;
-    }
-  } else {
-    b_chg_force_k = false;
-  }
-
-  if (b_chg_centers || b_chg_force_k) {
-    get_keyval (conf, "targetNumSteps", target_nsteps, 0);
-    if (!target_nsteps)
-      cvm::fatal_error ("Error: targetNumSteps must be non-zero.\n");
-
-    if (get_keyval (conf, "targetNumStages", target_nstages, target_nstages) &&
-        lambda_schedule.size()) {
-      cvm::fatal_error ("Error: targetNumStages and lambdaSchedule are incompatible.\n");
-    }
-
-    if (target_nstages) {
-      // This means that either numStages of lambdaSchedule has been provided
-      stage = -1;
-      restraint_FE = 0.0;
-    }
-
-    if (get_keyval (conf, "targetForceExponent", force_k_exp, 1.0)) {
-      if (! b_chg_force_k)
-        cvm::log ("Warning: not changing force constant: targetForceExponent will be ignored\n");
-      if (force_k_exp < 1.0)
-        cvm::log ("Warning: for all practical purposes, targetForceExponent should be 1.0 or greater.\n");
-    }
-  }
-
-  if (cvm::debug())
-    cvm::log ("Done initializing a new harmonic restraint bias.\n");
 }
 
 
-void colvarbias::change_configuration(std::string const &conf)
+int colvarbias::change_configuration(std::string const &conf)
 {
-  cvm::fatal_error ("Error: change_configuration() not implemented.\n");
+  cvm::error("Error: change_configuration() not implemented.\n",
+             COLVARS_NOT_IMPLEMENTED);
+  return COLVARS_NOT_IMPLEMENTED;
 }
 
 
 cvm::real colvarbias::energy_difference(std::string const &conf)
 {
-  cvm::fatal_error ("Error: energy_difference() not implemented.\n");
-  return 0.;
+  cvm::error("Error: energy_difference() not implemented.\n",
+             COLVARS_NOT_IMPLEMENTED);
+  return 0.0;
 }
 
 
-void colvarbias_harmonic::change_configuration(std::string const &conf)
+// So far, these are only implemented in colvarbias_abf
+int colvarbias::bin_num()
 {
-  get_keyval (conf, "forceConstant", force_k, force_k);
-  if (get_keyval (conf, "centers", colvar_centers, colvar_centers)) {
-    for (size_t i = 0; i < colvars.size(); i++) {
-      colvar_centers[i].apply_constraints();
-      colvar_centers_raw[i] = colvar_centers[i];
-    }
-  }
+  cvm::error("Error: bin_num() not implemented.\n");
+  return COLVARS_NOT_IMPLEMENTED;
 }
-
-
-cvm::real colvarbias_harmonic::energy_difference(std::string const &conf)
+int colvarbias::current_bin()
 {
-  std::vector<colvarvalue> alt_colvar_centers;
-  cvm::real alt_force_k;
-  cvm::real alt_bias_energy = 0.0;
-
-  get_keyval (conf, "forceConstant", alt_force_k, force_k);
-
-  alt_colvar_centers.resize (colvars.size());
-  for (size_t i = 0; i < colvars.size(); i++) {
-    alt_colvar_centers[i].type (colvars[i]->type());
-  }
-  if (get_keyval (conf, "centers", alt_colvar_centers, colvar_centers)) {
-    for (size_t i = 0; i < colvars.size(); i++) {
-      colvar_centers[i].apply_constraints();
-    }
-  }
-
-  for (size_t i = 0; i < colvars.size(); i++) {
-    alt_bias_energy += 0.5 * alt_force_k / (colvars[i]->width * colvars[i]->width) *
-              colvars[i]->dist2(colvars[i]->value(), alt_colvar_centers[i]);
-  }
-
-  return alt_bias_energy - bias_energy;
+  cvm::error("Error: current_bin() not implemented.\n");
+  return COLVARS_NOT_IMPLEMENTED;
 }
-
-
-cvm::real colvarbias_harmonic::update()
+int colvarbias::bin_count(int bin_index)
 {
-  bias_energy = 0.0;
-
-  if (cvm::debug())
-    cvm::log ("Updating the harmonic bias \""+this->name+"\".\n");
-
-  // Setup first stage of staged variable force constant calculation
-  if (b_chg_force_k && target_nstages && stage == -1) {
-    stage = 0;
-    cvm::real lambda;
-    if (lambda_schedule.size()) {
-      lambda = lambda_schedule[0];
-    } else {
-      lambda = 0.0;
-    }
-    force_k = starting_force_k + (target_force_k - starting_force_k)
-              * std::pow (lambda, force_k_exp);
-    cvm::log ("Harmonic restraint " + this->name + ", stage " +
-        cvm::to_str(stage) + " : lambda = " + cvm::to_str(lambda));
-    cvm::log ("Setting force constant to " + cvm::to_str (force_k));
-  }
-  
-  // Force and energy calculation
-  for (size_t i = 0; i < colvars.size(); i++) {
-    colvar_forces[i] =
-      (-0.5) * force_k /
-      (colvars[i]->width * colvars[i]->width) *
-      colvars[i]->dist2_lgrad (colvars[i]->value(),
-                               colvar_centers[i]);
-    bias_energy += 0.5 * force_k / (colvars[i]->width * colvars[i]->width) *
-              colvars[i]->dist2(colvars[i]->value(), colvar_centers[i]);
-    if (cvm::debug())
-      cvm::log ("dist_grad["+cvm::to_str (i)+
-                "] = "+cvm::to_str (colvars[i]->dist2_lgrad (colvars[i]->value(),
-                               colvar_centers[i]))+"\n");
-  }
-
-  if (cvm::debug())
-    cvm::log ("Current forces for the harmonic bias \""+
-              this->name+"\": "+cvm::to_str (colvar_forces)+".\n");
-
-  if (b_chg_centers) {
-
-    if (!centers_incr.size()) {
-      // if this is the first calculation, calculate the advancement
-      // at each simulation step (or stage, if applicable)
-      // (take current stage into account: it can be non-zero
-      //  if we are restarting a staged calculation)
-      centers_incr.resize (colvars.size());
-      for (size_t i = 0; i < colvars.size(); i++) {
-        centers_incr[i].type (colvars[i]->type());
-        centers_incr[i] = (target_centers[i] - colvar_centers[i]) /
-          cvm::real ( target_nstages ? (target_nstages - stage) :
-                                      (target_nsteps - cvm::step_absolute()));
-      }
-      if (cvm::debug())
-        cvm::log ("Center increment for the harmonic bias \""+
-                  this->name+"\": "+cvm::to_str (centers_incr)+".\n");
-    }
-
-    if (cvm::debug())
-      cvm::log ("Current centers for the harmonic bias \""+
-                this->name+"\": "+cvm::to_str (colvar_centers)+".\n");
-
-    if (target_nstages) {
-      if (cvm::step_absolute() > 0
-            && (cvm::step_absolute() % target_nsteps) == 0
-            && stage < target_nstages) {
-
-          // any per-stage calculation, e.g. free energy stuff
-          // should be done here
-          for (size_t i = 0; i < colvars.size(); i++) {
-            colvar_centers_raw[i] += centers_incr[i];
-            colvar_centers[i] = colvar_centers_raw[i];
-            colvars[i]->wrap(colvar_centers[i]);
-            colvar_centers[i].apply_constraints();
-          }
-          stage++;
-          cvm::log ("Moving restraint stage " + cvm::to_str(stage) +
-              " : setting centers to " + cvm::to_str (colvar_centers));
-      }
-    } else if (cvm::step_absolute() < target_nsteps) {
-      // move the restraint centers in the direction of the targets
-      // (slow growth)
-      for (size_t i = 0; i < colvars.size(); i++) {
-        colvar_centers_raw[i] += centers_incr[i];
-        colvar_centers[i] = colvar_centers_raw[i];
-        colvars[i]->wrap(colvar_centers[i]);
-        colvar_centers[i].apply_constraints();
-      }
-    }
-  }
-
-  if (b_chg_force_k) {
-    // Coupling parameter, between 0 and 1
-    cvm::real lambda;
-
-    if (target_nstages) {
-      // TI calculation: estimate free energy derivative
-      // need current lambda
-      if (lambda_schedule.size()) {
-        lambda = lambda_schedule[stage];
-      } else {
-        lambda = cvm::real(stage) / cvm::real(target_nstages);
-      }
-
-      if (target_equil_steps == 0 || cvm::step_absolute() % target_nsteps >= target_equil_steps) {
-        // Start averaging after equilibration period, if requested
-        
-        // Square distance normalized by square colvar width
-        cvm::real dist_sq = 0.0;
-        for (size_t i = 0; i < colvars.size(); i++) {
-          dist_sq += colvars[i]->dist2 (colvars[i]->value(), colvar_centers[i])
-            / (colvars[i]->width * colvars[i]->width);
-        }
-
-        restraint_FE += 0.5 * force_k_exp * std::pow(lambda, force_k_exp - 1.0)
-          * (target_force_k - starting_force_k) * dist_sq;
-      }
-
-      // Finish current stage...
-      if (cvm::step_absolute() % target_nsteps == 0 &&
-          cvm::step_absolute() > 0) {
-
-          cvm::log ("Lambda= " + cvm::to_str (lambda) + " dA/dLambda= "
-              + cvm::to_str (restraint_FE / cvm::real(target_nsteps - target_equil_steps)));
-      
-        //  ...and move on to the next one
-        if (stage < target_nstages) {
-
-          restraint_FE = 0.0;
-          stage++;
-          if (lambda_schedule.size()) {
-            lambda = lambda_schedule[stage];
-          } else {
-            lambda = cvm::real(stage) / cvm::real(target_nstages);
-          }
-          force_k = starting_force_k + (target_force_k - starting_force_k)
-                    * std::pow (lambda, force_k_exp);
-          cvm::log ("Harmonic restraint " + this->name + ", stage " +
-              cvm::to_str(stage) + " : lambda = " + cvm::to_str(lambda));
-          cvm::log ("Setting force constant to " + cvm::to_str (force_k));
-        }
-      }
-    } else if (cvm::step_absolute() <= target_nsteps) {
-      // update force constant (slow growth)
-      lambda = cvm::real(cvm::step_absolute()) / cvm::real(target_nsteps);
-      force_k = starting_force_k + (target_force_k - starting_force_k)
-          * std::pow (lambda, force_k_exp);
-    }
-  }
-
-  if (cvm::debug())
-    cvm::log ("Done updating the harmonic bias \""+this->name+"\".\n");
-  return bias_energy;
+  cvm::error("Error: bin_count() not implemented.\n");
+  return COLVARS_NOT_IMPLEMENTED;
+}
+int colvarbias::replica_share()
+{
+  cvm::error("Error: replica_share() not implemented.\n");
+  return COLVARS_NOT_IMPLEMENTED;
 }
 
 
-std::istream & colvarbias_harmonic::read_restart (std::istream &is)
+std::string const colvarbias::get_state_params() const
+{
+  std::ostringstream os;
+  os << "step " << cvm::step_absolute() << "\n"
+     << "name " << this->name << "\n";
+  return os.str();
+}
+
+
+int colvarbias::set_state_params(std::string const &conf)
+{
+  std::string new_name = "";
+  if (colvarparse::get_keyval(conf, "name", new_name,
+                              std::string(""), colvarparse::parse_silent) &&
+      (new_name != this->name)) {
+    cvm::error("Error: in the state file, the "
+               "\""+bias_type+"\" block has a different name, \""+new_name+
+               "\": different system?\n", INPUT_ERROR);
+  }
+
+  if (name.size() == 0) {
+    cvm::error("Error: \""+bias_type+"\" block within the restart file "
+               "has no identifiers.\n", INPUT_ERROR);
+  }
+
+  colvarparse::get_keyval(conf, "step", state_file_step,
+                          cvm::step_absolute(), colvarparse::parse_silent);
+
+  return COLVARS_OK;
+}
+
+
+std::ostream & colvarbias::write_state(std::ostream &os)
+{
+  if (cvm::debug()) {
+    cvm::log("Writing state file for bias \""+name+"\"\n");
+  }
+  os.setf(std::ios::scientific, std::ios::floatfield);
+  os.precision(cvm::cv_prec);
+  os << bias_type << " {\n"
+     << "  configuration {\n";
+  std::istringstream is(get_state_params());
+  std::string line;
+  while (std::getline(is, line)) {
+    os << "    " << line << "\n";
+  }
+  os << "  }\n";
+  write_state_data(os);
+  os << "}\n\n";
+  return os;
+}
+
+
+std::istream & colvarbias::read_state(std::istream &is)
 {
   size_t const start_pos = is.tellg();
 
-  cvm::log ("Restarting harmonic bias \""+
-            this->name+"\".\n");
-
   std::string key, brace, conf;
-  if ( !(is >> key)   || !(key == "harmonic") ||
+  if ( !(is >> key)   || !(key == bias_type) ||
        !(is >> brace) || !(brace == "{") ||
-       !(is >> colvarparse::read_block ("configuration", conf)) ) {
-
-    cvm::log ("Error: in reading restart configuration for harmonic bias \""+
-              this->name+"\" at position "+
-              cvm::to_str (is.tellg())+" in stream.\n");
+       !(is >> colvarparse::read_block("configuration", conf)) ||
+       (set_state_params(conf) != COLVARS_OK) ) {
+    cvm::error("Error: in reading state configuration for \""+bias_type+"\" bias \""+
+               this->name+"\" at position "+
+               cvm::to_str(is.tellg())+" in stream.\n", INPUT_ERROR);
     is.clear();
-    is.seekg (start_pos, std::ios::beg);
-    is.setstate (std::ios::failbit);
+    is.seekg(start_pos, std::ios::beg);
+    is.setstate(std::ios::failbit);
     return is;
   }
 
-//   int id = -1; 
-  std::string name = "";
-//   if ( ( (colvarparse::get_keyval (conf, "id", id, -1, colvarparse::parse_silent)) &&
-//          (id != this->id) ) ||
-  if ( (colvarparse::get_keyval (conf, "name", name, std::string (""), colvarparse::parse_silent)) &&
-       (name != this->name) )
-    cvm::fatal_error ("Error: in the restart file, the "
-                      "\"harmonic\" block has a wrong name\n");
-//   if ( (id == -1) && (name == "") ) {
-  if (name.size() == 0) {
-    cvm::fatal_error ("Error: \"harmonic\" block in the restart file "
-                      "has no identifiers.\n");
-  }
-
-  if (b_chg_centers) {
-    cvm::log ("Reading the updated restraint centers from the restart.\n");
-    if (!get_keyval (conf, "centers", colvar_centers))
-      cvm::fatal_error ("Error: restraint centers are missing from the restart.\n");
-    if (!get_keyval (conf, "centers_raw", colvar_centers_raw))
-      cvm::fatal_error ("Error: \"raw\" restraint centers are missing from the restart.\n");
-  }
-
-  if (b_chg_force_k) {
-    cvm::log ("Reading the updated force constant from the restart.\n");
-    if (!get_keyval (conf, "forceConstant", force_k))
-      cvm::fatal_error ("Error: force constant is missing from the restart.\n");
-  }
-
-  if (target_nstages) {
-    cvm::log ("Reading current stage from the restart.\n");
-    if (!get_keyval (conf, "stage", stage))
-      cvm::fatal_error ("Error: current stage is missing from the restart.\n");
+  if (!read_state_data(is)) {
+    cvm::error("Error: in reading state data for \""+bias_type+"\" bias \""+
+               this->name+"\" at position "+
+               cvm::to_str(is.tellg())+" in stream.\n", INPUT_ERROR);
+    is.clear();
+    is.seekg(start_pos, std::ios::beg);
+    is.setstate(std::ios::failbit);
   }
 
   is >> brace;
   if (brace != "}") {
-    cvm::fatal_error ("Error: corrupt restart information for harmonic bias \""+
-                      this->name+"\": no matching brace at position "+
-                      cvm::to_str (is.tellg())+" in the restart file.\n");
-    is.setstate (std::ios::failbit);
+    cvm::error("Error: corrupt restart information for \""+bias_type+"\" bias \""+
+               this->name+"\": no matching brace at position "+
+               cvm::to_str(is.tellg())+" in stream.\n");
+    is.setstate(std::ios::failbit);
+  }
+
+  return is;
+}
+
+
+std::istream & colvarbias::read_state_data_key(std::istream &is, char const *key)
+{
+  size_t const start_pos = is.tellg();
+  std::string key_in;
+  if ( !(is >> key_in) ||
+       !(key_in == to_lower_cppstr(std::string(key))) ) {
+    cvm::error("Error: in reading restart configuration for "+
+               bias_type+" bias \""+this->name+"\" at position "+
+               cvm::to_str(is.tellg())+" in stream.\n", INPUT_ERROR);
+    is.clear();
+    is.seekg(start_pos, std::ios::beg);
+    is.setstate(std::ios::failbit);
+    return is;
   }
   return is;
 }
 
 
-std::ostream & colvarbias_harmonic::write_restart (std::ostream &os)
+
+std::ostream & colvarbias::write_traj_label(std::ostream &os)
 {
-  os << "harmonic {\n"
-     << "  configuration {\n"
-    //      << "    id " << this->id << "\n"
-     << "    name " << this->name << "\n";
-
-  if (b_chg_centers) {
-    os << "    centers ";
-    for (size_t i = 0; i < colvars.size(); i++) {
-      os << " " << colvar_centers[i];
-    }
-    os << "\n";
-    os << "    centers_raw ";
-    for (size_t i = 0; i < colvars.size(); i++) {
-      os << " " << colvar_centers_raw[i];
-    }
-    os << "\n";
-  }
-
-  if (b_chg_force_k) {
-    os << "    forceConstant "
-       << std::setprecision (cvm::en_prec)
-       << std::setw (cvm::en_width) << force_k << "\n";
-  }
-
-  if (target_nstages) {
-    os << "    stage " << std::setw (cvm::it_width)
-       << stage << "\n";
-  }
-
-  os << "  }\n"
-     << "}\n\n";
-
+  os << " ";
+  if (b_output_energy)
+    os << " E_"
+       << cvm::wrap_string(this->name, cvm::en_width-2);
   return os;
 }
 
+
+std::ostream & colvarbias::write_traj(std::ostream &os)
+{
+  os << " ";
+  if (b_output_energy)
+    os << " "
+       << std::setprecision(cvm::en_prec) << std::setw(cvm::en_width)
+       << bias_energy;
+  return os;
+}
+
+
+
+colvarbias_ti::colvarbias_ti(char const *key)
+  : colvarbias(key)
+{
+  provide(f_cvb_calc_ti_samples);
+  ti_avg_forces = NULL;
+  ti_count = NULL;
+}
+
+
+colvarbias_ti::~colvarbias_ti()
+{
+  colvarbias_ti::clear_state_data();
+}
+
+
+int colvarbias_ti::clear_state_data()
+{
+  if (ti_avg_forces != NULL) {
+    delete ti_avg_forces;
+    ti_avg_forces = NULL;
+  }
+  if (ti_count != NULL) {
+    delete ti_count;
+    ti_count = NULL;
+  }
+  return COLVARS_OK;
+}
+
+
+int colvarbias_ti::init(std::string const &conf)
+{
+  int error_code = COLVARS_OK;
+
+  get_keyval_feature(this, conf, "writeTISamples",
+                     f_cvb_write_ti_samples,
+                     is_enabled(f_cvb_write_ti_samples));
+
+  get_keyval_feature(this, conf, "writeTIPMF",
+                     f_cvb_write_ti_pmf,
+                     is_enabled(f_cvb_write_ti_pmf));
+
+  if ((num_variables() > 1) && is_enabled(f_cvb_write_ti_pmf)) {
+    return cvm::error("Error: only 1-dimensional PMFs can be written "
+                      "on the fly.\n"
+                      "Consider using writeTISamples instead and "
+                      "post-processing the sampled free-energy gradients.\n",
+                      COLVARS_NOT_IMPLEMENTED);
+  } else {
+    error_code |= init_grids();
+  }
+
+  if (is_enabled(f_cvb_write_ti_pmf)) {
+    enable(f_cvb_write_ti_samples);
+  }
+
+  if (is_enabled(f_cvb_calc_ti_samples)) {
+    std::vector<std::string> const time_biases =
+      cvm::main()->time_dependent_biases();
+    if (time_biases.size() > 0) {
+      if ((time_biases.size() > 1) || (time_biases[0] != this->name)) {
+        for (size_t i = 0; i < num_variables(); i++) {
+          if (! variables(i)->is_enabled(f_cv_subtract_applied_force)) {
+            return cvm::error("Error: cannot collect TI samples while other "
+                              "time-dependent biases are active and not all "
+                              "variables have subtractAppliedForces on.\n",
+                              INPUT_ERROR);
+          }
+        }
+      }
+    }
+  }
+
+  return error_code;
+}
+
+
+int colvarbias_ti::init_grids()
+{
+  if (is_enabled(f_cvb_calc_ti_samples)) {
+    if (ti_avg_forces == NULL) {
+      ti_bin.resize(num_variables());
+      ti_system_forces.resize(num_variables());
+      for (size_t icv = 0; icv < num_variables(); icv++) {
+        ti_system_forces[icv].type(variables(icv)->value());
+        ti_system_forces[icv].is_derivative();
+        ti_system_forces[icv].reset();
+      }
+      ti_avg_forces = new colvar_grid_gradient(colvars);
+      ti_count = new colvar_grid_count(colvars);
+      ti_avg_forces->samples = ti_count;
+      ti_count->has_parent_data = true;
+    }
+  }
+
+  return COLVARS_OK;
+}
+
+
+int colvarbias_ti::update()
+{
+  return update_system_forces(NULL);
+}
+
+
+int colvarbias_ti::update_system_forces(std::vector<colvarvalue> const
+                                        *subtract_forces)
+{
+  if (! is_enabled(f_cvb_calc_ti_samples)) {
+    return COLVARS_OK;
+  }
+
+  has_data = true;
+
+  if (cvm::debug()) {
+    cvm::log("Updating system forces for bias "+this->name+"\n");
+  }
+
+  colvarproxy *proxy = cvm::main()->proxy;
+
+  size_t i;
+
+  if (proxy->total_forces_same_step()) {
+    for (i = 0; i < num_variables(); i++) {
+      ti_bin[i] = ti_avg_forces->current_bin_scalar(i);
+    }
+  }
+
+  // Collect total colvar forces
+  if ((cvm::step_relative() > 0) || proxy->total_forces_same_step()) {
+    if (ti_avg_forces->index_ok(ti_bin)) {
+      for (i = 0; i < num_variables(); i++) {
+        if (variables(i)->is_enabled(f_cv_subtract_applied_force)) {
+          // this colvar is already subtracting all applied forces
+          ti_system_forces[i] = variables(i)->total_force();
+        } else {
+          ti_system_forces[i] = variables(i)->total_force() -
+            ((subtract_forces != NULL) ?
+             (*subtract_forces)[i] : previous_colvar_forces[i]);
+        }
+      }
+      ti_avg_forces->acc_value(ti_bin, ti_system_forces);
+    }
+  }
+
+  if (!proxy->total_forces_same_step()) {
+    // Set the index for use in the next iteration, when total forces come in
+    for (i = 0; i < num_variables(); i++) {
+      ti_bin[i] = ti_avg_forces->current_bin_scalar(i);
+    }
+  }
+
+  return COLVARS_OK;
+}
+
+
+std::string const colvarbias_ti::get_state_params() const
+{
+  return std::string("");
+}
+
+
+int colvarbias_ti::set_state_params(std::string const &state_conf)
+{
+  return COLVARS_OK;
+}
+
+
+std::ostream & colvarbias_ti::write_state_data(std::ostream &os)
+{
+  if (! is_enabled(f_cvb_calc_ti_samples)) {
+    return os;
+  }
+  os << "\nhistogram\n";
+  ti_count->write_raw(os);
+  os << "\nsystem_forces\n";
+  ti_avg_forces->write_raw(os);
+  return os;
+}
+
+
+std::istream & colvarbias_ti::read_state_data(std::istream &is)
+{
+  if (! is_enabled(f_cvb_calc_ti_samples)) {
+    return is;
+  }
+  if (cvm::debug()) {
+    cvm::log("Reading state data for the TI estimator.\n");
+  }
+  if (! read_state_data_key(is, "histogram")) {
+    return is;
+  }
+  if (! ti_count->read_raw(is)) {
+    return is;
+  }
+  if (! read_state_data_key(is, "system_forces")) {
+    return is;
+  }
+  if (! ti_avg_forces->read_raw(is)) {
+    return is;
+  }
+  if (cvm::debug()) {
+    cvm::log("Done reading state data for the TI estimator.\n");
+  }
+  return is;
+}
+
+
+int colvarbias_ti::write_output_files()
+{
+  if (!has_data) {
+    // nothing to write
+    return COLVARS_OK;
+  }
+
+  std::string const ti_output_prefix = cvm::output_prefix()+"."+this->name;
+
+  std::ostream *os = NULL;
+
+  if (is_enabled(f_cvb_write_ti_samples)) {
+    std::string const ti_count_file_name(ti_output_prefix+".ti.count");
+    os = cvm::proxy->output_stream(ti_count_file_name);
+    if (os) {
+      ti_count->write_multicol(*os);
+      cvm::proxy->close_output_stream(ti_count_file_name);
+    }
+
+    std::string const ti_grad_file_name(ti_output_prefix+".ti.grad");
+    os = cvm::proxy->output_stream(ti_grad_file_name);
+    if (os) {
+      ti_avg_forces->write_multicol(*os);
+      cvm::proxy->close_output_stream(ti_grad_file_name);
+    }
+  }
+
+  if (is_enabled(f_cvb_write_ti_pmf)) {
+    std::string const pmf_file_name(ti_output_prefix+".ti.pmf");
+    cvm::log("Writing TI PMF to file \""+pmf_file_name+"\".\n");
+    os = cvm::proxy->output_stream(pmf_file_name);
+    if (os) {
+      // get the FE gradient
+      ti_avg_forces->multiply_constant(-1.0);
+      ti_avg_forces->write_1D_integral(*os);
+      ti_avg_forces->multiply_constant(-1.0);
+      cvm::proxy->close_output_stream(pmf_file_name);
+    }
+  }
+
+  return COLVARS_OK;
+}
+
+
+// Static members
+
+std::vector<colvardeps::feature *> colvarbias::cvb_features;

@@ -14,7 +14,7 @@
 #ifndef LMP_DIHEDRAL_H
 #define LMP_DIHEDRAL_H
 
-#include "stdio.h"
+#include <stdio.h>
 #include "pointers.h"
 
 namespace LAMMPS_NS {
@@ -25,11 +25,16 @@ class Dihedral : protected Pointers {
  public:
   int allocated;
   int *setflag;
+  int writedata;                     // 1 if writes coeffs to data file
   double energy;                     // accumulated energy
-  double virial[6];                  // accumlated virial
+  double virial[6];                  // accumulated virial
   double *eatom,**vatom;             // accumulated per-atom energy/virial
-  unsigned int datamask;
-  unsigned int datamask_ext;
+
+  // KOKKOS host/device flag and data masks
+
+  ExecutionSpace execution_space;
+  unsigned int datamask_read,datamask_modify;
+  int copymode;
 
   Dihedral(class LAMMPS *);
   virtual ~Dihedral();
@@ -40,10 +45,8 @@ class Dihedral : protected Pointers {
   virtual void coeff(int, char **) = 0;
   virtual void write_restart(FILE *) = 0;
   virtual void read_restart(FILE *) = 0;
+  virtual void write_data(FILE *) {}
   virtual double memory_usage();
-
-  virtual unsigned int data_mask() {return datamask;}
-  virtual unsigned int data_mask_ext() {return datamask_ext;}
 
  protected:
   int suffix_flag;             // suffix compatibility flag
@@ -53,7 +56,7 @@ class Dihedral : protected Pointers {
   int vflag_either,vflag_global,vflag_atom;
   int maxeatom,maxvatom;
 
-  void ev_setup(int, int);
+  void ev_setup(int, int, int alloc = 1);
   void ev_tally(int, int, int, int, int, int, double,
                 double *, double *, double *, double, double, double,
                 double, double, double, double, double, double);

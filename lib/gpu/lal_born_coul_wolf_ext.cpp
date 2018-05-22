@@ -9,7 +9,7 @@
     This file is part of the LAMMPS Accelerator Library (LAMMPS_AL)
  __________________________________________________________________________
 
-    begin                : 
+    begin                :
     email                : nguyentd@ornl.gov
  ***************************************************************************/
 
@@ -28,7 +28,7 @@ static BornCoulWolf<PRECISION,ACC_PRECISION> BORNCWMF;
 // Allocate memory on host and device and copy constants to device
 // ---------------------------------------------------------------------------
 int borncw_gpu_init(const int ntypes, double **cutsq, double **host_rhoinv,
-                    double **host_born1, double **host_born2, double **host_born3, 
+                    double **host_born1, double **host_born2, double **host_born3,
                     double **host_a, double **host_c, double **host_d,
                     double **sigma, double **offset, double *special_lj, const int inum,
                     const int nall, const int max_nbors, const int maxspecial,
@@ -52,7 +52,7 @@ int borncw_gpu_init(const int ntypes, double **cutsq, double **host_rhoinv,
     message=true;
 
   if (message) {
-    fprintf(screen,"Initializing GPU and compiling on process 0...");
+    fprintf(screen,"Initializing Device and compiling on process 0...");
     fflush(screen);
   }
 
@@ -60,9 +60,9 @@ int borncw_gpu_init(const int ntypes, double **cutsq, double **host_rhoinv,
   if (world_me==0)
     init_ok=BORNCWMF.init(ntypes, cutsq, host_rhoinv, host_born1, host_born2,
                           host_born3, host_a, host_c, host_d, sigma,
-                          offset, special_lj, inum, nall, 300, 
+                          offset, special_lj, inum, nall, 300,
                           maxspecial, cell_size, gpu_split, screen, host_cut_ljsq,
-                          host_cut_coulsq, host_special_coul, qqrd2e, 
+                          host_cut_coulsq, host_special_coul, qqrd2e,
                           alf, e_shift, f_shift);
 
   BORNCWMF.device->world_barrier();
@@ -72,22 +72,22 @@ int borncw_gpu_init(const int ntypes, double **cutsq, double **host_rhoinv,
   for (int i=0; i<procs_per_gpu; i++) {
     if (message) {
       if (last_gpu-first_gpu==0)
-        fprintf(screen,"Initializing GPU %d on core %d...",first_gpu,i);
+        fprintf(screen,"Initializing Device %d on core %d...",first_gpu,i);
       else
-        fprintf(screen,"Initializing GPUs %d-%d on core %d...",first_gpu,
+        fprintf(screen,"Initializing Devices %d-%d on core %d...",first_gpu,
                 last_gpu,i);
       fflush(screen);
     }
     if (gpu_rank==i && world_me!=0)
-      init_ok=BORNCWMF.init(ntypes, cutsq, host_rhoinv, host_born1, host_born2, 
-                            host_born3, host_a, host_c, host_d, sigma, 
-                            offset, special_lj, inum, nall, 300, 
+      init_ok=BORNCWMF.init(ntypes, cutsq, host_rhoinv, host_born1, host_born2,
+                            host_born3, host_a, host_c, host_d, sigma,
+                            offset, special_lj, inum, nall, 300,
                             maxspecial, cell_size, gpu_split, screen, host_cut_ljsq,
-                            host_cut_coulsq, host_special_coul, qqrd2e, 
+                            host_cut_coulsq, host_special_coul, qqrd2e,
                             alf, e_shift, f_shift);
 
     BORNCWMF.device->gpu_barrier();
-    if (message) 
+    if (message)
       fprintf(screen,"Done.\n");
   }
   if (message)
@@ -104,8 +104,8 @@ void borncw_gpu_clear() {
 
 int** borncw_gpu_compute_n(const int ago, const int inum_full,
                            const int nall, double **host_x, int *host_type,
-                           double *sublo, double *subhi, int *tag, int **nspecial, 
-                           int **special, const bool eflag, const bool vflag,
+                           double *sublo, double *subhi, tagint *tag, int **nspecial,
+                           tagint **special, const bool eflag, const bool vflag,
                            const bool eatom, const bool vatom, int &host_start,
                            int **ilist, int **jnum,  const double cpu_time,
                            bool &success, double *host_q, double *boxlo,
@@ -114,8 +114,8 @@ int** borncw_gpu_compute_n(const int ago, const int inum_full,
                           subhi, tag, nspecial, special, eflag, vflag, eatom,
                           vatom, host_start, ilist, jnum, cpu_time, success,
                           host_q, boxlo, prd);
-}  
-			
+}
+
 void borncw_gpu_compute(const int ago, const int inum_full, const int nall,
                         double **host_x, int *host_type, int *ilist, int *numj,
                         int **firstneigh, const bool eflag, const bool vflag,

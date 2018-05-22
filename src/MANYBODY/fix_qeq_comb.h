@@ -1,4 +1,4 @@
-/* ----------------------------------------------------------------------
+/* -*- c++ -*- ----------------------------------------------------------
    LAMMPS - Large-scale Atomic/Molecular Massively Parallel Simulator
    http://lammps.sandia.gov, Sandia National Laboratories
    Steve Plimpton, sjplimp@sandia.gov
@@ -20,7 +20,7 @@ FixStyle(qeq/comb,FixQEQComb)
 #ifndef LMP_FIX_QEQ_COMB_H
 #define LMP_FIX_QEQ_COMB_H
 
-#include "stdio.h"
+#include <stdio.h>
 #include "fix.h"
 
 namespace LAMMPS_NS {
@@ -35,17 +35,20 @@ class FixQEQComb : public Fix {
   virtual void post_force(int);
   void post_force_respa(int,int,int);
   double memory_usage();
-  int pack_comm(int , int *, double *, int, int *);
-  void unpack_comm(int , int , double *);
+  int pack_forward_comm(int , int *, double *, int, int *);
+  void unpack_forward_comm(int , int , double *);
+
+  void min_post_force(int);
 
  protected:
   int me,firstflag;
   double precision;
-  int nlevels_respa;
+  int ilevel_respa;
   bigint ngroup;
   FILE *fp;
 
   class PairComb *comb;
+  class PairComb3 *comb3;
   int nmax;
   double *qf,*q1,*q2;
 };
@@ -72,7 +75,7 @@ E: Fix qeq/comb requires atom attribute q
 
 An atom style with charge must be used to perform charge equilibration.
 
-E: Must use pair_style comb with fix qeq/comb
+E: Must use pair_style comb or comb3 with fix qeq/comb
 
 Self-explanatory.
 

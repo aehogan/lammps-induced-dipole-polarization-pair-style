@@ -12,7 +12,7 @@
    Contributing author: Axel Kohlmeyer (Temple U)
 ------------------------------------------------------------------------- */
 
-#include "math.h"
+#include <math.h>
 #include "pair_born_coul_wolf_omp.h"
 #include "atom.h"
 #include "comm.h"
@@ -54,6 +54,7 @@ void PairBornCoulWolfOMP::compute(int eflag, int vflag)
 
     loop_setup_thr(ifrom, ito, tid, inum, nthreads);
     ThrData *thr = fix->get_thr(tid);
+    thr->timer(Timer::START);
     ev_setup_thr(eflag, vflag, nall, eatom, vatom, thr);
 
     if (evflag) {
@@ -69,6 +70,7 @@ void PairBornCoulWolfOMP::compute(int eflag, int vflag)
       else eval<0,0,0>(ifrom, ito, thr);
     }
 
+    thr->timer(Timer::PAIR);
     reduce_thr(this, eflag, vflag, thr);
   } // end of omp parallel region
 }
@@ -88,10 +90,10 @@ void PairBornCoulWolfOMP::eval(int iifrom, int iito, ThrData * const thr)
 
   evdwl = ecoul = 0.0;
 
-  const double * const * const x = atom->x;
-  double * const * const f = thr->get_f();
-  const double * const q = atom->q;
-  const int * const type = atom->type;
+  const dbl3_t * _noalias const x = (dbl3_t *) atom->x[0];
+  dbl3_t * _noalias const f = (dbl3_t *) thr->get_f()[0];
+  const double * _noalias const q = atom->q;
+  const int * _noalias const type = atom->type;
   int nlocal = atom->nlocal;
   double *special_coul = force->special_coul;
   double *special_lj = force->special_lj;
@@ -115,9 +117,9 @@ void PairBornCoulWolfOMP::eval(int iifrom, int iito, ThrData * const thr)
 
     i = ilist[ii];
     qtmp = q[i];
-    xtmp = x[i][0];
-    ytmp = x[i][1];
-    ztmp = x[i][2];
+    xtmp = x[i].x;
+    ytmp = x[i].y;
+    ztmp = x[i].z;
     itype = type[i];
     jlist = firstneigh[i];
     jnum = numneigh[i];
@@ -125,7 +127,7 @@ void PairBornCoulWolfOMP::eval(int iifrom, int iito, ThrData * const thr)
 
     qisq = qtmp*qtmp;
     e_self = -(e_shift/2.0 + alf/MY_PIS) * qisq*qqrd2e;
-    if (EVFLAG) ev_tally_thr(this,i,i,nlocal,0,0.0,e_self,0.0,0.0,0.0,0.0,thr);
+    if (EFLAG) ev_tally_thr(this,i,i,nlocal,0,0.0,e_self,0.0,0.0,0.0,0.0,thr);
 
     for (jj = 0; jj < jnum; jj++) {
       j = jlist[jj];
@@ -133,9 +135,9 @@ void PairBornCoulWolfOMP::eval(int iifrom, int iito, ThrData * const thr)
       factor_coul = special_coul[sbmask(j)];
       j &= NEIGHMASK;
 
-      delx = xtmp - x[j][0];
-      dely = ytmp - x[j][1];
-      delz = ztmp - x[j][2];
+      delx = xtmp - x[j].x;
+      dely = ytmp - x[j].y;
+      delz = ztmp - x[j].z;
       rsq = delx*delx + dely*dely + delz*delz;
       jtype = type[j];
 
@@ -166,9 +168,9 @@ void PairBornCoulWolfOMP::eval(int iifrom, int iito, ThrData * const thr)
         fytmp += dely*fpair;
         fztmp += delz*fpair;
         if (NEWTON_PAIR || j < nlocal) {
-          f[j][0] -= delx*fpair;
-          f[j][1] -= dely*fpair;
-          f[j][2] -= delz*fpair;
+          f[j].x -= delx*fpair;
+          f[j].y -= dely*fpair;
+          f[j].z -= delz*fpair;
         }
 
         if (EFLAG) {
@@ -187,9 +189,9 @@ void PairBornCoulWolfOMP::eval(int iifrom, int iito, ThrData * const thr)
                                  evdwl,ecoul,fpair,delx,dely,delz,thr);
       }
     }
-    f[i][0] += fxtmp;
-    f[i][1] += fytmp;
-    f[i][2] += fztmp;
+    f[i].x += fxtmp;
+    f[i].y += fytmp;
+    f[i].z += fztmp;
   }
 }
 

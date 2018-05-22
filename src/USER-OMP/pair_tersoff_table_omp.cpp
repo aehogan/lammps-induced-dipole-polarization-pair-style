@@ -12,12 +12,13 @@
    Contributing author: Axel Kohlmeyer (Temple U)
 ------------------------------------------------------------------------- */
 
-#include "math.h"
+#include <math.h>
 #include "pair_tersoff_table_omp.h"
 #include "atom.h"
 #include "comm.h"
 #include "error.h"
 #include "force.h"
+#include "memory.h"
 #include "neighbor.h"
 #include "neigh_list.h"
 
@@ -41,7 +42,20 @@ PairTersoffTableOMP::PairTersoffTableOMP(LAMMPS *lmp) :
 {
   suffix_flag |= Suffix::OMP;
   respa_enable = 0;
+
+  thrGtetaFunction = thrGtetaFunctionDerived = NULL;
+  thrCutoffFunction = thrCutoffFunctionDerived = NULL;
 }
+
+/* ---------------------------------------------------------------------- */
+
+PairTersoffTableOMP::~PairTersoffTableOMP()
+{
+  if (allocated) {
+    deallocatePreLoops();
+  }
+}
+
 
 /* ---------------------------------------------------------------------- */
 
@@ -63,6 +77,7 @@ void PairTersoffTableOMP::compute(int eflag, int vflag)
 
     loop_setup_thr(ifrom, ito, tid, inum, nthreads);
     ThrData *thr = fix->get_thr(tid);
+    thr->timer(Timer::START);
     ev_setup_thr(eflag, vflag, nall, eatom, vatom, thr);
 
     if (evflag)
@@ -70,6 +85,7 @@ void PairTersoffTableOMP::compute(int eflag, int vflag)
       else eval<1,0>(ifrom, ito, thr);
     else eval<0,0>(ifrom, ito, thr);
 
+    thr->timer(Timer::PAIR);
     reduce_thr(this, eflag, vflag, thr);
   } // end of omp parallel region
 }
@@ -77,14 +93,13 @@ void PairTersoffTableOMP::compute(int eflag, int vflag)
 template <int EVFLAG, int VFLAG_ATOM>
 void PairTersoffTableOMP::eval(int iifrom, int iito, ThrData * const thr)
 {
-  int i,j,k,ii,inum,jnum;
+  int i,j,k,ii,jnum;
   int itype,jtype,ktype,ijparam,ikparam,ijkparam;
   double xtmp,ytmp,ztmp;
   double fxtmp,fytmp,fztmp;
   int *ilist,*jlist,*numneigh,**firstneigh;
 
   int interpolIDX;
-  double r_ik_x, r_ik_y, r_ik_z;
   double directorCos_ij_x, directorCos_ij_y, directorCos_ij_z, directorCos_ik_x, directorCos_ik_y, directorCos_ik_z;
   double invR_ij, invR_ik, cosTeta;
   double repulsivePotential, attractivePotential;
@@ -98,13 +113,12 @@ void PairTersoffTableOMP::eval(int iifrom, int iito, ThrData * const thr)
 
   double evdwl = 0.0;
 
-  const double * const * const x = atom->x;
-  double * const * const f = thr->get_f();
-  const int * const type = atom->type;
+  const dbl3_t * _noalias const x = (dbl3_t *) atom->x[0];
+  dbl3_t * _noalias const f = (dbl3_t *) thr->get_f()[0];
+  const int * _noalias const type = atom->type;
   const int nlocal = atom->nlocal;
   const int tid = thr->get_tid();
 
-  inum = list->inum;
   ilist = list->ilist;
   numneigh = list->numneigh;
   firstneigh = list->firstneigh;
@@ -114,9 +128,9 @@ void PairTersoffTableOMP::eval(int iifrom, int iito, ThrData * const thr)
 
     i = ilist[ii];
     itype = map[type[i]];
-    xtmp = x[i][0];
-    ytmp = x[i][1];
-    ztmp = x[i][2];
+    xtmp = x[i].x;
+    ytmp = x[i].y;
+    ztmp = x[i].z;
     fxtmp = fytmp = fztmp = 0.0;
 
     jlist = firstneigh[i];
@@ -136,9 +150,9 @@ void PairTersoffTableOMP::eval(int iifrom, int iito, ThrData * const thr)
       j = jlist[neighbor_j];
       j &= NEIGHMASK;
 
-      dr_ij[0] = xtmp - x[j][0];
-      dr_ij[1] = ytmp - x[j][1];
-      dr_ij[2] = ztmp - x[j][2];
+      dr_ij[0] = xtmp - x[j].x;
+      dr_ij[1] = ytmp - x[j].y;
+      dr_ij[2] = ztmp - x[j].z;
       r_ij = dr_ij[0]*dr_ij[0] + dr_ij[1]*dr_ij[1] + dr_ij[2]*dr_ij[2];
 
       jtype = map[type[j]];
@@ -160,11 +174,11 @@ void PairTersoffTableOMP::eval(int iifrom, int iito, ThrData * const thr)
       interpolIDX = (int) interpolTMP;
       interpolY1 = cutoffFunction[itype][jtype][interpolIDX];
       interpolY2 = cutoffFunction[itype][jtype][interpolIDX+1];
-      preCutoffFunction[neighbor_j] = interpolY1 + (interpolY2 - interpolY1) * (interpolTMP - interpolIDX);
+      thrCutoffFunction[tid][neighbor_j] = interpolY1 + (interpolY2 - interpolY1) * (interpolTMP - interpolIDX);
       // preCutoffFunctionDerived
       interpolY1 = cutoffFunctionDerived[itype][jtype][interpolIDX];
       interpolY2 = cutoffFunctionDerived[itype][jtype][interpolIDX+1];
-      preCutoffFunctionDerived[neighbor_j] = interpolY1 + (interpolY2 - interpolY1) * (interpolTMP - interpolIDX);
+      thrCutoffFunctionDerived[tid][neighbor_j] = interpolY1 + (interpolY2 - interpolY1) * (interpolTMP - interpolIDX);
 
 
       for (int neighbor_k = neighbor_j + 1; neighbor_k < jnum; neighbor_k++) {
@@ -176,9 +190,9 @@ void PairTersoffTableOMP::eval(int iifrom, int iito, ThrData * const thr)
         ikparam = elem2param[itype][ktype][ktype];
         ijkparam = elem2param[itype][jtype][ktype];
 
-        dr_ik[0] = xtmp -x[k][0];
-        dr_ik[1] = ytmp -x[k][1];
-        dr_ik[2] = ztmp -x[k][2];
+        dr_ik[0] = xtmp -x[k].x;
+        dr_ik[1] = ytmp -x[k].y;
+        dr_ik[2] = ztmp -x[k].z;
         r_ik = dr_ik[0]*dr_ik[0] + dr_ik[1]*dr_ik[1] + dr_ik[2]*dr_ik[2];
 
         if (r_ik > params[ikparam].cutsq) continue;
@@ -205,17 +219,17 @@ void PairTersoffTableOMP::eval(int iifrom, int iito, ThrData * const thr)
         interpolY2 = gtetaFunctionDerived[itype][interpolIDX+1];
         gtetaFunctionDerived_temp = interpolY1 + (interpolY2 - interpolY1) * (interpolTMP - interpolIDX);
 
-        preGtetaFunction[neighbor_j][neighbor_k]=params[ijkparam].gamma*gtetaFunction_temp;
-        preGtetaFunctionDerived[neighbor_j][neighbor_k]=params[ijkparam].gamma*gtetaFunctionDerived_temp;
-        preGtetaFunction[neighbor_k][neighbor_j]=params[ijkparam].gamma*gtetaFunction_temp;
-        preGtetaFunctionDerived[neighbor_k][neighbor_j]=params[ijkparam].gamma*gtetaFunctionDerived_temp;
+        thrGtetaFunction[tid][neighbor_j][neighbor_k]=params[ijkparam].gamma*gtetaFunction_temp;
+        thrGtetaFunctionDerived[tid][neighbor_j][neighbor_k]=params[ijkparam].gamma*gtetaFunctionDerived_temp;
+        thrGtetaFunction[tid][neighbor_k][neighbor_j]=params[ijkparam].gamma*gtetaFunction_temp;
+        thrGtetaFunctionDerived[tid][neighbor_k][neighbor_j]=params[ijkparam].gamma*gtetaFunctionDerived_temp;
 
       } // loop on K
 
     } // loop on J
 
 
-    // loop over neighbours of atom i
+    // loop over neighbors of atom i
     for (int neighbor_j = 0; neighbor_j < jnum; neighbor_j++) {
 
       double dr_ij[3], r_ij, f_ij[3];
@@ -223,9 +237,9 @@ void PairTersoffTableOMP::eval(int iifrom, int iito, ThrData * const thr)
       j = jlist[neighbor_j];
       j &= NEIGHMASK;
 
-      dr_ij[0] = xtmp - x[j][0];
-      dr_ij[1] = ytmp - x[j][1];
-      dr_ij[2] = ztmp - x[j][2];
+      dr_ij[0] = xtmp - x[j].x;
+      dr_ij[1] = ytmp - x[j].y;
+      dr_ij[2] = ztmp - x[j].z;
       r_ij = dr_ij[0]*dr_ij[0] + dr_ij[1]*dr_ij[1] + dr_ij[2]*dr_ij[2];
 
       jtype = map[type[j]];
@@ -261,12 +275,12 @@ void PairTersoffTableOMP::eval(int iifrom, int iito, ThrData * const thr)
       repulsivePotential = params[ijparam].biga * repulsiveExponential;
       attractivePotential = -params[ijparam].bigb * attractiveExponential;
 
-      cutoffFunctionIJ = preCutoffFunction[neighbor_j];
-      cutoffFunctionDerivedIJ = preCutoffFunctionDerived[neighbor_j];
+      cutoffFunctionIJ = thrCutoffFunction[tid][neighbor_j];
+      cutoffFunctionDerivedIJ = thrCutoffFunctionDerived[tid][neighbor_j];
 
       zeta = 0.0;
 
-      // first loop over neighbours of atom i except j - part 1/2
+      // first loop over neighbors of atom i except j - part 1/2
       for (int neighbor_k = 0; neighbor_k < neighbor_j; neighbor_k++) {
         double dr_ik[3], r_ik;
 
@@ -276,30 +290,22 @@ void PairTersoffTableOMP::eval(int iifrom, int iito, ThrData * const thr)
         ikparam = elem2param[itype][ktype][ktype];
         ijkparam = elem2param[itype][jtype][ktype];
 
-        dr_ik[0] = xtmp -x[k][0];
-        dr_ik[1] = ytmp -x[k][1];
-        dr_ik[2] = ztmp -x[k][2];
+        dr_ik[0] = xtmp -x[k].x;
+        dr_ik[1] = ytmp -x[k].y;
+        dr_ik[2] = ztmp -x[k].z;
         r_ik = dr_ik[0]*dr_ik[0] + dr_ik[1]*dr_ik[1] + dr_ik[2]*dr_ik[2];
 
         if (r_ik > params[ikparam].cutsq) continue;
 
-        r_ik = sqrt(r_ik);
+        gtetaFunctionIJK = thrGtetaFunction[tid][neighbor_j][neighbor_k];
 
-        invR_ik = 1.0 / r_ik;
-
-        directorCos_ik_x = invR_ik * r_ik_x;
-        directorCos_ik_y = invR_ik * r_ik_y;
-        directorCos_ik_z = invR_ik * r_ik_z;
-
-        gtetaFunctionIJK = preGtetaFunction[neighbor_j][neighbor_k];
-
-        cutoffFunctionIK = preCutoffFunction[neighbor_k];
+        cutoffFunctionIK = thrCutoffFunction[tid][neighbor_k];
 
         zeta += cutoffFunctionIK * gtetaFunctionIJK;
 
       }
 
-      // first loop over neighbours of atom i except j - part 2/2
+      // first loop over neighbors of atom i except j - part 2/2
       for (int neighbor_k = neighbor_j+1; neighbor_k < jnum; neighbor_k++) {
         double dr_ik[3], r_ik;
 
@@ -309,23 +315,16 @@ void PairTersoffTableOMP::eval(int iifrom, int iito, ThrData * const thr)
         ikparam = elem2param[itype][ktype][ktype];
         ijkparam = elem2param[itype][jtype][ktype];
 
-        dr_ik[0] = xtmp -x[k][0];
-        dr_ik[1] = ytmp -x[k][1];
-        dr_ik[2] = ztmp -x[k][2];
+        dr_ik[0] = xtmp -x[k].x;
+        dr_ik[1] = ytmp -x[k].y;
+        dr_ik[2] = ztmp -x[k].z;
         r_ik = dr_ik[0]*dr_ik[0] + dr_ik[1]*dr_ik[1] + dr_ik[2]*dr_ik[2];
 
         if (r_ik > params[ikparam].cutsq) continue;
 
-        r_ik = sqrt(r_ik);
-        invR_ik = 1.0 / r_ik;
+        gtetaFunctionIJK = thrGtetaFunction[tid][neighbor_j][neighbor_k];
 
-        directorCos_ik_x = invR_ik * dr_ik[0];
-        directorCos_ik_y = invR_ik * dr_ik[1];
-        directorCos_ik_z = invR_ik * dr_ik[2];
-
-        gtetaFunctionIJK = preGtetaFunction[neighbor_j][neighbor_k];
-
-        cutoffFunctionIK = preCutoffFunction[neighbor_k];
+        cutoffFunctionIK = thrCutoffFunction[tid][neighbor_k];
 
         zeta += cutoffFunctionIK * gtetaFunctionIJK;
       }
@@ -349,9 +348,9 @@ void PairTersoffTableOMP::eval(int iifrom, int iito, ThrData * const thr)
       f_ij[1] = factor_force_ij * directorCos_ij_y;
       f_ij[2] = factor_force_ij * directorCos_ij_z;
 
-      f[j][0] += f_ij[0];
-      f[j][1] += f_ij[1];
-      f[j][2] += f_ij[2];
+      f[j].x += f_ij[0];
+      f[j].y += f_ij[1];
+      f[j].z += f_ij[2];
 
       fxtmp -= f_ij[0];
       fytmp -= f_ij[1];
@@ -366,7 +365,7 @@ void PairTersoffTableOMP::eval(int iifrom, int iito, ThrData * const thr)
 
       factor_force_tot= 0.5*cutoffFunctionIJ*attractivePotential*betaZetaPowerDerivedIJK;
 
-      // second loop over neighbours of atom i except j, forces and virial only - part 1/2
+      // second loop over neighbors of atom i except j, forces and virial only - part 1/2
       for (int neighbor_k = 0; neighbor_k < neighbor_j; neighbor_k++) {
         double dr_ik[3], r_ik, f_ik[3];
 
@@ -376,9 +375,9 @@ void PairTersoffTableOMP::eval(int iifrom, int iito, ThrData * const thr)
         ikparam = elem2param[itype][ktype][ktype];
         ijkparam = elem2param[itype][jtype][ktype];
 
-        dr_ik[0] = xtmp -x[k][0];
-        dr_ik[1] = ytmp -x[k][1];
-        dr_ik[2] = ztmp -x[k][2];
+        dr_ik[0] = xtmp -x[k].x;
+        dr_ik[1] = ytmp -x[k].y;
+        dr_ik[2] = ztmp -x[k].z;
         r_ik = dr_ik[0]*dr_ik[0] + dr_ik[1]*dr_ik[1] + dr_ik[2]*dr_ik[2];
 
         if (r_ik > params[ikparam].cutsq) continue;
@@ -393,13 +392,13 @@ void PairTersoffTableOMP::eval(int iifrom, int iito, ThrData * const thr)
         cosTeta = directorCos_ij_x * directorCos_ik_x + directorCos_ij_y * directorCos_ik_y
           + directorCos_ij_z * directorCos_ik_z;
 
-        gtetaFunctionIJK = preGtetaFunction[neighbor_j][neighbor_k];
+        gtetaFunctionIJK = thrGtetaFunction[tid][neighbor_j][neighbor_k];
 
-        gtetaFunctionDerivedIJK = preGtetaFunctionDerived[neighbor_j][neighbor_k];
+        gtetaFunctionDerivedIJK = thrGtetaFunctionDerived[tid][neighbor_j][neighbor_k];
 
-        cutoffFunctionIK = preCutoffFunction[neighbor_k];
+        cutoffFunctionIK = thrCutoffFunction[tid][neighbor_k];
 
-        cutoffFunctionDerivedIK = preCutoffFunctionDerived[neighbor_k];
+        cutoffFunctionDerivedIK = thrCutoffFunctionDerived[tid][neighbor_k];
 
         factor_force3_ij= cutoffFunctionIK * gtetaFunctionDerivedIJK * invR_ij *factor_force_tot;
 
@@ -417,13 +416,13 @@ void PairTersoffTableOMP::eval(int iifrom, int iito, ThrData * const thr)
         f_ik[2] = factor_1_force3_ik * (directorCos_ik_z*cosTeta - directorCos_ij_z)
           + factor_2_force3_ik * directorCos_ik_z;
 
-        f[j][0] -= f_ij[0];
-        f[j][1] -= f_ij[1];
-        f[j][2] -= f_ij[2];
+        f[j].x -= f_ij[0];
+        f[j].y -= f_ij[1];
+        f[j].z -= f_ij[2];
 
-        f[k][0] -= f_ik[0];
-        f[k][1] -= f_ik[1];
-        f[k][2] -= f_ik[2];
+        f[k].x -= f_ik[0];
+        f[k].y -= f_ik[1];
+        f[k].z -= f_ik[2];
 
         fxtmp += f_ij[0] + f_ik[0];
         fytmp += f_ij[1] + f_ik[1];
@@ -432,7 +431,7 @@ void PairTersoffTableOMP::eval(int iifrom, int iito, ThrData * const thr)
         if (VFLAG_ATOM) v_tally3_thr(i,j,k,f_ij,f_ik,dr_ij,dr_ik,thr);
       }
 
-      // second loop over neighbours of atom i except j, forces and virial only - part 2/2
+      // second loop over neighbors of atom i except j, forces and virial only - part 2/2
       for (int neighbor_k = neighbor_j+1; neighbor_k < jnum; neighbor_k++) {
         double dr_ik[3], r_ik, f_ik[3];
 
@@ -442,9 +441,9 @@ void PairTersoffTableOMP::eval(int iifrom, int iito, ThrData * const thr)
         ikparam = elem2param[itype][ktype][ktype];
         ijkparam = elem2param[itype][jtype][ktype];
 
-        dr_ik[0] = xtmp -x[k][0];
-        dr_ik[1] = ytmp -x[k][1];
-        dr_ik[2] = ztmp -x[k][2];
+        dr_ik[0] = xtmp -x[k].x;
+        dr_ik[1] = ytmp -x[k].y;
+        dr_ik[2] = ztmp -x[k].z;
         r_ik = dr_ik[0]*dr_ik[0] + dr_ik[1]*dr_ik[1] + dr_ik[2]*dr_ik[2];
 
         if (r_ik > params[ikparam].cutsq) continue;
@@ -459,13 +458,13 @@ void PairTersoffTableOMP::eval(int iifrom, int iito, ThrData * const thr)
         cosTeta = directorCos_ij_x * directorCos_ik_x + directorCos_ij_y * directorCos_ik_y
           + directorCos_ij_z * directorCos_ik_z;
 
-        gtetaFunctionIJK = preGtetaFunction[neighbor_j][neighbor_k];
+        gtetaFunctionIJK = thrGtetaFunction[tid][neighbor_j][neighbor_k];
 
-        gtetaFunctionDerivedIJK = preGtetaFunctionDerived[neighbor_j][neighbor_k];
+        gtetaFunctionDerivedIJK = thrGtetaFunctionDerived[tid][neighbor_j][neighbor_k];
 
-        cutoffFunctionIK = preCutoffFunction[neighbor_k];
+        cutoffFunctionIK = thrCutoffFunction[tid][neighbor_k];
 
-        cutoffFunctionDerivedIK = preCutoffFunctionDerived[neighbor_k];
+        cutoffFunctionDerivedIK = thrCutoffFunctionDerived[tid][neighbor_k];
 
         factor_force3_ij= cutoffFunctionIK * gtetaFunctionDerivedIJK * invR_ij *factor_force_tot;
 
@@ -483,13 +482,13 @@ void PairTersoffTableOMP::eval(int iifrom, int iito, ThrData * const thr)
         f_ik[2] = factor_1_force3_ik * (directorCos_ik_z*cosTeta - directorCos_ij_z)
           + factor_2_force3_ik * directorCos_ik_z;
 
-        f[j][0] -= f_ij[0];
-        f[j][1] -= f_ij[1];
-        f[j][2] -= f_ij[2];
+        f[j].x -= f_ij[0];
+        f[j].y -= f_ij[1];
+        f[j].z -= f_ij[2];
 
-        f[k][0] -= f_ik[0];
-        f[k][1] -= f_ik[1];
-        f[k][2] -= f_ik[2];
+        f[k].x -= f_ik[0];
+        f[k].y -= f_ik[1];
+        f[k].z -= f_ik[2];
 
         fxtmp += f_ij[0] + f_ik[0];
         fytmp += f_ij[1] + f_ik[1];
@@ -499,10 +498,30 @@ void PairTersoffTableOMP::eval(int iifrom, int iito, ThrData * const thr)
 
       }
     } // loop on J
-    f[i][0] += fxtmp;
-    f[i][1] += fytmp;
-    f[i][2] += fztmp;
+    f[i].x += fxtmp;
+    f[i].y += fytmp;
+    f[i].z += fztmp;
   } // loop on I
+}
+
+void PairTersoffTableOMP::deallocatePreLoops(void)
+{
+    memory->destroy(thrGtetaFunction);
+    memory->destroy(thrGtetaFunctionDerived);
+    memory->destroy(thrCutoffFunction);
+    memory->destroy(thrCutoffFunctionDerived);
+}
+
+void PairTersoffTableOMP::allocatePreLoops(void)
+{
+  const int nthreads = comm->nthreads;
+  memory->create(thrGtetaFunction,nthreads,leadingDimensionInteractionList,leadingDimensionInteractionList,"tersofftable:thrGtetaFunction");
+
+  memory->create(thrGtetaFunctionDerived,nthreads,leadingDimensionInteractionList,leadingDimensionInteractionList,"tersofftable:thrGtetaFunctionDerived");
+
+  memory->create(thrCutoffFunction,nthreads,leadingDimensionInteractionList,"tersofftable:thrCutoffFunction");
+
+  memory->create(thrCutoffFunctionDerived,nthreads,leadingDimensionInteractionList,"tersofftable:thrCutoffFunctionDerived");
 }
 
 /* ---------------------------------------------------------------------- */

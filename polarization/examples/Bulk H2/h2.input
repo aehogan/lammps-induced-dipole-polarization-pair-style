@@ -35,7 +35,7 @@ pair_coeff 3 3 0.004306 2.370310 5.925775
 
 # ensure self molecule interactions excluded
 special_bonds  lj/coul 0.0 0.0 0.0
-neigh_modify exclude molecule all
+#neigh_modify exclude molecule all
 
 # output observables
 thermo_style  custom step etotal ke pe evdwl ecoul elong epol temp press

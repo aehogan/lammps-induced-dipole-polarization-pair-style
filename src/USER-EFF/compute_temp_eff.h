@@ -1,4 +1,4 @@
-/* ----------------------------------------------------------------------
+/* -*- c++ -*- ----------------------------------------------------------
    LAMMPS - Large-scale Atomic/Molecular Massively Parallel Simulator
    http://lammps.sandia.gov, Sandia National Laboratories
    Steve Plimpton, sjplimp@sandia.gov
@@ -28,14 +28,13 @@ class ComputeTempEff : public Compute {
  public:
   ComputeTempEff(class LAMMPS *, int, char **);
   virtual ~ComputeTempEff();
-  void init();
+  void init() {}
+  void setup();
   double compute_scalar();
   void compute_vector();
 
  private:
-  int fix_dof;
   double tfactor;
-  double *inertia;
 
   void dof_compute();
 };

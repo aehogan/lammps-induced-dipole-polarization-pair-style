@@ -11,9 +11,9 @@
    See the README file in the top-level LAMMPS directory.
 ------------------------------------------------------------------------- */
 
-#include "mpi.h"
-#include "string.h"
-#include "stdlib.h"
+#include <mpi.h>
+#include <string.h>
+#include <stdlib.h>
 #include "compute_pressure.h"
 #include "atom.h"
 #include "update.h"
@@ -34,7 +34,8 @@ using namespace LAMMPS_NS;
 /* ---------------------------------------------------------------------- */
 
 ComputePressure::ComputePressure(LAMMPS *lmp, int narg, char **arg) :
-  Compute(lmp, narg, arg)
+  Compute(lmp, narg, arg),
+  vptr(NULL), id_temp(NULL)
 {
   if (narg < 4) error->all(FLERR,"Illegal compute pressure command");
   if (igroup) error->all(FLERR,"Compute pressure must use group all");
@@ -49,16 +50,19 @@ ComputePressure::ComputePressure(LAMMPS *lmp, int narg, char **arg) :
   // store temperature ID used by pressure computation
   // insure it is valid for temperature computation
 
-  int n = strlen(arg[3]) + 1;
-  id_temp = new char[n];
-  strcpy(id_temp,arg[3]);
+  if (strcmp(arg[3],"NULL") == 0) id_temp = NULL;
+  else {
+    int n = strlen(arg[3]) + 1;
+    id_temp = new char[n];
+    strcpy(id_temp,arg[3]);
 
-  int icompute = modify->find_compute(id_temp);
-  if (icompute < 0)
-    error->all(FLERR,"Could not find compute pressure temperature ID");
-  if (modify->compute[icompute]->tempflag == 0)
-    error->all(FLERR,
-               "Compute pressure temperature ID does not compute temperature");
+    int icompute = modify->find_compute(id_temp);
+    if (icompute < 0)
+      error->all(FLERR,"Could not find compute pressure temperature ID");
+    if (modify->compute[icompute]->tempflag == 0)
+      error->all(FLERR,"Compute pressure temperature ID does not "
+                 "compute temperature");
+  }
 
   // process optional args
 
@@ -91,6 +95,12 @@ ComputePressure::ComputePressure(LAMMPS *lmp, int narg, char **arg) :
     }
   }
 
+  // error check
+
+  if (keflag && id_temp == NULL)
+    error->all(FLERR,"Compute pressure requires temperature ID "
+               "to include kinetic energy");
+
   vector = new double[6];
   nvirial = 0;
   vptr = NULL;
@@ -116,10 +126,12 @@ void ComputePressure::init()
   // set temperature compute, must be done in init()
   // fixes could have changed or compute_modify could have changed it
 
-  int icompute = modify->find_compute(id_temp);
-  if (icompute < 0)
-    error->all(FLERR,"Could not find compute pressure temperature ID");
-  temperature = modify->compute[icompute];
+  if (keflag) {
+    int icompute = modify->find_compute(id_temp);
+    if (icompute < 0)
+      error->all(FLERR,"Could not find compute pressure temperature ID");
+    temperature = modify->compute[icompute];
+  }
 
   // detect contributions to virial
   // vptr points to all virial[6] contributions
@@ -135,7 +147,7 @@ void ComputePressure::init()
   if (improperflag && atom->molecular && force->improper) nvirial++;
   if (fixflag)
     for (int i = 0; i < modify->nfix; i++)
-      if (modify->fix[i]->virial_flag) nvirial++;
+      if (modify->fix[i]->thermo_virial) nvirial++;
 
   if (nvirial) {
     vptr = new double*[nvirial];
@@ -149,7 +161,7 @@ void ComputePressure::init()
       vptr[nvirial++] = force->improper->virial;
     if (fixflag)
       for (int i = 0; i < modify->nfix; i++)
-        if (modify->fix[i]->virial_flag)
+        if (modify->fix[i]->thermo_virial)
           vptr[nvirial++] = modify->fix[i]->virial;
   }
 
@@ -169,7 +181,7 @@ double ComputePressure::compute_scalar()
   if (update->vflag_global != invoked_scalar)
     error->all(FLERR,"Virial was not tallied on needed timestep");
 
-  // invoke temperature it it hasn't been already
+  // invoke temperature if it hasn't been already
 
   double t;
   if (keflag) {
@@ -209,6 +221,10 @@ void ComputePressure::compute_vector()
   invoked_vector = update->ntimestep;
   if (update->vflag_global != invoked_vector)
     error->all(FLERR,"Virial was not tallied on needed timestep");
+
+  if (force->kspace && kspace_virial && force->kspace->scalar_pressure_flag)
+    error->all(FLERR,"Must use 'kspace_modify pressure/scalar no' for "
+               "tensor components with kspace_style msm");
 
   // invoke temperature if it hasn't been already
 
@@ -270,9 +286,9 @@ void ComputePressure::virial_compute(int n, int ndiag)
   if (kspace_virial)
     for (i = 0; i < n; i++) virial[i] += kspace_virial[i];
 
-  // LJ long-range tail correction
+  // LJ long-range tail correction, only if pair contributions are included
 
-  if (force->pair && force->pair->tail_flag)
+  if (force->pair && pairflag && force->pair->tail_flag)
     for (i = 0; i < ndiag; i++) virial[i] += force->pair->ptail * inv_volume;
 }
 

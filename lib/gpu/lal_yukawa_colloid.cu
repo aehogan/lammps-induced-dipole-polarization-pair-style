@@ -9,7 +9,7 @@
 //    This file is part of the LAMMPS Accelerator Library (LAMMPS_AL)
 // __________________________________________________________________________
 //
-//    begin                : 
+//    begin                :
 //    email                : nguyentd@ornl.gov
 // ***************************************************************************/
 
@@ -29,15 +29,15 @@ texture<int2> rad_tex;
 #define rad_tex rad_
 #endif
 
-__kernel void k_yukawa_colloid(const __global numtyp4 *restrict x_, 
+__kernel void k_yukawa_colloid(const __global numtyp4 *restrict x_,
                                const __global numtyp *restrict rad_,
-                               const __global numtyp4 *restrict coeff, 
-                               const int lj_types, 
-                               const __global numtyp *restrict sp_lj_in, 
-                               const __global int *dev_nbor, 
-                               const __global int *dev_packed, 
+                               const __global numtyp4 *restrict coeff,
+                               const int lj_types,
+                               const __global numtyp *restrict sp_lj_in,
+                               const __global int *dev_nbor,
+                               const __global int *dev_packed,
                                __global acctyp4 *restrict ans,
-                               __global acctyp *restrict engv, 
+                               __global acctyp *restrict engv,
                                const int eflag, const int vflag, const int inum,
                                const int nbor_pitch, const int t_per_atom,
                                const numtyp kappa) {
@@ -56,50 +56,51 @@ __kernel void k_yukawa_colloid(const __global numtyp4 *restrict x_,
   acctyp virial[6];
   for (int i=0; i<6; i++)
     virial[i]=(acctyp)0;
-  
+
   if (ii<inum) {
-    const __global int *nbor, *list_end;
-    int i, numj, n_stride;
+    int nbor, nbor_end;
+    int i, numj;
+    __local int n_stride;
     nbor_info(dev_nbor,dev_packed,nbor_pitch,t_per_atom,ii,offset,i,numj,
-              n_stride,list_end,nbor);
-  
+              n_stride,nbor_end,nbor);
+
     numtyp4 ix; fetch4(ix,i,pos_tex); //x_[i];
     numtyp radi; fetch(radi,i,rad_tex);
     int itype=ix.w;
 
     numtyp factor_lj;
-    for ( ; nbor<list_end; nbor+=n_stride) {
-  
-      int j=*nbor;
+    for ( ; nbor<nbor_end; nbor+=n_stride) {
+
+      int j=dev_packed[nbor];
       factor_lj = sp_lj[sbmask(j)];
       j &= NEIGHMASK;
 
       numtyp4 jx; fetch4(jx,j,pos_tex); //x_[j];
       numtyp radj; fetch(radj,j,rad_tex);
       int jtype=jx.w;
-  
+
       // Compute r12
       numtyp delx = ix.x-jx.x;
       numtyp dely = ix.y-jx.y;
       numtyp delz = ix.z-jx.z;
       numtyp rsq = delx*delx+dely*dely+delz*delz;
-        
+
       int mtype=itype*lj_types+jtype;
-      if (rsq<coeff[mtype].z) {   
+      if (rsq<coeff[mtype].z) {
         numtyp r = ucl_sqrt(rsq);
         numtyp rinv = ucl_recip(r);
-	      numtyp screening = ucl_exp(-kappa*(r-(radi+radj)));
-	      numtyp force = coeff[mtype].x * screening;
+              numtyp screening = ucl_exp(-kappa*(r-(radi+radj)));
+              numtyp force = coeff[mtype].x * screening;
 
-	      force = factor_lj*force * rinv;
-  
+              force = factor_lj*force * rinv;
+
         f.x+=delx*force;
         f.y+=dely*force;
         f.z+=delz*force;
 
         if (eflag>0) {
           numtyp e=coeff[mtype].x/kappa * screening;
-          energy+=factor_lj*(e-coeff[mtype].y); 
+          energy+=factor_lj*(e-coeff[mtype].y);
         }
         if (vflag>0) {
           virial[0] += delx*delx*force;
@@ -117,20 +118,20 @@ __kernel void k_yukawa_colloid(const __global numtyp4 *restrict x_,
   } // if ii
 }
 
-__kernel void k_yukawa_colloid_fast(const __global numtyp4 *restrict x_, 
+__kernel void k_yukawa_colloid_fast(const __global numtyp4 *restrict x_,
                                     const __global numtyp *restrict rad_,
-                                    const __global numtyp4 *restrict coeff_in, 
+                                    const __global numtyp4 *restrict coeff_in,
                                     const __global numtyp *restrict sp_lj_in,
-                                    const __global int *dev_nbor, 
-                                    const __global int *dev_packed, 
-                                    __global acctyp4 *restrict ans, 
-                                    __global acctyp *restrict engv, 
-                                    const int eflag, const int vflag, 
-                                    const int inum, const int nbor_pitch, 
+                                    const __global int *dev_nbor,
+                                    const __global int *dev_packed,
+                                    __global acctyp4 *restrict ans,
+                                    __global acctyp *restrict engv,
+                                    const int eflag, const int vflag,
+                                    const int inum, const int nbor_pitch,
                                     const int t_per_atom, const numtyp kappa) {
   int tid, ii, offset;
   atom_info(t_per_atom,ii,tid,offset);
-  
+
   __local numtyp4 coeff[MAX_SHARED_TYPES*MAX_SHARED_TYPES];
   __local numtyp sp_lj[4];
   if (tid<4)
@@ -138,7 +139,7 @@ __kernel void k_yukawa_colloid_fast(const __global numtyp4 *restrict x_,
   if (tid<MAX_SHARED_TYPES*MAX_SHARED_TYPES) {
     coeff[tid]=coeff_in[tid];
   }
-  
+
   acctyp energy=(acctyp)0;
   acctyp4 f;
   f.x=(acctyp)0; f.y=(acctyp)0; f.z=(acctyp)0;
@@ -147,12 +148,13 @@ __kernel void k_yukawa_colloid_fast(const __global numtyp4 *restrict x_,
     virial[i]=(acctyp)0;
 
   __syncthreads();
-  
+
   if (ii<inum) {
-    const __global int *nbor, *list_end;
-    int i, numj, n_stride;
+    int nbor, nbor_end;
+    int i, numj;
+    __local int n_stride;
     nbor_info(dev_nbor,dev_packed,nbor_pitch,t_per_atom,ii,offset,i,numj,
-              n_stride,list_end,nbor);
+              n_stride,nbor_end,nbor);
 
     numtyp4 ix; fetch4(ix,i,pos_tex); //x_[i];
     numtyp radi; fetch(radi,i,rad_tex);
@@ -160,9 +162,9 @@ __kernel void k_yukawa_colloid_fast(const __global numtyp4 *restrict x_,
     int itype=fast_mul((int)MAX_SHARED_TYPES,iw);
 
     numtyp factor_lj;
-    for ( ; nbor<list_end; nbor+=n_stride) {
-  
-      int j=*nbor;
+    for ( ; nbor<nbor_end; nbor+=n_stride) {
+
+      int j=dev_packed[nbor];
       factor_lj = sp_lj[sbmask(j)];
       j &= NEIGHMASK;
 
@@ -175,22 +177,22 @@ __kernel void k_yukawa_colloid_fast(const __global numtyp4 *restrict x_,
       numtyp dely = ix.y-jx.y;
       numtyp delz = ix.z-jx.z;
       numtyp rsq = delx*delx+dely*dely+delz*delz;
-        
+
       if (rsq<coeff[mtype].z) {
         numtyp r = ucl_sqrt(rsq);
         numtyp rinv = ucl_recip(r);
-	      numtyp screening = ucl_exp(-kappa*(r-(radi+radj)));
-	      numtyp force = coeff[mtype].x * screening;
+              numtyp screening = ucl_exp(-kappa*(r-(radi+radj)));
+              numtyp force = coeff[mtype].x * screening;
 
-	      force = factor_lj*force * rinv;
-      
+              force = factor_lj*force * rinv;
+
         f.x+=delx*force;
         f.y+=dely*force;
         f.z+=delz*force;
 
         if (eflag>0) {
           numtyp e=coeff[mtype].x/kappa * screening;
-          energy+=factor_lj*(e-coeff[mtype].y); 
+          energy+=factor_lj*(e-coeff[mtype].y);
         }
         if (vflag>0) {
           virial[0] += delx*delx*force;

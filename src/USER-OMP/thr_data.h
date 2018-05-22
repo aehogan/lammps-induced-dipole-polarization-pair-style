@@ -22,6 +22,8 @@
 #include <omp.h>
 #endif
 
+#include "timer.h"
+
 namespace LAMMPS_NS {
 
 // per thread data accumulators
@@ -32,11 +34,16 @@ class ThrData {
   friend class ThrOMP;
 
  public:
-  ThrData(int tid);
-  ~ThrData() {};
+  ThrData(int tid, class Timer *t);
+  ~ThrData() { delete _timer; _timer = NULL; };
 
   void check_tid(int);    // thread id consistency check
   int get_tid() const { return _tid; }; // our thread id.
+
+  // inline wrapper, to make this more efficient
+  // when per-thread timers are off
+  void timer(enum Timer::ttype flag) { if (_timer) _stamp(flag); };
+  double get_time(enum Timer::ttype flag);
 
   // erase accumulator contents and hook up force arrays
   void init_force(int, double **, double **, double *, double *, double *);
@@ -53,7 +60,8 @@ class ThrData {
   void init_eam(int, double *);                       // EAM
   void init_eim(int, double *, double *);             // EIM (+ EAM)
 
-  void init_pppm(void *r1d) { _rho1d = r1d; };
+  void init_pppm(int, class Memory *);
+  void init_pppm_disp(int, class Memory *);
 
   // access methods for arrays that we handle in this class
   double **get_lambda() const { return _lambda; };
@@ -63,6 +71,9 @@ class ThrData {
   double *get_rho() const { return _rho; };
   double *get_rhoB() const { return _rhoB; };
   void *get_rho1d() const { return _rho1d; };
+  void *get_drho1d() const { return _drho1d; };
+  void *get_rho1d_6() const { return _rho1d_6; };
+  void *get_drho1d_6() const { return _drho1d_6; };
 
  private:
   double eng_vdwl;        // non-bonded non-coulomb energy
@@ -108,9 +119,18 @@ class ThrData {
 
   // this is for pppm/omp
   void *_rho1d;
-
+  void *_drho1d;
+  // this is for pppm/disp/omp
+  void *_rho1d_6;
+  void *_drho1d_6;
   // my thread id
   const int _tid;
+  // timer info
+  int _timer_active;
+  class Timer *_timer;
+
+ private:
+  void _stamp(enum Timer::ttype flag);
 
  public:
   // compute global per thread virial contribution from global forces and positions
@@ -120,7 +140,7 @@ class ThrData {
 
  // disabled default methods
  private:
-  ThrData() : _tid(-1) {};
+  ThrData() : _tid(-1), _timer(NULL) {};
 };
 
 ////////////////////////////////////////////////////////////////////////

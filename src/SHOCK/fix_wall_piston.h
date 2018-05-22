@@ -1,4 +1,4 @@
-/* ----------------------------------------------------------------------
+/* -*- c++ -*- ----------------------------------------------------------
    LAMMPS - Large-scale Atomic/Molecular Massively Parallel Simulator
    http://lammps.sandia.gov, Sandia National Laboratories
    Steve Plimpton, sjplimp@sandia.gov
@@ -26,6 +26,7 @@ namespace LAMMPS_NS {
 class FixWallPiston : public Fix {
  public:
   FixWallPiston(class LAMMPS *, int, char **);
+  virtual ~FixWallPiston();
   int setmask();
   void post_integrate();
   void initial_integrate(int);
@@ -69,10 +70,6 @@ The piston velocity must be positive.
 E: Cannot use wall in periodic dimension
 
 Self-explanatory.
-
-E: Use of fix wall/piston with undefined lattice
-
-A lattice must be defined before using this fix.
 
 E: NL ramp in wall/piston only implemented in zlo for now
 

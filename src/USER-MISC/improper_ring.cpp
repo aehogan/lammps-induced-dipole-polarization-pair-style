@@ -26,7 +26,7 @@
                     (2002)
                   This potential does not affect small amplitude vibrations
                   but is used in an ad hoc way to prevent the onset of
-                  accidentially large amplitude fluctuations leading to
+                  accidentally large amplitude fluctuations leading to
                   the occurrence of a planar conformation of the three
                   bonds i, i + 1 and i', an intermediate conformation
                   toward the chiral inversion of a methine carbon.
@@ -36,10 +36,9 @@
                   of j.
 ------------------------------------------------------------------------- */
 
-#include "lmptype.h"
-#include "mpi.h"
-#include "math.h"
-#include "stdlib.h"
+#include <mpi.h>
+#include <math.h>
+#include <stdlib.h>
 #include "improper_ring.h"
 #include "atom.h"
 #include "comm.h"
@@ -48,11 +47,13 @@
 #include "force.h"
 #include "update.h"
 #include "math_const.h"
+#include "math_special.h"
 #include "memory.h"
 #include "error.h"
 
 using namespace LAMMPS_NS;
 using namespace MathConst;
+using namespace MathSpecial;
 
 #define TOLERANCE 0.05
 #define SMALL     0.001
@@ -169,7 +170,7 @@ void ImproperRing::compute(int eflag, int vflag)
          /* Append the current angle to the sum of angle differences. */
          angle_summer += (bend_angle[icomb] - chi[type]);
       }
-      if (eflag) eimproper = (1.0/6.0) *k[type] * pow(angle_summer,6.0);
+      if (eflag) eimproper = (1.0/6.0) *k[type] * powint(angle_summer,6);
       /*
       printf("The tags: %d-%d-%d-%d, of type %d .\n",atom->tag[i1],atom->tag[i2],atom->tag[i3],atom->tag[i4],type);
       // printf("The coordinates of the first: %f, %f, %f.\n", x[i1][0], x[i1][1], x[i1][2]);
@@ -183,7 +184,7 @@ void ImproperRing::compute(int eflag, int vflag)
 
       /* Force calculation acting on all atoms.
          Calculate the derivatives of the potential. */
-      angfac = k[type] * pow(angle_summer,5.0);
+      angfac = k[type] * powint(angle_summer,5);
 
       f1[0] = 0.0; f1[1] = 0.0; f1[2] = 0.0;
       f3[0] = 0.0; f3[1] = 0.0; f3[2] = 0.0;
@@ -203,7 +204,7 @@ void ImproperRing::compute(int eflag, int vflag)
          cfact2 = ckjji / ckjkj;
          cfact3 = ckjji / cjiji;
 
-         /* Calculate the force acted on the thrid atom of the angle. */
+         /* Calculate the force acted on the third atom of the angle. */
          fkx = cfact2 * bvec2x[icomb] - bvec1x[icomb];
          fky = cfact2 * bvec2y[icomb] - bvec1y[icomb];
          fkz = cfact2 * bvec2z[icomb] - bvec1z[icomb];
@@ -290,10 +291,10 @@ void ImproperRing ::coeff(int narg, char **arg)
    if (!allocated) allocate();
 
    int ilo,ihi;
-   force->bounds(arg[0],atom->nimpropertypes,ilo,ihi);
+   force->bounds(FLERR,arg[0],atom->nimpropertypes,ilo,ihi);
 
-   double k_one = force->numeric(arg[1]);
-   double chi_one = force->numeric(arg[2]);
+   double k_one = force->numeric(FLERR,arg[1]);
+   double chi_one = force->numeric(FLERR,arg[2]);
 
    int count = 0;
    for (int i = ilo; i <= ihi; i++) {

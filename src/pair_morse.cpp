@@ -11,9 +11,10 @@
    See the README file in the top-level LAMMPS directory.
 ------------------------------------------------------------------------- */
 
-#include "math.h"
-#include "stdio.h"
-#include "stdlib.h"
+#include <math.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
 #include "pair_morse.h"
 #include "atom.h"
 #include "comm.h"
@@ -26,7 +27,10 @@ using namespace LAMMPS_NS;
 
 /* ---------------------------------------------------------------------- */
 
-PairMorse::PairMorse(LAMMPS *lmp) : Pair(lmp) {}
+PairMorse::PairMorse(LAMMPS *lmp) : Pair(lmp)
+{
+  writedata = 1;
+}
 
 /* ---------------------------------------------------------------------- */
 
@@ -154,14 +158,14 @@ void PairMorse::settings(int narg, char **arg)
 {
   if (narg != 1) error->all(FLERR,"Illegal pair_style command");
 
-  cut_global = force->numeric(arg[0]);
+  cut_global = force->numeric(FLERR,arg[0]);
 
   // reset cutoffs that have been explicitly set
 
   if (allocated) {
     int i,j;
     for (i = 1; i <= atom->ntypes; i++)
-      for (j = i+1; j <= atom->ntypes; j++)
+      for (j = i; j <= atom->ntypes; j++)
         if (setflag[i][j]) cut[i][j] = cut_global;
   }
 }
@@ -172,19 +176,20 @@ void PairMorse::settings(int narg, char **arg)
 
 void PairMorse::coeff(int narg, char **arg)
 {
-  if (narg < 5 || narg > 6) error->all(FLERR,"Incorrect args for pair coefficients");
+  if (narg < 5 || narg > 6)
+    error->all(FLERR,"Incorrect args for pair coefficients");
   if (!allocated) allocate();
 
   int ilo,ihi,jlo,jhi;
-  force->bounds(arg[0],atom->ntypes,ilo,ihi);
-  force->bounds(arg[1],atom->ntypes,jlo,jhi);
+  force->bounds(FLERR,arg[0],atom->ntypes,ilo,ihi);
+  force->bounds(FLERR,arg[1],atom->ntypes,jlo,jhi);
 
-  double d0_one = force->numeric(arg[2]);
-  double alpha_one = force->numeric(arg[3]);
-  double r0_one = force->numeric(arg[4]);
+  double d0_one = force->numeric(FLERR,arg[2]);
+  double alpha_one = force->numeric(FLERR,arg[3]);
+  double r0_one = force->numeric(FLERR,arg[4]);
 
   double cut_one = cut_global;
-  if (narg == 6) cut_one = force->numeric(arg[5]);
+  if (narg == 6) cut_one = force->numeric(FLERR,arg[5]);
 
   int count = 0;
   for (int i = ilo; i <= ihi; i++) {
@@ -305,6 +310,28 @@ void PairMorse::read_restart_settings(FILE *fp)
   MPI_Bcast(&mix_flag,1,MPI_INT,0,world);
 }
 
+/* ----------------------------------------------------------------------
+   proc 0 writes to data file
+------------------------------------------------------------------------- */
+
+void PairMorse::write_data(FILE *fp)
+{
+  for (int i = 1; i <= atom->ntypes; i++)
+    fprintf(fp,"%d %g %g %g\n",i,d0[i][i],alpha[i][i],r0[i][i]);
+}
+
+/* ----------------------------------------------------------------------
+   proc 0 writes all pairs to data file
+------------------------------------------------------------------------- */
+
+void PairMorse::write_data_all(FILE *fp)
+{
+  for (int i = 1; i <= atom->ntypes; i++)
+    for (int j = i; j <= atom->ntypes; j++)
+      fprintf(fp,"%d %d %g %g %g %g\n",
+              i,j,d0[i][j],alpha[i][j],r0[i][j],cut[i][j]);
+}
+
 /* ---------------------------------------------------------------------- */
 
 double PairMorse::single(int i, int j, int itype, int jtype, double rsq,
@@ -320,4 +347,15 @@ double PairMorse::single(int i, int j, int itype, int jtype, double rsq,
 
   phi = d0[itype][jtype] * (dexp*dexp - 2.0*dexp) - offset[itype][jtype];
   return factor_lj*phi;
+}
+
+/* ---------------------------------------------------------------------- */
+
+void *PairMorse::extract(const char *str, int &dim)
+{
+  dim = 2;
+  if (strcmp(str,"d0") == 0) return (void *) d0;
+  if (strcmp(str,"r0") == 0) return (void *) r0;
+  if (strcmp(str,"alpha") == 0) return (void *) alpha;
+  return NULL;
 }

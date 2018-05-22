@@ -1,4 +1,4 @@
-/* ----------------------------------------------------------------------
+/* -*- c++ -*- ----------------------------------------------------------
    LAMMPS - Large-scale Atomic/Molecular Massively Parallel Simulator
    http://lammps.sandia.gov, Sandia National Laboratories
    Steve Plimpton, sjplimp@sandia.gov
@@ -30,10 +30,17 @@ class CreateAtoms : protected Pointers {
   void command(int, char **);
 
  private:
-  int itype,style,nregion,nbasis,nrandom,seed;
+  int ntype,style,mode,nregion,nbasis,nrandom,seed;
   int *basistype;
-  double xone[3];
+  double xone[3],quatone[4];
   int remapflag;
+
+  int varflag,vvar,xvar,yvar,zvar;
+  char *vstr,*xstr,*ystr,*zstr;
+  char *xstr_copy,*ystr_copy,*zstr_copy;
+
+  class Molecule *onemol;
+  class RanMars *ranmol;
 
   int triclinic;
   double sublo[3],subhi[3];   // epsilon-extended proc sub-box for adding atoms
@@ -41,6 +48,8 @@ class CreateAtoms : protected Pointers {
   void add_single();
   void add_random();
   void add_lattice();
+  void add_molecule(double *, double * = NULL);
+  int vartest(double *);        // evaluate a variable with new atom position
 };
 
 }
@@ -57,9 +66,9 @@ read_restart, or create_box command.
 
 E: Cannot create_atoms after reading restart file with per-atom info
 
-The per-atom info was stored to be used when by a fix that you
-may re-define.  If you add atoms before re-defining the fix, then
-there will not be a correct amount of per-atom info.
+The per-atom info was stored to be used when by a fix that you may
+re-define.  If you add atoms before re-defining the fix, then there
+will not be a correct amount of per-atom info.
 
 E: Illegal ... command
 
@@ -67,14 +76,68 @@ Self-explanatory.  Check the input script syntax and compare to the
 documentation for the command.  You can use -echo screen as a
 command-line option when running LAMMPS to see the offending line.
 
+E: Create_atoms region ID does not exist
+
+A region ID used in the create_atoms command does not exist.
+
+E: Invalid basis setting in create_atoms command
+
+The basis index must be between 1 to N where N is the number of basis
+atoms in the lattice.  The type index must be between 1 to N where N
+is the number of atom types.
+
+E: Molecule template ID for create_atoms does not exist
+
+Self-explanatory.
+
+W: Molecule template for create_atoms has multiple molecules
+
+The create_atoms command will only create molecules of a single type,
+i.e. the first molecule in the template.
+
+E: Cannot use create_atoms rotate unless single style
+
+Self-explanatory.
+
+E: Invalid create_atoms rotation vector for 2d model
+
+The rotation vector can only have a z component.
+
 E: Invalid atom type in create_atoms command
 
 The create_box command specified the range of valid atom types.
 An invalid type is being requested.
 
-E: Create_atoms region ID does not exist
+E: Create_atoms molecule must have coordinates
 
-A region ID used in the create_atoms command does not exist.
+The defined molecule does not specify coordinates.
+
+E: Create_atoms molecule must have atom types
+
+The defined molecule does not specify atom types.
+
+E: Invalid atom type in create_atoms mol command
+
+The atom types in the defined molecule are added to the value
+specified in the create_atoms command, as an offset.  The final value
+for each atom must be between 1 to N, where N is the number of atom
+types.
+
+E: Create_atoms molecule has atom IDs, but system does not
+
+The atom_style id command can be used to force atom IDs to be stored.
+
+E: Incomplete use of variables in create_atoms command
+
+The var and set options must be used together.
+
+E: Variable name for create_atoms does not exist
+
+Self-explanatory.
+
+E: Variable for create_atoms is invalid style
+
+The variables must be equal-style variables.
 
 E: Cannot create atoms with undefined lattice
 

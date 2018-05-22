@@ -1,4 +1,4 @@
-/* ----------------------------------------------------------------------
+/* -*- c++ -*- ----------------------------------------------------------
    LAMMPS - Large-scale Atomic/Molecular Massively Parallel Simulator
    http://lammps.sandia.gov, Sandia National Laboratories
    Steve Plimpton, sjplimp@sandia.gov
@@ -27,10 +27,15 @@ namespace LAMMPS_NS {
 class DisplaceAtoms : protected Pointers {
  public:
   DisplaceAtoms(class LAMMPS *);
+  ~DisplaceAtoms();
   void command(int, char **);
 
  private:
+  int igroup,groupbit;
   int scaleflag;
+  double *mvec;
+
+  void move(int, char *, double);
   void options(int, char **);
 };
 
@@ -62,13 +67,24 @@ E: Could not find displace_atoms group ID
 
 Group ID used in the displace_atoms command does not exist.
 
-E: Use of displace_atoms with undefined lattice
+E: Invalid displace_atoms rotate axis for 2d
 
-Must use lattice command with displace_atoms command if units option
-is set to lattice.
+Axis must be in z direction.
+
+E: Zero length rotation vector with displace_atoms
+
+Self-explanatory.
 
 W: Lost atoms via displace_atoms: original %ld current %ld
 
 The command options you have used caused atoms to be lost.
+
+E: Variable name for displace_atoms does not exist
+
+Self-explanatory.
+
+E: Variable for displace_atoms is invalid style
+
+It must be an equal-style or atom-style variable.
 
 */

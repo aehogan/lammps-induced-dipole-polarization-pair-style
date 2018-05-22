@@ -1,4 +1,4 @@
-/* ----------------------------------------------------------------------
+/* -*- c++ -*- ----------------------------------------------------------
    LAMMPS - Large-scale Atomic/Molecular Massively Parallel Simulator
    http://lammps.sandia.gov, Sandia National Laboratories
    Steve Plimpton, sjplimp@sandia.gov
@@ -28,12 +28,12 @@ class ComputeTemp : public Compute {
  public:
   ComputeTemp(class LAMMPS *, int, char **);
   virtual ~ComputeTemp();
-  void init();
-  double compute_scalar();
-  void compute_vector();
+  void init() {}
+  void setup();
+  virtual double compute_scalar();
+  virtual void compute_vector();
 
  protected:
-  int fix_dof;
   double tfactor;
 
   virtual void dof_compute();
@@ -51,5 +51,10 @@ E: Illegal ... command
 Self-explanatory.  Check the input script syntax and compare to the
 documentation for the command.  You can use -echo screen as a
 command-line option when running LAMMPS to see the offending line.
+
+E: Temperature compute degrees of freedom < 0
+
+This should not happen if you are calculating the temperature
+on a valid set of atoms.
 
 */

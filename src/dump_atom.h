@@ -1,4 +1,4 @@
-/* ----------------------------------------------------------------------
+/* -*- c++ -*- ----------------------------------------------------------
    LAMMPS - Large-scale Atomic/Molecular Massively Parallel Simulator
    http://lammps.sandia.gov, Sandia National Laboratories
    Steve Plimpton, sjplimp@sandia.gov
@@ -28,7 +28,7 @@ class DumpAtom : public Dump {
  public:
   DumpAtom(LAMMPS *, int, char**);
 
- private:
+ protected:
   int scale_flag;            // 1 if atom coords are scaled, 0 if no
   int image_flag;            // 1 if append box count to atom coords, 0 if no
 
@@ -37,7 +37,8 @@ class DumpAtom : public Dump {
   void init_style();
   int modify_param(int, char **);
   void write_header(bigint);
-  void pack(int *);
+  void pack(tagint *);
+  int convert_string(int, double *);
   void write_data(int, double *);
 
   typedef void (DumpAtom::*FnPtrHeader)(bigint);
@@ -47,20 +48,26 @@ class DumpAtom : public Dump {
   void header_item(bigint);
   void header_item_triclinic(bigint);
 
-  typedef void (DumpAtom::*FnPtrPack)(int *);
+  typedef void (DumpAtom::*FnPtrPack)(tagint *);
   FnPtrPack pack_choice;               // ptr to pack functions
-  void pack_scale_image(int *);
-  void pack_scale_noimage(int *);
-  void pack_noscale_image(int *);
-  void pack_noscale_noimage(int *);
-  void pack_scale_image_triclinic(int *);
-  void pack_scale_noimage_triclinic(int *);
+  void pack_scale_image(tagint *);
+  void pack_scale_noimage(tagint *);
+  void pack_noscale_image(tagint *);
+  void pack_noscale_noimage(tagint *);
+  void pack_scale_image_triclinic(tagint *);
+  void pack_scale_noimage_triclinic(tagint *);
 
-  typedef void (DumpAtom::*FnPtrData)(int, double *);
-  FnPtrData write_choice;              // ptr to write data functions
+  typedef int (DumpAtom::*FnPtrConvert)(int, double *);
+  FnPtrConvert convert_choice;          // ptr to convert data functions
+  int convert_image(int, double *);
+  int convert_noimage(int, double *);
+
+  typedef void (DumpAtom::*FnPtrWrite)(int, double *);
+  FnPtrWrite write_choice;              // ptr to write data functions
   void write_binary(int, double *);
-  void write_image(int, double *);
-  void write_noimage(int, double *);
+  void write_string(int, double *);
+  void write_lines_image(int, double *);
+  void write_lines_noimage(int, double *);
 };
 
 }

@@ -15,9 +15,9 @@
    Contributing authors: Trung Dac Nguyen (ORNL)
 ------------------------------------------------------------------------- */
 
-#include "math.h"
-#include "stdio.h"
-#include "stdlib.h"
+#include <math.h>
+#include <stdio.h>
+#include <stdlib.h>
 #include "pair_buck_coul_cut_gpu.h"
 #include "atom.h"
 #include "atom_vec.h"
@@ -32,8 +32,10 @@
 #include "universe.h"
 #include "update.h"
 #include "domain.h"
-#include "string.h"
+#include <string.h>
 #include "gpu_extra.h"
+
+using namespace LAMMPS_NS;
 
 // External functions from cuda library for atom decomposition
 
@@ -48,8 +50,8 @@ int buckc_gpu_init(const int ntypes, double **cutsq, double **host_rhoinv,
 void buckc_gpu_clear();
 int ** buckc_gpu_compute_n(const int ago, const int inum_full, const int nall,
                            double **host_x, int *host_type, double *sublo,
-                           double *subhi, int *tag, int **nspecial,
-                           int **special, const bool eflag, const bool vflag,
+                           double *subhi, tagint *tag, int **nspecial,
+                           tagint **special, const bool eflag, const bool vflag,
                            const bool eatom, const bool vatom, int &host_start,
                            int **ilist, int **jnum, const double cpu_time,
                            bool &success, double *host_q, double *boxlo,
@@ -62,14 +64,13 @@ void buckc_gpu_compute(const int ago, const int inum_full, const int nall,
                        const int nlocal, double *boxlo, double *prd);
 double buckc_gpu_bytes();
 
-using namespace LAMMPS_NS;
-
 /* ---------------------------------------------------------------------- */
 
 PairBuckCoulCutGPU::PairBuckCoulCutGPU(LAMMPS *lmp) : PairBuckCoulCut(lmp),
                                                       gpu_mode(GPU_FORCE)
 {
   respa_enable = 0;
+  reinitflag = 0;
   cpu_time = 0.0;
   GPU_EXTRA::gpu_ready(lmp->modify, lmp->error);
 }
@@ -162,7 +163,7 @@ void PairBuckCoulCutGPU::init_style()
   GPU_EXTRA::check_flag(success,error,world);
 
   if (gpu_mode == GPU_FORCE) {
-    int irequest = neighbor->request(this);
+    int irequest = neighbor->request(this,instance_me);
     neighbor->requests[irequest]->half = 0;
     neighbor->requests[irequest]->full = 1;
   }

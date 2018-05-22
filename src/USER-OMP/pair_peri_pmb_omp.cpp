@@ -12,8 +12,8 @@
    Contributing author: Axel Kohlmeyer (Temple U)
 ------------------------------------------------------------------------- */
 
-#include "math.h"
-#include "float.h"
+#include <math.h>
+#include <float.h>
 #include "pair_peri_pmb_omp.h"
 #include "fix.h"
 #include "fix_peri_neigh.h"
@@ -67,6 +67,7 @@ void PairPeriPMBOMP::compute(int eflag, int vflag)
 
     loop_setup_thr(ifrom, ito, tid, inum, nthreads);
     ThrData *thr = fix->get_thr(tid);
+    thr->timer(Timer::START);
     ev_setup_thr(eflag, vflag, nall, eatom, vatom, thr);
 
     if (evflag) {
@@ -82,6 +83,7 @@ void PairPeriPMBOMP::compute(int eflag, int vflag)
       else eval<0,0,0>(ifrom, ito, thr);
     }
 
+    thr->timer(Timer::PAIR);
     reduce_thr(this, eflag, vflag, thr);
   } // end of omp parallel region
 }
@@ -108,7 +110,7 @@ void PairPeriPMBOMP::eval(int iifrom, int iito, ThrData * const thr)
   double *s0 = atom->s0;
   double **x0 = atom->x0;
   double **r0   = ((FixPeriNeigh *) modify->fix[ifix_peri])->r0;
-  int **partner = ((FixPeriNeigh *) modify->fix[ifix_peri])->partner;
+  tagint **partner = ((FixPeriNeigh *) modify->fix[ifix_peri])->partner;
   int *npartner = ((FixPeriNeigh *) modify->fix[ifix_peri])->npartner;
 
   // lc = lattice constant

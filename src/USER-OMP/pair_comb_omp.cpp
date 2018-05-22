@@ -12,13 +12,14 @@
    Contributing author: Axel Kohlmeyer (Temple U)
 ------------------------------------------------------------------------- */
 
-#include "math.h"
+#include <math.h>
 #include "pair_comb_omp.h"
 #include "atom.h"
 #include "comm.h"
 #include "group.h"
 #include "force.h"
 #include "memory.h"
+#include "my_page.h"
 #include "neighbor.h"
 #include "neigh_list.h"
 
@@ -60,6 +61,7 @@ void PairCombOMP::compute(int eflag, int vflag)
 
     loop_setup_thr(ifrom, ito, tid, inum, nthreads);
     ThrData *thr = fix->get_thr(tid);
+    thr->timer(Timer::START);
     ev_setup_thr(eflag, vflag, nall, eatom, vatom, thr);
 
     if (evflag) {
@@ -72,6 +74,7 @@ void PairCombOMP::compute(int eflag, int vflag)
       }
     } else eval<0,0,0>(ifrom, ito, thr);
 
+    thr->timer(Timer::PAIR);
     reduce_thr(this, eflag, vflag, thr);
   } // end of omp parallel region
 }
@@ -80,7 +83,8 @@ template <int EVFLAG, int EFLAG, int VFLAG_ATOM>
 void PairCombOMP::eval(int iifrom, int iito, ThrData * const thr)
 {
   int i,j,k,ii,jj,kk,jnum,iparam_i;
-  int itag,jtag,itype,jtype,ktype,iparam_ij,iparam_ijk;
+  tagint itag,jtag;
+  int itype,jtype,ktype,iparam_ij,iparam_ijk;
   double xtmp,ytmp,ztmp,delx,dely,delz,evdwl,ecoul,fpair;
   double rsq,rsq1,rsq2;
   double delr1[3],delr2[3],fi[3],fj[3],fk[3];
@@ -100,7 +104,7 @@ void PairCombOMP::eval(int iifrom, int iito, ThrData * const thr)
   const double * const * const x = atom->x;
   double * const * const f = thr->get_f();
   const double * const q = atom->q;
-  const int * const tag = atom->tag;
+  const tagint * const tag = atom->tag;
   const int * const type = atom->type;
   const int nlocal = atom->nlocal;
 
@@ -382,7 +386,7 @@ double PairCombOMP::yasu_char(double *qf_fix, int &igroup)
   const double * const * const x = atom->x;
   const double * const q = atom->q;
   const int * const type = atom->type;
-  const int * const tag = atom->tag;
+  const tagint * const tag = atom->tag;
 
   const int inum = list->inum;
   const int * const ilist = list->ilist;
@@ -417,7 +421,7 @@ double PairCombOMP::yasu_char(double *qf_fix, int &igroup)
     int mr1,mr2,mr3;
 
     const int i = ilist[ii];
-    const int itag = tag[i];
+    const tagint itag = tag[i];
     int nj = 0;
 
     if (mask[i] & groupbit) {
@@ -440,7 +444,7 @@ double PairCombOMP::yasu_char(double *qf_fix, int &igroup)
 
       for (int jj = 0; jj < jnum; jj++) {
         const int j = jlist[jj] & NEIGHMASK;
-        const int jtag = tag[j];
+        const tagint jtag = tag[j];
 
         if (itag > jtag) {
           if ((itag+jtag) % 2 == 0) continue;
@@ -480,7 +484,7 @@ double PairCombOMP::yasu_char(double *qf_fix, int &igroup)
 
         qfo_field(&params[iparam_ij],rsq1,iq,jq,fqji,fqjj);
         fqi   += jq * fqij + fqji;
-#if defined(_OPENMP)
+#if defined(_OPENMP) && !defined(__NVCC__)
 #pragma omp atomic
 #endif
         qf[j] += (iq * fqij + fqjj);
@@ -507,13 +511,13 @@ double PairCombOMP::yasu_char(double *qf_fix, int &igroup)
 
         qfo_short(&params[iparam_ij],i,nj,rsq1,iq,jq,fqij,fqjj);
         fqi += fqij;
-#if defined(_OPENMP)
+#if defined(_OPENMP) && !defined(__NVCC__)
 #pragma omp atomic
 #endif
         qf[j] += fqjj;
       }
 
-#if defined(_OPENMP)
+#if defined(_OPENMP) && !defined(__NVCC__)
 #pragma omp atomic
 #endif
       qf[i] += fqi;
@@ -553,26 +557,23 @@ void PairCombOMP::Short_neigh_thr()
     nmax = atom->nmax;
     memory->sfree(sht_first);
     sht_first = (int **) memory->smalloc(nmax*sizeof(int *),
-            "pair:sht_first");
+                                         "pair:sht_first");
     memory->grow(sht_num,nmax,"pair:sht_num");
     memory->grow(NCo,nmax,"pair:NCo");
-    memory->grow(bbij,nmax,nmax,"pair:bbij");
+    memory->grow(bbij,nmax,MAXNEIGH,"pair:bbij");
   }
 
   const int nthreads = comm->nthreads;
-  if (nthreads > maxpage)
-    add_pages(nthreads - maxpage);
 
 #if defined(_OPENMP)
 #pragma omp parallel default(none)
 #endif
   {
-    int nj,npntj,*neighptrj;
-    int iparam_ij,*ilist,*jlist,*numneigh,**firstneigh;
+    int nj,*neighptrj;
+    int *ilist,*jlist,*numneigh,**firstneigh;
     int jnum,i,j,ii,jj;
     double xtmp,ytmp,ztmp,rsq,delrj[3];
     double **x = atom->x;
-    int *type  = atom->type;
 
     const int inum = list->inum;
     ilist = list->ilist;
@@ -588,51 +589,44 @@ void PairCombOMP::Short_neigh_thr()
 
     const int iidelta = 1 + inum/nthreads;
     const int iifrom = tid*iidelta;
-    int iito   = iifrom + iidelta;
-    if (iito > inum) iito = inum;
+    const int iito   = ((iifrom + iidelta) > inum) ? inum : (iifrom+iidelta);
 
-    int npage = tid;
-    npntj = 0;
+    // each thread has its own page allocator
+    MyPage<int> &ipg = ipage[tid];
+    ipg.reset();
 
-    if (iifrom < inum) {
-      for (ii = iifrom; ii < iito; ii++) {
-        i = ilist[ii];
+    // create Comb neighbor list
 
-#if defined(_OPENMP)
-#pragma omp critical
-#endif
-        if(pgsize - npntj < oneatom) {
-          npntj = 0;
-          npage += nthreads;
-          if (npage >= maxpage) add_pages(nthreads);
-        }
+    for (ii = iifrom; ii < iito; ii++) {
+      i = ilist[ii];
 
-        neighptrj = &pages[npage][npntj];
-        nj = 0;
+      nj = 0;
+      neighptrj = ipg.vget();
 
-        xtmp = x[i][0];
-        ytmp = x[i][1];
-        ztmp = x[i][2];
+      xtmp = x[i][0];
+      ytmp = x[i][1];
+      ztmp = x[i][2];
 
-        jlist = firstneigh[i];
-        jnum = numneigh[i];
+      jlist = firstneigh[i];
+      jnum = numneigh[i];
 
-        for (jj = 0; jj < jnum; jj++) {
-          j = jlist[jj];
-          j &= NEIGHMASK;
+      for (jj = 0; jj < jnum; jj++) {
+        j = jlist[jj];
+        j &= NEIGHMASK;
 
-          delrj[0] = xtmp - x[j][0];
-          delrj[1] = ytmp - x[j][1];
-          delrj[2] = ztmp - x[j][2];
-          rsq = vec3_dot(delrj,delrj);
+        delrj[0] = xtmp - x[j][0];
+        delrj[1] = ytmp - x[j][1];
+        delrj[2] = ztmp - x[j][2];
+        rsq = vec3_dot(delrj,delrj);
 
-          if (rsq > cutmin) continue;
-          neighptrj[nj++] = j;
-        }
-        sht_first[i] = neighptrj;
-        sht_num[i] = nj;
-        npntj += nj;
+        if (rsq > cutmin) continue;
+        neighptrj[nj++] = j;
       }
+      sht_first[i] = neighptrj;
+      sht_num[i] = nj;
+      ipg.vgot(nj);
+      if (ipg.status())
+        error->one(FLERR,"Neighbor list overflow, boost neigh_modify one");
     }
   }
 }

@@ -1,4 +1,4 @@
-/* ----------------------------------------------------------------------
+/* -*- c++ -*- ----------------------------------------------------------
    LAMMPS - Large-scale Atomic/Molecular Massively Parallel Simulator
    http://lammps.sandia.gov, Sandia National Laboratories
    Steve Plimpton, sjplimp@sandia.gov
@@ -20,7 +20,7 @@ ImproperStyle(ring,ImproperRing)
 #ifndef LMP_IMPROPER_RING_H
 #define LMP_IMPROPER_RING_H
 
-#include "stdio.h"
+#include <stdio.h>
 #include "improper.h"
 
 namespace LAMMPS_NS {

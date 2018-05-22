@@ -13,15 +13,16 @@
 
 // define integer data types used by LAMMPS and associated size limits
 
-// smallint = variables for on-procesor system (nlocal, nmax, etc)
-// tagint = variables for atom IDs (tag)
+// smallint = variables for on-processor system (nlocal, nmax, etc)
+// imageint = variables for atom image flags (image)
+// tagint = variables for atom IDs and molecule IDs (tag,molecule)
 // bigint = variables for total system (natoms, ntimestep, etc)
 
 // smallint must be an int, as defined by C compiler
+// imageint can be 32-bit or 64-bit int, must be >= smallint
 // tagint can be 32-bit or 64-bit int, must be >= smallint
-// bigint can be 32-bit or 64-bit int, must be >= tagint
+// bigint can be 32-bit or 64-bit int, must be >= imageint,tagint
 
-// MPI_LMP_TAGINT = MPI data type corresponding to a tagint
 // MPI_LMP_BIGINT = MPI data type corresponding to a bigint
 
 #ifndef LMP_LMPTYPE_H
@@ -35,9 +36,9 @@
 #define __STDC_FORMAT_MACROS
 #endif
 
-#include "limits.h"
-#include "stdint.h"
-#include "inttypes.h"
+#include <limits.h>
+#include <stdint.h>
+#include <inttypes.h>
 
 // grrr - IBM Power6 does not provide this def in their system header files
 
@@ -47,15 +48,19 @@
 
 namespace LAMMPS_NS {
 
+// enum used for KOKKOS host/device flags
+
+enum ExecutionSpace{Host,Device};
+
 // reserve 2 hi bits in molecular system neigh list for special bonds flag
 // max local + ghost atoms per processor = 2^30 - 1
 
 #define SBBITS 30
 #define NEIGHMASK 0x3FFFFFFF
 
-// default to 32-bit smallint and tagint, 64-bit bigint
+// default to 32-bit smallint and other ints, 64-bit bigint
 
-#if !defined(LAMMPS_SMALLSMALL) && !defined(LAMMPS_BIGBIG)
+#if !defined(LAMMPS_SMALLSMALL) && !defined(LAMMPS_BIGBIG) && !defined(LAMMPS_SMALLBIG)
 #define LAMMPS_SMALLBIG
 #endif
 
@@ -70,11 +75,12 @@ namespace LAMMPS_NS {
 #endif
 
 // for atomic problems that exceed 2 billion (2^31) atoms
-// 32-bit smallint and tagint, 64-bit bigint
+// 32-bit smallint/imageint/tagint, 64-bit bigint
 
 #ifdef LAMMPS_SMALLBIG
 
 typedef int smallint;
+typedef int imageint;
 typedef int tagint;
 typedef int64_t bigint;
 
@@ -83,6 +89,7 @@ typedef int64_t bigint;
 #define MAXBIGINT INT64_MAX
 
 #define MPI_LMP_TAGINT MPI_INT
+#define MPI_LMP_IMAGEINT MPI_INT
 #define MPI_LMP_BIGINT MPI_LL
 
 #define TAGINT_FORMAT "%d"
@@ -100,11 +107,12 @@ typedef int64_t bigint;
 
 // for molecular problems that exceed 2 billion (2^31) atoms
 // or problems where atoms wrap around the periodic box more than 512 times
-// 32-bit smallint, 64-bit tagint and bigint
+// 32-bit smallint, 64-bit imageint/tagint/bigint
 
 #ifdef LAMMPS_BIGBIG
 
 typedef int smallint;
+typedef int64_t imageint;
 typedef int64_t tagint;
 typedef int64_t bigint;
 
@@ -113,6 +121,7 @@ typedef int64_t bigint;
 #define MAXBIGINT INT64_MAX
 
 #define MPI_LMP_TAGINT MPI_LL
+#define MPI_LMP_IMAGEINT MPI_LL
 #define MPI_LMP_BIGINT MPI_LL
 
 #define TAGINT_FORMAT "%" PRId64
@@ -129,11 +138,12 @@ typedef int64_t bigint;
 #endif
 
 // for machines that do not support 64-bit ints
-// 32-bit smallint and tagint and bigint
+// 32-bit smallint/imageint/tagint/bigint
 
 #ifdef LAMMPS_SMALLSMALL
 
 typedef int smallint;
+typedef int imageint;
 typedef int tagint;
 typedef int bigint;
 
@@ -142,6 +152,7 @@ typedef int bigint;
 #define MAXBIGINT INT_MAX
 
 #define MPI_LMP_TAGINT MPI_INT
+#define MPI_LMP_IMAGEINT MPI_INT
 #define MPI_LMP_BIGINT MPI_INT
 
 #define TAGINT_FORMAT "%d"
@@ -158,6 +169,38 @@ typedef int bigint;
 #endif
 
 }
+
+// preprocessor macros for compiler specific settings
+// clear previous definitions to avoid redefinition warning
+
+#ifdef _alignvar
+#undef _alignvar
+#endif
+#ifdef _noalias
+#undef _noalias
+#endif
+
+// define stack variable alignment
+
+#if defined(__INTEL_COMPILER)
+#define _alignvar(expr,val) __declspec(align(val)) expr
+#elif defined(__GNUC__)
+#define _alignvar(expr,val) expr __attribute((aligned(val)))
+#else
+#define _alignvar(expr,val) expr
+#endif
+
+// declaration to lift aliasing restrictions
+
+#if defined(__INTEL_COMPILER)
+#define _noalias restrict
+#elif defined(__GNUC__)
+#define _noalias __restrict
+#else
+#define _noalias
+#endif
+
+#define ISFINITE(x) isfinite(x)
 
 // settings to enable LAMMPS to build under Windows
 

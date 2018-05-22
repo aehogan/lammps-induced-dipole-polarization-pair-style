@@ -11,9 +11,9 @@
    See the README file in the top-level LAMMPS directory.
 ------------------------------------------------------------------------- */
 
-#include "math.h"
-#include "stdlib.h"
-#include "string.h"
+#include <math.h>
+#include <stdlib.h>
+#include <string.h>
 #include "fix_dt_reset.h"
 #include "atom.h"
 #include "update.h"
@@ -45,22 +45,21 @@ FixDtReset::FixDtReset(LAMMPS *lmp, int narg, char **arg) :
 
   time_depend = 1;
   scalar_flag = 1;
-  vector_flag = 1;
-  size_vector = 2;
   global_freq = 1;
   extscalar = 0;
   extvector = 0;
+  dynamic_group_allow = 1;
 
-  nevery = atoi(arg[3]);
+  nevery = force->inumeric(FLERR,arg[3]);
   if (nevery <= 0) error->all(FLERR,"Illegal fix dt/reset command");
 
   minbound = maxbound = 1;
   tmin = tmax = 0.0;
   if (strcmp(arg[4],"NULL") == 0) minbound = 0;
-  else tmin = atof(arg[4]);
+  else tmin = force->numeric(FLERR,arg[4]);
   if (strcmp(arg[5],"NULL") == 0) maxbound = 0;
-  else tmax = atof(arg[5]);
-  xmax = atof(arg[6]);
+  else tmax = force->numeric(FLERR,arg[5]);
+  xmax = force->numeric(FLERR,arg[6]);
 
   if (minbound && tmin < 0.0) error->all(FLERR,"Illegal fix dt/reset command");
   if (maxbound && tmax < 0.0) error->all(FLERR,"Illegal fix dt/reset command");
@@ -83,13 +82,11 @@ FixDtReset::FixDtReset(LAMMPS *lmp, int narg, char **arg) :
 
   // setup scaling, based on xlattice parameter
 
-  if (scaleflag && domain->lattice == NULL)
-    error->all(FLERR,"Use of fix dt/reset with undefined lattice");
   if (scaleflag) xmax *= domain->lattice->xlattice;
 
   // initializations
 
-  t_elapsed = t_laststep = 0.0;
+  t_laststep = 0.0;
   laststep = update->ntimestep;
 }
 
@@ -98,7 +95,6 @@ FixDtReset::FixDtReset(LAMMPS *lmp, int narg, char **arg) :
 int FixDtReset::setmask()
 {
   int mask = 0;
-  mask |= INITIAL_INTEGRATE;
   mask |= END_OF_STEP;
   return mask;
 }
@@ -129,15 +125,6 @@ void FixDtReset::init()
 void FixDtReset::setup(int vflag)
 {
   end_of_step();
-}
-
-/* ---------------------------------------------------------------------- */
-
-void FixDtReset::initial_integrate(int vflag)
-{
-  // calculate elapsed time based on previous reset timestep
-
-  t_elapsed = t_laststep + (update->ntimestep-laststep)*dt;
 }
 
 /* ---------------------------------------------------------------------- */
@@ -190,9 +177,9 @@ void FixDtReset::end_of_step()
 
   if (dt == update->dt) return;
 
-  t_elapsed = t_laststep += (update->ntimestep-laststep)*update->dt;
   laststep = update->ntimestep;
 
+  update->update_time();
   update->dt = dt;
   if (respaflag) update->integrate->reset_dt();
   if (force->pair) force->pair->reset_dt();
@@ -203,13 +190,5 @@ void FixDtReset::end_of_step()
 
 double FixDtReset::compute_scalar()
 {
-  return update->dt;
-}
-
-/* ---------------------------------------------------------------------- */
-
-double FixDtReset::compute_vector(int n)
-{
-  if (n == 0) return t_elapsed;
   return (double) laststep;
 }

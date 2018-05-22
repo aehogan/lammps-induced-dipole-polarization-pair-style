@@ -11,8 +11,8 @@
    See the README file in the top-level LAMMPS directory.
 ------------------------------------------------------------------------- */
 
-#include "string.h"
-#include "stdlib.h"
+#include <string.h>
+#include <stdlib.h>
 #include "fix_setforce.h"
 #include "atom.h"
 #include "update.h"
@@ -24,6 +24,7 @@
 #include "variable.h"
 #include "memory.h"
 #include "error.h"
+#include "force.h"
 
 using namespace LAMMPS_NS;
 using namespace FixConst;
@@ -33,15 +34,18 @@ enum{NONE,CONSTANT,EQUAL,ATOM};
 /* ---------------------------------------------------------------------- */
 
 FixSetForce::FixSetForce(LAMMPS *lmp, int narg, char **arg) :
-  Fix(lmp, narg, arg)
+  Fix(lmp, narg, arg),
+  xstr(NULL), ystr(NULL), zstr(NULL), idregion(NULL), sforce(NULL)
 {
   if (narg < 6) error->all(FLERR,"Illegal fix setforce command");
 
+  dynamic_group_allow = 1;
   vector_flag = 1;
   size_vector = 3;
   global_freq = 1;
   extvector = 1;
-
+  respa_level_support = 1;
+  ilevel_respa = nlevels_respa = 0;
   xstr = ystr = zstr = NULL;
 
   if (strstr(arg[3],"v_") == arg[3]) {
@@ -51,7 +55,7 @@ FixSetForce::FixSetForce(LAMMPS *lmp, int narg, char **arg) :
   } else if (strcmp(arg[3],"NULL") == 0) {
     xstyle = NONE;
   } else {
-    xvalue = atof(arg[3]);
+    xvalue = force->numeric(FLERR,arg[3]);
     xstyle = CONSTANT;
   }
   if (strstr(arg[4],"v_") == arg[4]) {
@@ -61,7 +65,7 @@ FixSetForce::FixSetForce(LAMMPS *lmp, int narg, char **arg) :
   } else if (strcmp(arg[4],"NULL") == 0) {
     ystyle = NONE;
   } else {
-    yvalue = atof(arg[4]);
+    yvalue = force->numeric(FLERR,arg[4]);
     ystyle = CONSTANT;
   }
   if (strstr(arg[5],"v_") == arg[5]) {
@@ -71,7 +75,7 @@ FixSetForce::FixSetForce(LAMMPS *lmp, int narg, char **arg) :
   } else if (strcmp(arg[5],"NULL") == 0) {
     zstyle = NONE;
   } else {
-    zvalue = atof(arg[5]);
+    zvalue = force->numeric(FLERR,arg[5]);
     zstyle = CONSTANT;
   }
 
@@ -97,14 +101,16 @@ FixSetForce::FixSetForce(LAMMPS *lmp, int narg, char **arg) :
   force_flag = 0;
   foriginal[0] = foriginal[1] = foriginal[2] = 0.0;
 
-  maxatom = 0;
-  sforce = NULL;
+  maxatom = 1;
+  memory->create(sforce,maxatom,3,"setforce:sforce");
 }
 
 /* ---------------------------------------------------------------------- */
 
 FixSetForce::~FixSetForce()
 {
+  if (copymode) return;
+
   delete [] xstr;
   delete [] ystr;
   delete [] zstr;
@@ -168,8 +174,11 @@ void FixSetForce::init()
     varflag = EQUAL;
   else varflag = CONSTANT;
 
-  if (strstr(update->integrate_style,"respa"))
+  if (strstr(update->integrate_style,"respa")) {
     nlevels_respa = ((Respa *) update->integrate)->nlevels;
+    if (respa_level >= 0) ilevel_respa = MIN(respa_level,nlevels_respa-1);
+    else ilevel_respa = nlevels_respa-1;
+  }
 
   // cannot use non-zero forces for a minimization since no energy is integrated
   // use fix addforce instead
@@ -217,9 +226,17 @@ void FixSetForce::post_force(int vflag)
   int *mask = atom->mask;
   int nlocal = atom->nlocal;
 
+  // update region if necessary
+
+  Region *region = NULL;
+  if (iregion >= 0) {
+    region = domain->regions[iregion];
+    region->prematch();
+  }
+
   // reallocate sforce array if necessary
 
-  if (varflag == ATOM && nlocal > maxatom) {
+  if (varflag == ATOM && atom->nmax > maxatom) {
     maxatom = atom->nmax;
     memory->destroy(sforce);
     memory->create(sforce,maxatom,3,"setforce:sforce");
@@ -231,10 +248,7 @@ void FixSetForce::post_force(int vflag)
   if (varflag == CONSTANT) {
     for (int i = 0; i < nlocal; i++)
       if (mask[i] & groupbit) {
-        if (iregion >= 0 &&
-            !domain->regions[iregion]->match(x[i][0],x[i][1],x[i][2]))
-          continue;
-
+        if (region && !region->match(x[i][0],x[i][1],x[i][2])) continue;
         foriginal[0] += f[i][0];
         foriginal[1] += f[i][1];
         foriginal[2] += f[i][2];
@@ -250,23 +264,20 @@ void FixSetForce::post_force(int vflag)
     modify->clearstep_compute();
 
     if (xstyle == EQUAL) xvalue = input->variable->compute_equal(xvar);
-    else if (xstyle == ATOM && sforce)
+    else if (xstyle == ATOM)
       input->variable->compute_atom(xvar,igroup,&sforce[0][0],3,0);
     if (ystyle == EQUAL) yvalue = input->variable->compute_equal(yvar);
-    else if (ystyle == ATOM && sforce)
+    else if (ystyle == ATOM)
       input->variable->compute_atom(yvar,igroup,&sforce[0][1],3,0);
     if (zstyle == EQUAL) zvalue = input->variable->compute_equal(zvar);
-    else if (zstyle == ATOM && sforce)
+    else if (zstyle == ATOM)
       input->variable->compute_atom(zvar,igroup,&sforce[0][2],3,0);
 
     modify->addstep_compute(update->ntimestep + 1);
 
     for (int i = 0; i < nlocal; i++)
       if (mask[i] & groupbit) {
-        if (iregion >= 0 &&
-            !domain->regions[iregion]->match(x[i][0],x[i][1],x[i][2]))
-          continue;
-
+        if (region && !region->match(x[i][0],x[i][1],x[i][2])) continue;
         foriginal[0] += f[i][0];
         foriginal[1] += f[i][1];
         foriginal[2] += f[i][2];
@@ -284,16 +295,24 @@ void FixSetForce::post_force(int vflag)
 
 void FixSetForce::post_force_respa(int vflag, int ilevel, int iloop)
 {
-  // set force to desired value on outermost level, 0.0 on other levels
+  // set force to desired value on requested level, 0.0 on other levels
 
-  if (ilevel == nlevels_respa-1) post_force(vflag);
+  if (ilevel == ilevel_respa) post_force(vflag);
   else {
+    Region *region = NULL;
+    if (iregion >= 0) {
+      region = domain->regions[iregion];
+      region->prematch();
+    }
+
+    double **x = atom->x;
     double **f = atom->f;
     int *mask = atom->mask;
     int nlocal = atom->nlocal;
 
     for (int i = 0; i < nlocal; i++)
       if (mask[i] & groupbit) {
+        if (region && !region->match(x[i][0],x[i][1],x[i][2])) continue;
         if (xstyle) f[i][0] = 0.0;
         if (ystyle) f[i][1] = 0.0;
         if (zstyle) f[i][2] = 0.0;
@@ -330,6 +349,6 @@ double FixSetForce::compute_vector(int n)
 double FixSetForce::memory_usage()
 {
   double bytes = 0.0;
-  if (varflag == ATOM) bytes = atom->nmax*3 * sizeof(double);
+  if (varflag == ATOM) bytes = maxatom*3 * sizeof(double);
   return bytes;
 }

@@ -1,4 +1,38 @@
 # Install/unInstall package files in LAMMPS
+# mode = 0/1/2 for uninstall/install/update
+
+mode=$1
+
+# enforce using portable C locale
+LC_ALL=C
+export LC_ALL
+
+# arg1 = file, arg2 = file it depends on
+
+action () {
+  if (test $mode = 0) then
+    rm -f ../$1
+  elif (! cmp -s $1 ../$1) then
+    if (test -z "$2" || test -e ../$2) then
+      cp $1 ..
+      if (test $mode = 2) then
+        echo "  updating src/$1"
+      fi
+    fi
+  elif (test -n "$2") then
+    if (test ! -e ../$2) then
+      rm -f ../$1
+    fi
+  fi
+}
+
+# all package files with no dependencies
+
+for file in *.cpp *.h; do
+  test -f ${file} && action $file
+done
+
+# edit 2 Makefile.package files to include/exclude package info
 
 if (test $1 = 1) then
 
@@ -10,23 +44,12 @@ if (test $1 = 1) then
   fi
 
   if (test -e ../Makefile.package.settings) then
-    sed -i -e '/^include.*USER-MOLFILE.*$/d' ../Makefile.package.settings
+    sed -i -e '/^include.*molfile.*$/d' ../Makefile.package.settings
     # multiline form needed for BSD sed on Macs
     sed -i -e '4 i \
-include ..\/USER-MOLFILE\/Makefile.lammps
+include ..\/..\/lib\/molfile\/Makefile.lammps
 ' ../Makefile.package.settings
   fi
-
-  cp molfile_interface.cpp ..
-  cp dump_molfile.cpp ..
-  cp reader_molfile.cpp ..
-
-  cp molfile_interface.h ..
-  cp dump_molfile.h ..
-  cp reader_molfile.h ..
-
-  cp molfile_plugin.h ..
-  cp vmdplugin.h ..
 
 elif (test $1 = 0) then
 
@@ -35,17 +58,7 @@ elif (test $1 = 0) then
   fi
 
   if (test -e ../Makefile.package.settings) then
-    sed -i -e '/^include.*USER-MOLFILE.*$/d' ../Makefile.package.settings
+    sed -i -e '/^include.*molfile.*$/d' ../Makefile.package.settings
   fi
 
-  rm -f ../molfile_interface.cpp
-  rm -f ../dump_molfile.cpp
-  rm -f ../reader_molfile.cpp
-
-  rm -f ../molfile_interface.h
-  rm -f ../dump_molfile.h
-  rm -f ../reader_molfile.h
-
-  rm -f ../molfile_plugin.h
-  rm -f ../vmdplugin.h
 fi

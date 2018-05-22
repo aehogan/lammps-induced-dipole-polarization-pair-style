@@ -11,10 +11,9 @@
    See the README file in the top-level LAMMPS directory.
 ------------------------------------------------------------------------- */
 
-#include "lmptype.h"
-#include "mpi.h"
-#include "stdlib.h"
-#include "string.h"
+#include <mpi.h>
+#include <stdlib.h>
+#include <string.h>
 #include "displace_atoms.h"
 #include "atom.h"
 #include "modify.h"
@@ -25,6 +24,15 @@
 #include "group.h"
 #include "math_const.h"
 #include "random_park.h"
+#include "force.h"
+#include "input.h"
+#include "variable.h"
+#include "atom_vec_ellipsoid.h"
+#include "atom_vec_line.h"
+#include "atom_vec_tri.h"
+#include "atom_vec_body.h"
+#include "math_extra.h"
+#include "memory.h"
 #include "error.h"
 
 using namespace LAMMPS_NS;
@@ -34,7 +42,17 @@ enum{MOVE,RAMP,RANDOM,ROTATE};
 
 /* ---------------------------------------------------------------------- */
 
-DisplaceAtoms::DisplaceAtoms(LAMMPS *lmp) : Pointers(lmp) {}
+DisplaceAtoms::DisplaceAtoms(LAMMPS *lmp) : Pointers(lmp)
+{
+  mvec = NULL;
+}
+
+/* ---------------------------------------------------------------------- */
+
+DisplaceAtoms::~DisplaceAtoms()
+{
+  memory->destroy(mvec);
+}
 
 /* ---------------------------------------------------------------------- */
 
@@ -53,11 +71,14 @@ void DisplaceAtoms::command(int narg, char **arg)
 
   // group and style
 
-  int igroup = group->find(arg[0]);
+  igroup = group->find(arg[0]);
   if (igroup == -1) error->all(FLERR,"Could not find displace_atoms group ID");
-  int groupbit = group->bitmask[igroup];
+  groupbit = group->bitmask[igroup];
 
-  int style;
+  if (modify->check_rigid_group_overlap(groupbit))
+    error->warning(FLERR,"Attempting to displace atoms in rigid bodies");
+
+  int style = -1;
   if (strcmp(arg[1],"move") == 0) style = MOVE;
   else if (strcmp(arg[1],"ramp") == 0) style = RAMP;
   else if (strcmp(arg[1],"random") == 0) style = RANDOM;
@@ -77,9 +98,6 @@ void DisplaceAtoms::command(int narg, char **arg)
 
   // setup scaling
 
-  if (scaleflag && domain->lattice == NULL)
-    error->all(FLERR,"Use of displace_atoms with undefined lattice");
-
   double xscale,yscale,zscale;
   if (scaleflag) {
     xscale = domain->lattice->xlattice;
@@ -88,25 +106,12 @@ void DisplaceAtoms::command(int narg, char **arg)
   }
   else xscale = yscale = zscale = 1.0;
 
-  // move atoms by 3-vector
+  // move atoms by 3-vector or specified variable(s)
 
   if (style == MOVE) {
-
-    double delx = xscale*atof(arg[2]);
-    double dely = yscale*atof(arg[3]);
-    double delz = zscale*atof(arg[4]);
-
-    double **x = atom->x;
-    int *mask = atom->mask;
-    int nlocal = atom->nlocal;
-
-    for (i = 0; i < nlocal; i++) {
-      if (mask[i] & groupbit) {
-        x[i][0] += delx;
-        x[i][1] += dely;
-        x[i][2] += delz;
-      }
-    }
+    move(0,arg[2],xscale);
+    move(1,arg[3],yscale);
+    move(2,arg[4],zscale);
   }
 
   // move atoms in ramped fashion
@@ -121,14 +126,14 @@ void DisplaceAtoms::command(int narg, char **arg)
 
     double d_lo,d_hi;
     if (d_dim == 0) {
-      d_lo = xscale*atof(arg[3]);
-      d_hi = xscale*atof(arg[4]);
+      d_lo = xscale*force->numeric(FLERR,arg[3]);
+      d_hi = xscale*force->numeric(FLERR,arg[4]);
     } else if (d_dim == 1) {
-      d_lo = yscale*atof(arg[3]);
-      d_hi = yscale*atof(arg[4]);
+      d_lo = yscale*force->numeric(FLERR,arg[3]);
+      d_hi = yscale*force->numeric(FLERR,arg[4]);
     } else if (d_dim == 2) {
-      d_lo = zscale*atof(arg[3]);
-      d_hi = zscale*atof(arg[4]);
+      d_lo = zscale*force->numeric(FLERR,arg[3]);
+      d_hi = zscale*force->numeric(FLERR,arg[4]);
     }
 
     int coord_dim;
@@ -139,14 +144,14 @@ void DisplaceAtoms::command(int narg, char **arg)
 
     double coord_lo,coord_hi;
     if (coord_dim == 0) {
-      coord_lo = xscale*atof(arg[6]);
-      coord_hi = xscale*atof(arg[7]);
+      coord_lo = xscale*force->numeric(FLERR,arg[6]);
+      coord_hi = xscale*force->numeric(FLERR,arg[7]);
     } else if (coord_dim == 1) {
-      coord_lo = yscale*atof(arg[6]);
-      coord_hi = yscale*atof(arg[7]);
+      coord_lo = yscale*force->numeric(FLERR,arg[6]);
+      coord_hi = yscale*force->numeric(FLERR,arg[7]);
     } else if (coord_dim == 2) {
-      coord_lo = zscale*atof(arg[6]);
-      coord_hi = zscale*atof(arg[7]);
+      coord_lo = zscale*force->numeric(FLERR,arg[6]);
+      coord_hi = zscale*force->numeric(FLERR,arg[7]);
     }
 
     double **x = atom->x;
@@ -172,10 +177,10 @@ void DisplaceAtoms::command(int narg, char **arg)
   if (style == RANDOM) {
     RanPark *random = new RanPark(lmp,1);
 
-    double dx = xscale*atof(arg[2]);
-    double dy = yscale*atof(arg[3]);
-    double dz = zscale*atof(arg[4]);
-    int seed = atoi(arg[5]);
+    double dx = xscale*force->numeric(FLERR,arg[2]);
+    double dy = yscale*force->numeric(FLERR,arg[3]);
+    double dz = zscale*force->numeric(FLERR,arg[4]);
+    int seed = force->inumeric(FLERR,arg[5]);
     if (seed <= 0) error->all(FLERR,"Illegal displace_atoms random command");
 
     double **x = atom->x;
@@ -193,7 +198,7 @@ void DisplaceAtoms::command(int narg, char **arg)
 
     delete random;
   }
- 
+
   // rotate atoms by right-hand rule by theta around R
   // P = point = vector = point of rotation
   // R = vector = axis of rotation
@@ -206,18 +211,20 @@ void DisplaceAtoms::command(int narg, char **arg)
   // X = P + C + A cos(theta) + B sin(theta)
 
   if (style == ROTATE) {
-    double axis[3],point[3];
+    double theta_new;
+    double axis[3],point[3],qrotate[4],qnew[4];
     double a[3],b[3],c[3],d[3],disp[3],runit[3];
-    
+    double *quat;
+
     int dim = domain->dimension;
-    point[0] = xscale*atof(arg[2]);
-    point[1] = yscale*atof(arg[3]);
-    point[2] = zscale*atof(arg[4]);
-    axis[0] = atof(arg[5]);
-    axis[1] = atof(arg[6]);
-    axis[2] = atof(arg[7]);
-    double theta = atof(arg[8]);
-    if (dim == 2 and (axis[0] != 0.0 || axis[1] != 0.0))
+    point[0] = xscale*force->numeric(FLERR,arg[2]);
+    point[1] = yscale*force->numeric(FLERR,arg[3]);
+    point[2] = zscale*force->numeric(FLERR,arg[4]);
+    axis[0] = force->numeric(FLERR,arg[5]);
+    axis[1] = force->numeric(FLERR,arg[6]);
+    axis[2] = force->numeric(FLERR,arg[7]);
+    double theta = force->numeric(FLERR,arg[8]);
+    if (dim == 2 && (axis[0] != 0.0 || axis[1] != 0.0))
       error->all(FLERR,"Invalid displace_atoms rotate axis for 2d");
 
     double len = sqrt(axis[0]*axis[0] + axis[1]*axis[1] + axis[2]*axis[2]);
@@ -227,16 +234,55 @@ void DisplaceAtoms::command(int narg, char **arg)
     runit[1] = axis[1]/len;
     runit[2] = axis[2]/len;
 
-    double sine = sin(MY_PI*theta/180.0);
-    double cosine = cos(MY_PI*theta/180.0);
+    double angle = MY_PI*theta/180.0;
+    double cosine = cos(angle);
+    double sine = sin(angle);
+
+    double qcosine = cos(0.5*angle);
+    double qsine = sin(0.5*angle);
+    qrotate[0] = qcosine;
+    qrotate[1] = runit[0]*qsine;
+    qrotate[2] = runit[1]*qsine;
+    qrotate[3] = runit[2]*qsine;
+
     double ddotr;
 
+    // flags for additional orientation info stored by some atom styles
+
+    int ellipsoid_flag = atom->ellipsoid_flag;
+    int line_flag = atom->line_flag;
+    int tri_flag = atom->tri_flag;
+    int body_flag = atom->body_flag;
+
+    int theta_flag = 0;
+    int quat_flag = 0;
+    if (line_flag) theta_flag = 1;
+    if (ellipsoid_flag || tri_flag || body_flag) quat_flag = 1;
+
+    // AtomVec pointers to retrieve per-atom storage of extra quantities
+
+    AtomVecEllipsoid *avec_ellipsoid =
+      (AtomVecEllipsoid *) atom->style_match("ellipsoid");
+    AtomVecLine *avec_line = (AtomVecLine *) atom->style_match("line");
+    AtomVecTri *avec_tri = (AtomVecTri *) atom->style_match("tri");
+    AtomVecBody *avec_body = (AtomVecBody *) atom->style_match("body");
+
     double **x = atom->x;
+    int *ellipsoid = atom->ellipsoid;
+    int *line = atom->line;
+    int *tri = atom->tri;
+    int *body = atom->body;
     int *mask = atom->mask;
     int nlocal = atom->nlocal;
+    imageint *image = atom->image;
 
     for (i = 0; i < nlocal; i++) {
       if (mask[i] & groupbit) {
+        // unwrap coordinate and reset image flags accordingly
+        domain->unmap(x[i],image[i]);
+        image[i] = ((imageint) IMGMAX << IMG2BITS) |
+          ((imageint) IMGMAX << IMGBITS) | IMGMAX;
+
         d[0] = x[i][0] - point[0];
         d[1] = x[i][1] - point[1];
         d[2] = x[i][2] - point[2];
@@ -256,6 +302,32 @@ void DisplaceAtoms::command(int narg, char **arg)
         x[i][0] = point[0] + c[0] + disp[0];
         x[i][1] = point[1] + c[1] + disp[1];
         if (dim == 3) x[i][2] = point[2] + c[2] + disp[2];
+
+        // theta for lines
+
+        if (theta_flag && line[i] >= 0.0) {
+          theta_new = fmod(avec_line->bonus[line[i]].theta+angle,MY_2PI);
+          avec_line->bonus[atom->line[i]].theta = theta_new;
+        }
+
+        // quats for ellipsoids, tris, and bodies
+
+        if (quat_flag) {
+          quat = NULL;
+          if (ellipsoid_flag && ellipsoid[i] >= 0)
+            quat = avec_ellipsoid->bonus[ellipsoid[i]].quat;
+          else if (tri_flag && tri[i] >= 0)
+            quat = avec_tri->bonus[tri[i]].quat;
+          else if (body_flag && body[i] >= 0)
+            quat = avec_body->bonus[body[i]].quat;
+          if (quat) {
+            MathExtra::quatquat(qrotate,quat,qnew);
+            quat[0] = qnew[0];
+            quat[1] = qnew[1];
+            quat[2] = qnew[2];
+            quat[3] = qnew[3];
+          }
+        }
       }
     }
   }
@@ -265,14 +337,14 @@ void DisplaceAtoms::command(int narg, char **arg)
   // use irregular() in case atoms moved a long distance
 
   double **x = atom->x;
-  tagint *image = atom->image;
+  imageint *image = atom->image;
   int nlocal = atom->nlocal;
   for (i = 0; i < nlocal; i++) domain->remap(x[i],image[i]);
 
   if (domain->triclinic) domain->x2lamda(atom->nlocal);
   domain->reset_box();
   Irregular *irregular = new Irregular(lmp);
-  irregular->migrate_atoms();
+  irregular->migrate_atoms(1);
   delete irregular;
   if (domain->triclinic) domain->lamda2x(atom->nlocal);
 
@@ -286,6 +358,39 @@ void DisplaceAtoms::command(int narg, char **arg)
     sprintf(str,"Lost atoms via displace_atoms: original " BIGINT_FORMAT
             " current " BIGINT_FORMAT,atom->natoms,natoms);
     error->warning(FLERR,str);
+  }
+}
+
+/* ----------------------------------------------------------------------
+   move atoms either by specified numeric displacement or variable evaluation
+------------------------------------------------------------------------- */
+
+void DisplaceAtoms::move(int idim, char *arg, double scale)
+{
+  double **x = atom->x;
+  int *mask = atom->mask;
+  int nlocal = atom->nlocal;
+
+  if (strstr(arg,"v_") != arg) {
+    double delta = scale*force->numeric(FLERR,arg);
+    for (int i = 0; i < nlocal; i++)
+      if (mask[i] & groupbit) x[i][idim] += delta;
+
+  } else {
+    int ivar = input->variable->find(arg+2);
+    if (ivar < 0)
+      error->all(FLERR,"Variable name for displace_atoms does not exist");
+
+    if (input->variable->equalstyle(ivar)) {
+      double delta = scale * input->variable->compute_equal(ivar);
+      for (int i = 0; i < nlocal; i++)
+        if (mask[i] & groupbit) x[i][idim] += delta;
+    } else if (input->variable->atomstyle(ivar)) {
+      if (mvec == NULL) memory->create(mvec,nlocal,"displace_atoms:mvec");
+      input->variable->compute_atom(ivar,igroup,mvec,1,0);
+      for (int i = 0; i < nlocal; i++)
+        if (mask[i] & groupbit) x[i][idim] += scale*mvec[i];
+    } else error->all(FLERR,"Variable for displace_atoms is invalid style");
   }
 }
 

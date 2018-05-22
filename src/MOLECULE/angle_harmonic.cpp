@@ -11,8 +11,8 @@
    See the README file in the top-level LAMMPS directory.
 ------------------------------------------------------------------------- */
 
-#include "math.h"
-#include "stdlib.h"
+#include <math.h>
+#include <stdlib.h>
 #include "angle_harmonic.h"
 #include "atom.h"
 #include "neighbor.h"
@@ -36,7 +36,7 @@ AngleHarmonic::AngleHarmonic(LAMMPS *lmp) : Angle(lmp) {}
 
 AngleHarmonic::~AngleHarmonic()
 {
-  if (allocated) {
+  if (allocated && !copymode) {
     memory->destroy(setflag);
     memory->destroy(k);
     memory->destroy(theta0);
@@ -168,10 +168,10 @@ void AngleHarmonic::coeff(int narg, char **arg)
   if (!allocated) allocate();
 
   int ilo,ihi;
-  force->bounds(arg[0],atom->nangletypes,ilo,ihi);
+  force->bounds(FLERR,arg[0],atom->nangletypes,ilo,ihi);
 
-  double k_one = force->numeric(arg[1]);
-  double theta0_one = force->numeric(arg[2]);
+  double k_one = force->numeric(FLERR,arg[1]);
+  double theta0_one = force->numeric(FLERR,arg[2]);
 
   // convert theta0 from degrees to radians
 
@@ -219,6 +219,16 @@ void AngleHarmonic::read_restart(FILE *fp)
   MPI_Bcast(&theta0[1],atom->nangletypes,MPI_DOUBLE,0,world);
 
   for (int i = 1; i <= atom->nangletypes; i++) setflag[i] = 1;
+}
+
+/* ----------------------------------------------------------------------
+   proc 0 writes to data file
+------------------------------------------------------------------------- */
+
+void AngleHarmonic::write_data(FILE *fp)
+{
+  for (int i = 1; i <= atom->nangletypes; i++)
+    fprintf(fp,"%d %g %g\n",i,k[i],theta0[i]/MY_PI*180.0);
 }
 
 /* ---------------------------------------------------------------------- */

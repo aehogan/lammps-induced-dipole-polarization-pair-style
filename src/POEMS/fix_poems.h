@@ -1,4 +1,4 @@
-/* ----------------------------------------------------------------------
+/* -*- c++ -*- ----------------------------------------------------------
    LAMMPS - Large-scale Atomic/Molecular Massively Parallel Simulator
    http://lammps.sandia.gov, Sandia National Laboratories
    Steve Plimpton, sjplimp@sandia.gov
@@ -39,7 +39,7 @@ class FixPOEMS : public Fix  {
   void final_integrate_respa(int, int);
 
   void grow_arrays(int);
-  void copy_arrays(int, int);
+  void copy_arrays(int, int, int);
   int pack_exchange(int, double *);
   int unpack_exchange(int, double *);
   double memory_usage();
@@ -99,8 +99,8 @@ class FixPOEMS : public Fix  {
   void readfile(char *);
   int readline(FILE *, char **, int *);
   void jointbuild();
-  void sortlist(int, int **);
-  int loopcheck(int, int, int **);
+  void sortlist(int, tagint **);
+  int loopcheck(int, int, tagint **);
   int jacobi(double **, double *, double **);
   void rotate(double **, int, int, int, int, double, double);
   void omega_from_mq(double *, double *, double *, double *,
@@ -129,6 +129,10 @@ A group ID used in the fix poems command does not exist.
 E: Must use a molecular atom style with fix poems molecule
 
 Self-explanatory.
+
+E: Too many molecules for fix poems
+
+The limit is 2^31 = ~2 billion molecules.
 
 E: No rigid bodies defined
 

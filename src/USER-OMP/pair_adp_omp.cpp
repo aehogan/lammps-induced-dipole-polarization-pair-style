@@ -12,8 +12,8 @@
    Contributing author: Axel Kohlmeyer (Temple U)
 ------------------------------------------------------------------------- */
 
-#include "math.h"
-#include "string.h"
+#include <math.h>
+#include <string.h>
 
 #include "pair_adp_omp.h"
 #include "atom.h"
@@ -71,6 +71,7 @@ void PairADPOMP::compute(int eflag, int vflag)
 
     loop_setup_thr(ifrom, ito, tid, inum, nthreads);
     ThrData *thr = fix->get_thr(tid);
+    thr->timer(Timer::START);
     ev_setup_thr(eflag, vflag, nall, eatom, vatom, thr);
 
     if (force->newton_pair)
@@ -91,6 +92,7 @@ void PairADPOMP::compute(int eflag, int vflag)
       else eval<0,0,0>(ifrom, ito, thr);
     }
 
+    thr->timer(Timer::PAIR);
     reduce_thr(this, eflag, vflag, thr);
   } // end of omp parallel region
 }
@@ -110,8 +112,8 @@ void PairADPOMP::eval(int iifrom, int iito, ThrData * const thr)
 
   evdwl = 0.0;
 
-  const double * const * const x = atom->x;
-  double * const * const f = thr->get_f();
+  const dbl3_t * _noalias const x = (dbl3_t *) atom->x[0];
+  dbl3_t * _noalias const f = (dbl3_t *) thr->get_f()[0];
   double * const rho_t = thr->get_rho();
   double * const * const mu_t = thr->get_mu();
   double * const * const lambda_t = thr->get_lambda();
@@ -132,9 +134,9 @@ void PairADPOMP::eval(int iifrom, int iito, ThrData * const thr)
 
   for (ii = iifrom; ii < iito; ii++) {
     i = ilist[ii];
-    xtmp = x[i][0];
-    ytmp = x[i][1];
-    ztmp = x[i][2];
+    xtmp = x[i].x;
+    ytmp = x[i].y;
+    ztmp = x[i].z;
     itype = type[i];
     jlist = firstneigh[i];
     jnum = numneigh[i];
@@ -143,9 +145,9 @@ void PairADPOMP::eval(int iifrom, int iito, ThrData * const thr)
       j = jlist[jj];
       j &= NEIGHMASK;
 
-      delx = xtmp - x[j][0];
-      dely = ytmp - x[j][1];
-      delz = ztmp - x[j][2];
+      delx = xtmp - x[j].x;
+      dely = ytmp - x[j].y;
+      delz = ztmp - x[j].z;
       rsq = delx*delx + dely*dely + delz*delz;
 
       if (rsq < cutforcesq) {
@@ -200,6 +202,7 @@ void PairADPOMP::eval(int iifrom, int iito, ThrData * const thr)
 
   if (NEWTON_PAIR) {
     // reduce per thread density
+    thr->timer(Timer::PAIR);
     data_reduce_thr(&(rho[0]), nall, comm->nthreads, 1, tid);
     data_reduce_thr(&(mu[0][0]), nall, comm->nthreads, 3, tid);
     data_reduce_thr(&(lambda[0][0]), nall, comm->nthreads, 6, tid);
@@ -217,6 +220,7 @@ void PairADPOMP::eval(int iifrom, int iito, ThrData * const thr)
 
   } else {
     // reduce per thread density
+    thr->timer(Timer::PAIR);
     data_reduce_thr(&(rho[0]), nlocal, comm->nthreads, 1, tid);
     data_reduce_thr(&(mu[0][0]), nlocal, comm->nthreads, 3, tid);
     data_reduce_thr(&(lambda[0][0]), nlocal, comm->nthreads, 6, tid);
@@ -268,9 +272,9 @@ void PairADPOMP::eval(int iifrom, int iito, ThrData * const thr)
 
   for (ii = iifrom; ii < iito; ii++) {
     i = ilist[ii];
-    xtmp = x[i][0];
-    ytmp = x[i][1];
-    ztmp = x[i][2];
+    xtmp = x[i].x;
+    ytmp = x[i].y;
+    ztmp = x[i].z;
     itype = type[i];
     fxtmp = fytmp = fztmp = 0.0;
 
@@ -281,9 +285,9 @@ void PairADPOMP::eval(int iifrom, int iito, ThrData * const thr)
       j = jlist[jj];
       j &= NEIGHMASK;
 
-      delx = xtmp - x[j][0];
-      dely = ytmp - x[j][1];
-      delz = ztmp - x[j][2];
+      delx = xtmp - x[j].x;
+      dely = ytmp - x[j].y;
+      delz = ztmp - x[j].z;
       rsq = delx*delx + dely*dely + delz*delz;
 
       if (rsq < cutforcesq) {
@@ -363,9 +367,9 @@ void PairADPOMP::eval(int iifrom, int iito, ThrData * const thr)
         fytmp += fy;
         fztmp += fz;
         if (NEWTON_PAIR || j < nlocal) {
-          f[j][0] -= fx;
-          f[j][1] -= fy;
-          f[j][2] -= fz;
+          f[j].x -= fx;
+          f[j].y -= fy;
+          f[j].z -= fz;
         }
 
         if (EFLAG) evdwl = phi;
@@ -373,9 +377,9 @@ void PairADPOMP::eval(int iifrom, int iito, ThrData * const thr)
                                      fx,fy,fz,delx,dely,delz,thr);
       }
     }
-    f[i][0] += fxtmp;
-    f[i][1] += fytmp;
-    f[i][2] += fztmp;
+    f[i].x += fxtmp;
+    f[i].y += fytmp;
+    f[i].z += fztmp;
   }
 }
 

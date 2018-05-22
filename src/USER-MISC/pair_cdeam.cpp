@@ -17,10 +17,10 @@
                         Germany Department of Materials Science
 ------------------------------------------------------------------------- */
 
-#include "math.h"
-#include "stdio.h"
-#include "stdlib.h"
-#include "string.h"
+#include <math.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
 #include "pair_cdeam.h"
 #include "atom.h"
 #include "force.h"
@@ -299,11 +299,11 @@ void PairCDEAM::compute(int eflag, int vflag)
                                 // Calculate derivative of h(x_i) polynomial function.
                                 h_prime_i = evalHprime(x_i);
                                 D_i = D_values[i] * h_prime_i / (2.0 * rho[i] * rho[i]);
-                        }
-                        else if(cdeamVersion == 2) {
+                        } else if(cdeamVersion == 2) {
                                 D_i = D_values[i];
+                        } else {
+                          ASSERT(false);
                         }
-                        else ASSERT(false);
                 }
 
                 for(jj = 0; jj < jnum; jj++) {
@@ -342,17 +342,16 @@ void PairCDEAM::compute(int eflag, int vflag)
                                         x_j = rhoB[j]/rho[j];
                                         ASSERT(x_j >= 0 && x_j<=1.0);
 
-                                        double D_j;
+                                        double D_j=0.0;
                                         if(cdeamVersion == 1) {
                                                 // Calculate derivative of h(x_j) polynomial function.
                                                 double h_prime_j = evalHprime(x_j);
                                                 D_j = D_values[j] * h_prime_j / (2.0 * rho[j] * rho[j]);
-                                        }
-                                        else if(cdeamVersion == 2) {
+                                        } else if(cdeamVersion == 2) {
                                                 D_j = D_values[j];
+                                        } else {
+                                          ASSERT(false);
                                         }
-                                        else ASSERT(false);
-
                                         double t2 = -rhoB[j];
                                         if(itype == speciesB) t2 += rho[j];
                                         fpair += D_j * rhoip * t2;
@@ -372,24 +371,23 @@ void PairCDEAM::compute(int eflag, int vflag)
                                 if(itype == jtype || x_i == -1.0 || x_j == -1.0) {
                                         // Case of no concentration dependence.
                                         fpair += phip;
-                                }
-                                else {
+                                } else {
                                         // We have a concentration dependence for the i-j interaction.
-                                        double h;
+                                        double h=0.0;
                                         if(cdeamVersion == 1) {
                                                 // Calculate h(x_i) polynomial function.
                                                 double h_i = evalH(x_i);
                                                 // Calculate h(x_j) polynomial function.
                                                 double h_j = evalH(x_j);
                                                 h = 0.5 * (h_i + h_j);
-                                        }
-                                        else if(cdeamVersion == 2) {
+                                        } else if(cdeamVersion == 2) {
                                                 // Average concentration.
                                                 double x_ij = 0.5 * (x_i + x_j);
                                                 // Calculate h(x_ij) polynomial function.
                                                 h = evalH(x_ij);
+                                        } else {
+                                          ASSERT(false);
                                         }
-                                        else ASSERT(false);
                                         fpair += h * phip;
                                         phi *= h;
                                 }
@@ -458,11 +456,11 @@ void PairCDEAM::read_h_coeff(char *filename)
 {
         if(comm->me == 0) {
                 // Open potential file
-                FILE *fp;
+                FILE *fptr;
                 char line[MAXLINE];
                 char nextline[MAXLINE];
-                fp = fopen(filename,"r");
-                if (fp == NULL) {
+                fptr = force->open_potential(filename);
+                if (fptr == NULL) {
                         char str[128];
                         sprintf(str,"Cannot open EAM potential file %s", filename);
                         error->one(FLERR,str);
@@ -470,7 +468,7 @@ void PairCDEAM::read_h_coeff(char *filename)
 
                 // h coefficients are stored at the end of the file.
                 // Skip to last line of file.
-                while(fgets(nextline, MAXLINE, fp) != NULL) {
+                while(fgets(nextline, MAXLINE, fptr) != NULL) {
                         strcpy(line, nextline);
                 }
                 char* ptr = strtok(line, " \t\n\r\f");
@@ -485,7 +483,7 @@ void PairCDEAM::read_h_coeff(char *filename)
                         error->one(FLERR,"Failed to read h(x) function coefficients from EAM file.");
 
                 // Close the potential file.
-                fclose(fp);
+                fclose(fptr);
         }
 
         MPI_Bcast(&nhcoeff, 1, MPI_INT, 0, world);
@@ -496,7 +494,8 @@ void PairCDEAM::read_h_coeff(char *filename)
 
 /* ---------------------------------------------------------------------- */
 
-int PairCDEAM::pack_comm(int n, int *list, double *buf, int pbc_flag, int *pbc)
+int PairCDEAM::pack_forward_comm(int n, int *list, double *buf,
+                                 int pbc_flag, int *pbc)
 {
         int i,j,m;
 
@@ -510,7 +509,7 @@ int PairCDEAM::pack_comm(int n, int *list, double *buf, int pbc_flag, int *pbc)
                                 buf[m++] = rhoB[j];
                                 buf[m++] = D_values[j];
                         }
-                        return 4;
+                        return m;
                 }
                 else if(cdeamVersion == 2) {
                         for (i = 0; i < n; i++) {
@@ -519,7 +518,7 @@ int PairCDEAM::pack_comm(int n, int *list, double *buf, int pbc_flag, int *pbc)
                                 buf[m++] = rho[j];
                                 buf[m++] = rhoB[j];
                         }
-                        return 3;
+                        return m;
                 }
                 else { ASSERT(false); return 0; }
         }
@@ -528,14 +527,14 @@ int PairCDEAM::pack_comm(int n, int *list, double *buf, int pbc_flag, int *pbc)
                         j = list[i];
                         buf[m++] = D_values[j];
                 }
-                return 1;
+                return m;
         }
         else return 0;
 }
 
 /* ---------------------------------------------------------------------- */
 
-void PairCDEAM::unpack_comm(int n, int first, double *buf)
+void PairCDEAM::unpack_forward_comm(int n, int first, double *buf)
 {
         int i,m,last;
 
@@ -556,8 +555,9 @@ void PairCDEAM::unpack_comm(int n, int first, double *buf)
                                 rho[i] = buf[m++];
                                 rhoB[i] = buf[m++];
                         }
+                } else {
+                  ASSERT(false);
                 }
-                else ASSERT(false);
         }
         else if(communicationStage == 4) {
                 for(i = first; i < last; i++) {
@@ -581,14 +581,14 @@ int PairCDEAM::pack_reverse_comm(int n, int first, double *buf)
                                 buf[m++] = rhoB[i];
                                 buf[m++] = D_values[i];
                         }
-                        return 3;
+                        return m;
                 }
                 else if(cdeamVersion == 2) {
                         for(i = first; i < last; i++) {
                                 buf[m++] = rho[i];
                                 buf[m++] = rhoB[i];
                         }
-                        return 2;
+                        return m;
                 }
                 else { ASSERT(false); return 0; }
         }
@@ -596,7 +596,7 @@ int PairCDEAM::pack_reverse_comm(int n, int first, double *buf)
                 for(i = first; i < last; i++) {
                         buf[m++] = D_values[i];
                 }
-                return 1;
+                return m;
         }
         else return 0;
 }
@@ -616,15 +616,15 @@ void PairCDEAM::unpack_reverse_comm(int n, int *list, double *buf)
                                 rhoB[j] += buf[m++];
                                 D_values[j] += buf[m++];
                         }
-                }
-                else if(cdeamVersion == 2) {
+                } else if(cdeamVersion == 2) {
                         for(i = 0; i < n; i++) {
                                 j = list[i];
                                 rho[j] += buf[m++];
                                 rhoB[j] += buf[m++];
                         }
+                } else {
+                  ASSERT(false);
                 }
-                else ASSERT(false);
         }
         else if(communicationStage == 3) {
                 for(i = 0; i < n; i++) {

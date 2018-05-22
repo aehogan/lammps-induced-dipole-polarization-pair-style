@@ -15,10 +15,10 @@
    Contributing author: Mike Parks (SNL)
 ------------------------------------------------------------------------- */
 
-#include "math.h"
-#include "float.h"
-#include "stdlib.h"
-#include "string.h"
+#include <math.h>
+#include <float.h>
+#include <stdlib.h>
+#include <string.h>
 #include "pair_peri_pmb.h"
 #include "atom.h"
 #include "domain.h"
@@ -96,7 +96,7 @@ void PairPeriPMB::compute(int eflag, int vflag)
   double *s0 = atom->s0;
   double **x0 = atom->x0;
   double **r0   = ((FixPeriNeigh *) modify->fix[ifix_peri])->r0;
-  int **partner = ((FixPeriNeigh *) modify->fix[ifix_peri])->partner;
+  tagint **partner = ((FixPeriNeigh *) modify->fix[ifix_peri])->partner;
   int *npartner = ((FixPeriNeigh *) modify->fix[ifix_peri])->npartner;
 
   // lc = lattice constant
@@ -312,13 +312,13 @@ void PairPeriPMB::coeff(int narg, char **arg)
   if (!allocated) allocate();
 
   int ilo,ihi,jlo,jhi;
-  force->bounds(arg[0],atom->ntypes,ilo,ihi);
-  force->bounds(arg[1],atom->ntypes,jlo,jhi);
+  force->bounds(FLERR,arg[0],atom->ntypes,ilo,ihi);
+  force->bounds(FLERR,arg[1],atom->ntypes,jlo,jhi);
 
-  double kspring_one = force->numeric(arg[2]);
-  double cut_one = force->numeric(arg[3]);
-  double s00_one = force->numeric(arg[4]);
-  double alpha_one = force->numeric(arg[5]);
+  double kspring_one = force->numeric(FLERR,arg[2]);
+  double cut_one = force->numeric(FLERR,arg[3]);
+  double s00_one = force->numeric(FLERR,arg[4]);
+  double alpha_one = force->numeric(FLERR,arg[5]);
 
   int count = 0;
   for (int i = ilo; i <= ihi; i++) {
@@ -359,12 +359,11 @@ void PairPeriPMB::init_style()
 {
   // error checks
 
-  if (!atom->peri_flag) error->all(FLERR,"Pair style peri requires atom style peri");
+  if (!atom->peri_flag)
+    error->all(FLERR,"Pair style peri requires atom style peri");
   if (atom->map_style == 0)
     error->all(FLERR,"Pair peri requires an atom map, see atom_modify");
 
-  if (domain->lattice == NULL)
-    error->all(FLERR,"Pair peri requires a lattice be defined");
   if (domain->lattice->xlattice != domain->lattice->ylattice ||
       domain->lattice->xlattice != domain->lattice->zlattice ||
       domain->lattice->ylattice != domain->lattice->zlattice)
@@ -388,7 +387,7 @@ void PairPeriPMB::init_style()
     if (strcmp(modify->fix[i]->style,"PERI_NEIGH") == 0) ifix_peri = i;
   if (ifix_peri == -1) error->all(FLERR,"Fix peri neigh does not exist");
 
-  neighbor->request(this);
+  neighbor->request(this,instance_me);
 }
 
 /* ----------------------------------------------------------------------
@@ -451,7 +450,7 @@ double PairPeriPMB::single(int i, int j, int itype, int jtype, double rsq,
   double *vfrac = atom->vfrac;
   double **x0 = atom->x0;
   double **r0   = ((FixPeriNeigh *) modify->fix[ifix_peri])->r0;
-  int **partner = ((FixPeriNeigh *) modify->fix[ifix_peri])->partner;
+  tagint **partner = ((FixPeriNeigh *) modify->fix[ifix_peri])->partner;
   int *npartner = ((FixPeriNeigh *) modify->fix[ifix_peri])->npartner;
 
   double lc = domain->lattice->xlattice;

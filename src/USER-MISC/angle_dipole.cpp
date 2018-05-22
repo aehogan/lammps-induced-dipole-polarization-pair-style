@@ -12,11 +12,11 @@
 ------------------------------------------------------------------------- */
 
 /* ----------------------------------------------------------------------
-   Contributing author: Mario Orsi (U Southampton), orsimario@gmail.com
+   Contributing authors: Mario Orsi & Wei Ding (QMUL), m.orsi@qmul.ac.uk
 ------------------------------------------------------------------------- */
 
-#include "math.h"
-#include "stdlib.h"
+#include <math.h>
+#include <stdlib.h>
 #include "angle_dipole.h"
 #include "atom.h"
 #include "neighbor.h"
@@ -51,8 +51,8 @@ void AngleDipole::compute(int eflag, int vflag)
 {
   int iRef,iDip,iDummy,n,type;
   double delx,dely,delz;
-  double eangle,tangle,f1[3],f3[3];
-  double r,dr,cosGamma,deltaGamma,kdg,rmu;
+  double eangle,tangle,fi[3],fj[3];
+  double r,cosGamma,deltaGamma,kdg,rmu;
 
   eangle = 0.0;
   if (eflag || vflag) ev_setup(eflag,vflag);
@@ -65,6 +65,10 @@ void AngleDipole::compute(int eflag, int vflag)
   int nanglelist = neighbor->nanglelist;
   int nlocal = atom->nlocal;
   int newton_bond = force->newton_bond;
+
+  double **f = atom->f;
+  double delTx, delTy, delTz;
+  double fx, fy, fz, fmod, fmod_sqrtff;
 
   if (!newton_bond)
     error->all(FLERR,"'newton' flag for bonded interactions must be 'on'");
@@ -90,14 +94,40 @@ void AngleDipole::compute(int eflag, int vflag)
 
     tangle = 2.0 * kdg / rmu;
 
-    torque[iDip][0] += tangle * (dely*mu[iDip][2] - delz*mu[iDip][1]);
-    torque[iDip][1] += tangle * (delz*mu[iDip][0] - delx*mu[iDip][2]);
-    torque[iDip][2] += tangle * (delx*mu[iDip][1] - dely*mu[iDip][0]);
+    delTx = tangle * (dely*mu[iDip][2] - delz*mu[iDip][1]);
+    delTy = tangle * (delz*mu[iDip][0] - delx*mu[iDip][2]);
+    delTz = tangle * (delx*mu[iDip][1] - dely*mu[iDip][0]);
 
-    f1[0] = f1[1] = f1[2] = f3[0] = f3[1] = f3[2] = 0.0;
+    torque[iDip][0] += delTx;
+    torque[iDip][1] += delTy;
+    torque[iDip][2] += delTz;
 
-    if (evflag) // tally energy (virial=0 because force=0)
-      ev_tally(iRef,iDip,iDummy,nlocal,newton_bond,eangle,f1,f3,
+    // Force couple that counterbalances dipolar torque
+    fx = dely*delTz - delz*delTy; // direction (fi): - r x (-T)
+    fy = delz*delTx - delx*delTz;
+    fz = delx*delTy - dely*delTx;
+
+    fmod = sqrt(delTx*delTx + delTy*delTy + delTz*delTz) / r; // magnitude
+    fmod_sqrtff = fmod / sqrt(fx*fx + fy*fy + fz*fz);
+
+    fi[0] = fx * fmod_sqrtff;
+    fi[1] = fy * fmod_sqrtff;
+    fi[2] = fz * fmod_sqrtff;
+
+    fj[0] = -fi[0];
+    fj[1] = -fi[1];
+    fj[2] = -fi[2];
+
+    f[iDip][0] += fj[0];
+    f[iDip][1] += fj[1];
+    f[iDip][2] += fj[2];
+
+    f[iRef][0] += fi[0];
+    f[iRef][1] += fi[1];
+    f[iRef][2] += fi[2];
+
+    if (evflag) // virial = rij.fi = 0 (fj = -fi & fk = 0)
+      ev_tally(iRef,iDip,iDummy,nlocal,newton_bond,eangle,fj,fi,
                0.0,0.0,0.0,0.0,0.0,0.0);
   }
 }
@@ -126,10 +156,10 @@ void AngleDipole::coeff(int narg, char **arg)
   if (!allocated) allocate();
 
   int ilo,ihi;
-  force->bounds(arg[0],atom->nangletypes,ilo,ihi);
+  force->bounds(FLERR,arg[0],atom->nangletypes,ilo,ihi);
 
-  double k_one = force->numeric(arg[1]);
-  double gamma0_one = force->numeric(arg[2]);
+  double k_one = force->numeric(FLERR,arg[1]);
+  double gamma0_one = force->numeric(FLERR,arg[2]);
 
   // convert gamma0 from degrees to radians
 
@@ -179,6 +209,16 @@ void AngleDipole::read_restart(FILE *fp)
   MPI_Bcast(&gamma0[1],atom->nangletypes,MPI_DOUBLE,0,world);
 
   for (int i = 1; i <= atom->nangletypes; i++) setflag[i] = 1;
+}
+
+/* ----------------------------------------------------------------------
+   proc 0 writes to data file
+------------------------------------------------------------------------- */
+
+void AngleDipole::write_data(FILE *fp)
+{
+  for (int i = 1; i <= atom->nangletypes; i++)
+    fprintf(fp,"%d %g %g\n",i,k[i],gamma0[i]);
 }
 
 /* ----------------------------------------------------------------------

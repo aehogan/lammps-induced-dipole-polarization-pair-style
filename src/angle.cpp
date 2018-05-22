@@ -11,7 +11,7 @@
    See the README file in the top-level LAMMPS directory.
 ------------------------------------------------------------------------- */
 
-#include "math.h"
+#include <math.h>
 #include "angle.h"
 #include "atom.h"
 #include "comm.h"
@@ -30,6 +30,7 @@ using namespace MathConst;
 Angle::Angle(LAMMPS *lmp) : Pointers(lmp)
 {
   energy = 0.0;
+  writedata = 1;
 
   allocated = 0;
   suffix_flag = Suffix::NONE;
@@ -37,15 +38,21 @@ Angle::Angle(LAMMPS *lmp) : Pointers(lmp)
   maxeatom = maxvatom = 0;
   eatom = NULL;
   vatom = NULL;
+  setflag = NULL;
 
-  datamask = ALL_MASK;
-  datamask_ext = ALL_MASK;
+  execution_space = Host;
+  datamask_read = ALL_MASK;
+  datamask_modify = ALL_MASK;
+
+  copymode = 0;
 }
 
 /* ---------------------------------------------------------------------- */
 
 Angle::~Angle()
 {
+  if (copymode) return;
+
   memory->destroy(eatom);
   memory->destroy(vatom);
 }
@@ -56,7 +63,8 @@ Angle::~Angle()
 
 void Angle::init()
 {
-  if (!allocated) error->all(FLERR,"Angle coeffs are not set");
+  if (!allocated && atom->nangletypes)
+    error->all(FLERR,"Angle coeffs are not set");
   for (int i = 1; i <= atom->nangletypes; i++)
     if (setflag[i] == 0) error->all(FLERR,"All angle coeffs are not set");
 
@@ -68,7 +76,7 @@ void Angle::init()
    see integrate::ev_set() for values of eflag (0-3) and vflag (0-6)
 ------------------------------------------------------------------------- */
 
-void Angle::ev_setup(int eflag, int vflag)
+void Angle::ev_setup(int eflag, int vflag, int alloc)
 {
   int i,n;
 
@@ -86,25 +94,29 @@ void Angle::ev_setup(int eflag, int vflag)
 
   if (eflag_atom && atom->nmax > maxeatom) {
     maxeatom = atom->nmax;
-    memory->destroy(eatom);
-    memory->create(eatom,comm->nthreads*maxeatom,"bond:eatom");
+    if (alloc) {
+      memory->destroy(eatom);
+      memory->create(eatom,comm->nthreads*maxeatom,"angle:eatom");
+    }
   }
   if (vflag_atom && atom->nmax > maxvatom) {
     maxvatom = atom->nmax;
-    memory->destroy(vatom);
-    memory->create(vatom,comm->nthreads*maxvatom,6,"bond:vatom");
+    if (alloc) {
+      memory->destroy(vatom);
+      memory->create(vatom,comm->nthreads*maxvatom,6,"angle:vatom");
+    }
   }
 
   // zero accumulators
 
   if (eflag_global) energy = 0.0;
   if (vflag_global) for (i = 0; i < 6; i++) virial[i] = 0.0;
-  if (eflag_atom) {
+  if (eflag_atom && alloc) {
     n = atom->nlocal;
     if (force->newton_bond) n += atom->nghost;
     for (i = 0; i < n; i++) eatom[i] = 0.0;
   }
-  if (vflag_atom) {
+  if (vflag_atom && alloc) {
     n = atom->nlocal;
     if (force->newton_bond) n += atom->nghost;
     for (i = 0; i < n; i++) {

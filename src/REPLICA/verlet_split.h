@@ -1,4 +1,4 @@
-/* -------------------------------------------------------------------------
+/* -*- c++ -*- -------------------------------------------------------------
    LAMMPS - Large-scale Atomic/Molecular Massively Parallel Simulator
    http://lammps.sandia.gov, Sandia National Laboratories
    Steve Plimpton, sjplimp@sandia.gov
@@ -29,7 +29,7 @@ class VerletSplit : public Verlet {
   VerletSplit(class LAMMPS *, int, char **);
   ~VerletSplit();
   void init();
-  void setup();
+  void setup(int);
   void setup_minimal(int);
   void run(int);
   bigint memory_usage();
@@ -66,6 +66,10 @@ E: Verlet/split requires Rspace partition size be multiple of Kspace partition s
 This is so there is an equal number of Rspace processors for every
 Kspace processor.
 
+E: Verlet/split can only currently be used with comm_style brick
+
+This is a current restriction in LAMMPS.
+
 E: Verlet/split requires Rspace partition layout be multiple of Kspace partition layout in each dim
 
 This is controlled by the processors command.
@@ -74,5 +78,9 @@ W: No Kspace calculation with verlet/split
 
 The 2nd partition performs a kspace calculation so the kspace_style
 command must be used.
+
+E: Verlet/split does not yet support TIP4P
+
+This is a current limitation.
 
 */

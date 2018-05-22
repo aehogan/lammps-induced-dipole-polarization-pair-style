@@ -1,4 +1,4 @@
-/* ----------------------------------------------------------------------
+/* -*- c++ -*- ----------------------------------------------------------
    LAMMPS - Large-scale Atomic/Molecular Massively Parallel Simulator
    http://lammps.sandia.gov, Sandia National Laboratories
    Steve Plimpton, sjplimp@sandia.gov
@@ -27,7 +27,7 @@ namespace LAMMPS_NS {
 class DumpLocal : public Dump {
  public:
   DumpLocal(LAMMPS *, int, char **);
-  ~DumpLocal();
+  virtual ~DumpLocal();
 
  private:
   int nevery;                // dump frequency to check Fix against
@@ -57,12 +57,18 @@ class DumpLocal : public Dump {
   int modify_param(int, char **);
   void write_header(bigint);
   int count();
-  void pack(int *);
+  void pack(tagint *);
+  int convert_string(int, double *);
   void write_data(int, double *);
 
   void parse_fields(int, char **);
   int add_compute(char *);
   int add_fix(char *);
+
+  typedef void (DumpLocal::*FnPtrWrite)(int, double *);
+  FnPtrWrite write_choice;             // ptr to write data functions
+  void write_string(int, double *);
+  void write_lines(int, double *);
 
   // customize by adding a method prototype
 
@@ -108,13 +114,18 @@ Self-explanatory.  Check the input script syntax and compare to the
 documentation for the command.  You can use -echo screen as a
 command-line option when running LAMMPS to see the offending line.
 
+E: Compute used in dump between runs is not current
+
+The compute was not invoked on the current timestep, therefore it
+cannot be used in a dump between runs.
+
 E: Dump local count is not consistent across input fields
 
 Every column of output must be the same length.
 
 E: Invalid attribute in dump local command
 
-Self-explantory.
+Self-explanatory.
 
 E: Dump local compute does not compute local info
 

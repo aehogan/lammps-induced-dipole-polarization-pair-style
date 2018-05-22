@@ -1,4 +1,4 @@
-/* ----------------------------------------------------------------------
+/* -*- c++ -*- ----------------------------------------------------------
    LAMMPS - Large-scale Atomic/Molecular Massively Parallel Simulator
    http://lammps.sandia.gov, Sandia National Laboratories
    Steve Plimpton, sjplimp@sandia.gov
@@ -28,20 +28,23 @@ class ComputeTempPartial : public Compute {
  public:
   ComputeTempPartial(class LAMMPS *, int, char **);
   virtual ~ComputeTempPartial();
-  void init();
+  void init() {}
+  void setup();
   double compute_scalar();
   void compute_vector();
 
   int dof_remove(int);
   void remove_bias(int, double *);
+  void remove_bias_thr(int, double *, double *);
   void remove_bias_all();
+  void reapply_bias_all();
   void restore_bias(int, double *);
+  void restore_bias_thr(int, double *, double *);
   void restore_bias_all();
   double memory_usage();
 
  protected:
   int xflag,yflag,zflag;
-  int fix_dof;
   double tfactor;
 
   void dof_compute();
@@ -63,5 +66,10 @@ command-line option when running LAMMPS to see the offending line.
 E: Compute temp/partial cannot use vz for 2d systemx
 
 Self-explanatory.
+
+E: Temperature compute degrees of freedom < 0
+
+This should not happen if you are calculating the temperature
+on a valid set of atoms.
 
 */

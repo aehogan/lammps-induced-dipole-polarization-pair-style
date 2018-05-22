@@ -1,4 +1,4 @@
-/* ----------------------------------------------------------------------
+/* -*- c++ -*- ----------------------------------------------------------
    LAMMPS - Large-scale Atomic/Molecular Massively Parallel Simulator
    http://lammps.sandia.gov, Sandia National Laboratories
    Steve Plimpton, sjplimp@sandia.gov
@@ -37,6 +37,8 @@ class PairGayBerne : public Pair {
   void read_restart(FILE *);
   void write_restart_settings(FILE *);
   void read_restart_settings(FILE *);
+  void write_data(FILE *);
+  void write_data_all(FILE *);
 
  protected:
   enum{SPHERE_SPHERE,SPHERE_ELLIPSE,ELLIPSE_SPHERE,ELLIPSE_ELLIPSE};
@@ -76,10 +78,6 @@ class PairGayBerne : public Pair {
 
 /* ERROR/WARNING messages:
 
-E: Pair gayberne requires atom style ellipsoid
-
-Self-explanatory.
-
 E: Illegal ... command
 
 Self-explanatory.  Check the input script syntax and compare to the
@@ -89,6 +87,10 @@ command-line option when running LAMMPS to see the offending line.
 E: Incorrect args for pair coefficients
 
 Self-explanatory.  Check the input script or data file.
+
+E: Pair gayberne requires atom style ellipsoid
+
+Self-explanatory.
 
 E: Pair gayberne requires atoms with same type have same shape
 

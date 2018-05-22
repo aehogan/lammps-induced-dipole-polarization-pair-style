@@ -1,4 +1,4 @@
-/* ----------------------------------------------------------------------
+/* -*- c++ -*- ----------------------------------------------------------
    LAMMPS - Large-scale Atomic/Molecular Massively Parallel Simulator
    http://lammps.sandia.gov, Sandia National Laboratories
    Steve Plimpton, sjplimp@sandia.gov
@@ -34,7 +34,7 @@ class TAD : protected Pointers {
   int me,nprocs;
   int nsteps,t_event;
   double templo,temphi,delta_conf,tmax;
-  double etol,ftol,etol_neb,ftol_neb;
+  double etol,ftol,etol_neb,ftol_neb,dt_neb;
   int maxiter,maxeval,n1steps_neb,n2steps_neb,nevery_neb;
   char *min_style, *min_style_neb;
   double delta_beta,ratio_beta;
@@ -49,10 +49,10 @@ class TAD : protected Pointers {
   double time_start;
 
   class NEB *neb;                    // NEB object
-  class Fix *fix_neb;                 // FixNEB object
+  class Fix *fix_neb;                // FixNEB object
   class Compute *compute_event;      // compute to detect event
   class FixEventTAD *fix_event;      // current event/state
-  class FixStoreState *fix_revert;   // revert state
+  class FixStore *fix_revert;        // revert state
   FixEventTAD **fix_event_list;      // list of possible events
   int n_event_list;                  // number of events
   int nmax_event_list;               // allocated events
@@ -73,7 +73,8 @@ class TAD : protected Pointers {
   void perform_neb(int);
   void log_event(int);
   void options(int, char **);
-  void revert();
+  void store_state();
+  void revert_state();
   void add_event();
   void perform_event(int);
   void compute_tlo(int);
@@ -144,7 +145,7 @@ after the PRD simulation.
 
 E: Too many timesteps
 
-The cummulative timesteps must fit in a 64-bit integer.
+The cumulative timesteps must fit in a 64-bit integer.
 
 E: Too many iterations
 

@@ -11,7 +11,7 @@
    See the README file in the top-level LAMMPS directory.
 ------------------------------------------------------------------------- */
 
-#include "string.h"
+#include <string.h>
 #include "compute_property_local.h"
 #include "atom.h"
 #include "atom_vec.h"
@@ -27,27 +27,28 @@
 using namespace LAMMPS_NS;
 
 enum{NONE,NEIGH,PAIR,BOND,ANGLE,DIHEDRAL,IMPROPER};
+enum{TYPE,RADIUS};
 
 #define DELTA 10000
 
 /* ---------------------------------------------------------------------- */
 
 ComputePropertyLocal::ComputePropertyLocal(LAMMPS *lmp, int narg, char **arg) :
-  Compute(lmp, narg, arg)
+  Compute(lmp, narg, arg),
+  vlocal(NULL), alocal(NULL), indices(NULL), pack_choice(NULL)
 {
   if (narg < 4) error->all(FLERR,"Illegal compute property/local command");
 
   local_flag = 1;
   nvalues = narg - 3;
-  if (nvalues == 1) size_local_cols = 0;
-  else size_local_cols = nvalues;
-
   pack_choice = new FnPtrPack[nvalues];
 
   kindflag = NONE;
 
   int i;
-  for (int iarg = 3; iarg < narg; iarg++) {
+  nvalues = 0;
+  int iarg = 3;
+  while (iarg < narg) {
     i = iarg-3;
 
     if (strcmp(arg[iarg],"natom1") == 0) {
@@ -206,11 +207,36 @@ ComputePropertyLocal::ComputePropertyLocal(LAMMPS *lmp, int narg, char **arg) :
                    "Compute property/local cannot use these inputs together");
       kindflag = IMPROPER;
 
-    } else error->all(FLERR,
-                      "Invalid keyword in compute property/local command");
+    } else break;
+
+    nvalues++;
+    iarg++;
+  }
+
+  if (nvalues == 1) size_local_cols = 0;
+  else size_local_cols = nvalues;
+
+  // optional args
+
+  cutstyle = TYPE;
+
+  while (iarg < narg) {
+    if (strcmp(arg[iarg],"cutoff") == 0) {
+      if (iarg+2 > narg)
+        error->all(FLERR,"Illegal compute property/local command");
+      if (strcmp(arg[iarg+1],"type") == 0) cutstyle = TYPE;
+      else if (strcmp(arg[iarg+1],"radius") == 0) cutstyle = RADIUS;
+      else error->all(FLERR,"Illegal compute property/local command");
+      iarg += 2;
+    } else error->all(FLERR,"Illegal compute property/local command");
   }
 
   // error check
+
+  if (atom->molecular == 2 && (kindflag == BOND || kindflag == ANGLE ||
+                               kindflag == DIHEDRAL || kindflag == IMPROPER))
+    error->all(FLERR,"Compute property/local does not (yet) work "
+               "with atom_style template");
 
   if (kindflag == BOND && atom->avec->bonds_allow == 0)
     error->all(FLERR,
@@ -224,11 +250,12 @@ ComputePropertyLocal::ComputePropertyLocal(LAMMPS *lmp, int narg, char **arg) :
   if (kindflag == IMPROPER && atom->avec->impropers_allow == 0)
     error->all(FLERR,
                "Compute property/local for property that isn't allocated");
+  if (cutstyle == RADIUS && !atom->radius_flag)
+    error->all(FLERR,"Compute property/local requires atom attribute radius");
 
   nmax = 0;
-  vector = NULL;
-  array = NULL;
-  indices = NULL;
+  vlocal = NULL;
+  alocal = NULL;
 }
 
 /* ---------------------------------------------------------------------- */
@@ -236,8 +263,8 @@ ComputePropertyLocal::ComputePropertyLocal(LAMMPS *lmp, int narg, char **arg) :
 ComputePropertyLocal::~ComputePropertyLocal()
 {
   delete [] pack_choice;
-  memory->destroy(vector);
-  memory->destroy(array);
+  memory->destroy(vlocal);
+  memory->destroy(alocal);
   memory->destroy(indices);
 }
 
@@ -253,12 +280,16 @@ void ComputePropertyLocal::init()
   }
 
   // for NEIGH/PAIR need an occasional half neighbor list
+  // set size to same value as request made by force->pair
+  // this should enable it to always be a copy list  (e.g. for granular pstyle)
 
   if (kindflag == NEIGH || kindflag == PAIR) {
-    int irequest = neighbor->request((void *) this);
+    int irequest = neighbor->request(this,instance_me);
     neighbor->requests[irequest]->pair = 0;
     neighbor->requests[irequest]->compute = 1;
     neighbor->requests[irequest]->occasional = 1;
+    NeighRequest *pairrequest = neighbor->find_request((void *) force->pair);
+    if (pairrequest) neighbor->requests[irequest]->size = pairrequest->size;
   }
 
   // do initial memory allocation so that memory_usage() is correct
@@ -310,10 +341,10 @@ void ComputePropertyLocal::compute_local()
   // fill vector or array with local values
 
   if (nvalues == 1) {
-    buf = vector;
+    buf = vlocal;
     (this->*pack_choice[0])(0);
   } else {
-    if (array) buf = &array[0][0];
+    if (alocal) buf = &alocal[0][0];
     for (int n = 0; n < nvalues; n++)
       (this->*pack_choice[n])(n);
   }
@@ -329,22 +360,22 @@ void ComputePropertyLocal::compute_local()
 
 int ComputePropertyLocal::count_pairs(int allflag, int forceflag)
 {
-  int i,j,m,n,ii,jj,inum,jnum,itype,jtype;
-  double xtmp,ytmp,ztmp,delx,dely,delz,rsq;
+  int i,j,m,ii,jj,inum,jnum,itype,jtype;
+  tagint itag,jtag;
+  double xtmp,ytmp,ztmp,delx,dely,delz,rsq,radsum;
   int *ilist,*jlist,*numneigh,**firstneigh;
 
   double **x = atom->x;
-  int *tag = atom->tag;
+  double *radius = atom->radius;
+  tagint *tag = atom->tag;
   int *type = atom->type;
   int *mask = atom->mask;
   int nlocal = atom->nlocal;
-  double *special_coul = force->special_coul;
-  double *special_lj = force->special_lj;
   int newton_pair = force->newton_pair;
 
   // invoke half neighbor list (will copy or build if necessary)
 
-  if (allflag == 0) neighbor->build_one(list->index);
+  if (allflag == 0) neighbor->build_one(list);
 
   inum = list->inum;
   ilist = list->ilist;
@@ -353,10 +384,13 @@ int ComputePropertyLocal::count_pairs(int allflag, int forceflag)
 
   // loop over neighbors of my atoms
   // skip if I or J are not in group
+  // for newton = 0 and J = ghost atom,
+  //   need to insure I,J pair is only output by one proc
+  //   use same itag,jtag logic as in Neighbor::neigh_half_nsq()
 
   double **cutsq = force->pair->cutsq;
 
-  m = n = 0;
+  m = 0;
   for (ii = 0; ii < inum; ii++) {
     i = ilist[ii];
     if (!(mask[i] & groupbit)) continue;
@@ -364,6 +398,7 @@ int ComputePropertyLocal::count_pairs(int allflag, int forceflag)
     xtmp = x[i][0];
     ytmp = x[i][1];
     ztmp = x[i][2];
+    itag = tag[i];
     itype = type[i];
     jlist = firstneigh[i];
     jnum = numneigh[i];
@@ -373,14 +408,37 @@ int ComputePropertyLocal::count_pairs(int allflag, int forceflag)
       j &= NEIGHMASK;
 
       if (!(mask[j] & groupbit)) continue;
-      if (newton_pair == 0 && j >= nlocal) continue;
+
+      // itag = jtag is possible for long cutoffs that include images of self
+
+      if (newton_pair == 0 && j >= nlocal) {
+        jtag = tag[j];
+        if (itag > jtag) {
+          if ((itag+jtag) % 2 == 0) continue;
+        } else if (itag < jtag) {
+          if ((itag+jtag) % 2 == 1) continue;
+        } else {
+          if (x[j][2] < ztmp) continue;
+          if (x[j][2] == ztmp) {
+            if (x[j][1] < ytmp) continue;
+            if (x[j][1] == ytmp && x[j][0] < xtmp) continue;
+          }
+        }
+      }
 
       delx = xtmp - x[j][0];
       dely = ytmp - x[j][1];
       delz = ztmp - x[j][2];
       rsq = delx*delx + dely*dely + delz*delz;
       jtype = type[j];
-      if (forceflag && rsq >= cutsq[itype][jtype]) continue;
+      if (forceflag) {
+        if (cutstyle == TYPE) {
+          if (rsq >= cutsq[itype][jtype]) continue;
+        } else {
+          radsum = radius[i] + radius[j];
+          if (rsq >= radsum*radsum) continue;
+        }
+      }
 
       if (allflag) {
         indices[m][0] = i;
@@ -407,9 +465,9 @@ int ComputePropertyLocal::count_bonds(int flag)
   int i,atom1,atom2;
 
   int *num_bond = atom->num_bond;
-  int **bond_atom = atom->bond_atom;
+  tagint **bond_atom = atom->bond_atom;
   int **bond_type = atom->bond_type;
-  int *tag = atom->tag;
+  tagint *tag = atom->tag;
   int *mask = atom->mask;
   int nlocal = atom->nlocal;
   int newton_bond = force->newton_bond;
@@ -448,11 +506,11 @@ int ComputePropertyLocal::count_angles(int flag)
   int i,atom1,atom2,atom3;
 
   int *num_angle = atom->num_angle;
-  int **angle_atom1 = atom->angle_atom1;
-  int **angle_atom2 = atom->angle_atom2;
-  int **angle_atom3 = atom->angle_atom3;
+  tagint **angle_atom1 = atom->angle_atom1;
+  tagint **angle_atom2 = atom->angle_atom2;
+  tagint **angle_atom3 = atom->angle_atom3;
   int **angle_type = atom->angle_type;
-  int *tag = atom->tag;
+  tagint *tag = atom->tag;
   int *mask = atom->mask;
   int nlocal = atom->nlocal;
 
@@ -490,11 +548,11 @@ int ComputePropertyLocal::count_dihedrals(int flag)
   int i,atom1,atom2,atom3,atom4;
 
   int *num_dihedral = atom->num_dihedral;
-  int **dihedral_atom1 = atom->dihedral_atom1;
-  int **dihedral_atom2 = atom->dihedral_atom2;
-  int **dihedral_atom3 = atom->dihedral_atom3;
-  int **dihedral_atom4 = atom->dihedral_atom4;
-  int *tag = atom->tag;
+  tagint **dihedral_atom1 = atom->dihedral_atom1;
+  tagint **dihedral_atom2 = atom->dihedral_atom2;
+  tagint **dihedral_atom3 = atom->dihedral_atom3;
+  tagint **dihedral_atom4 = atom->dihedral_atom4;
+  tagint *tag = atom->tag;
   int *mask = atom->mask;
   int nlocal = atom->nlocal;
 
@@ -533,11 +591,11 @@ int ComputePropertyLocal::count_impropers(int flag)
   int i,atom1,atom2,atom3,atom4;
 
   int *num_improper = atom->num_improper;
-  int **improper_atom1 = atom->improper_atom1;
-  int **improper_atom2 = atom->improper_atom2;
-  int **improper_atom3 = atom->improper_atom3;
-  int **improper_atom4 = atom->improper_atom4;
-  int *tag = atom->tag;
+  tagint **improper_atom1 = atom->improper_atom1;
+  tagint **improper_atom2 = atom->improper_atom2;
+  tagint **improper_atom3 = atom->improper_atom3;
+  tagint **improper_atom4 = atom->improper_atom4;
+  tagint *tag = atom->tag;
   int *mask = atom->mask;
   int nlocal = atom->nlocal;
 
@@ -568,17 +626,18 @@ int ComputePropertyLocal::count_impropers(int flag)
 
 void ComputePropertyLocal::reallocate(int n)
 {
-  // grow vector or array and indices array
+  // grow vector_local or array_local, also indices
 
   while (nmax < n) nmax += DELTA;
+
   if (nvalues == 1) {
-    memory->destroy(vector);
-    memory->create(vector,nmax,"property/local:vector");
-    vector_local = vector;
+    memory->destroy(vlocal);
+    memory->create(vlocal,nmax,"property/local:vector_local");
+    vector_local = vlocal;
   } else {
-    memory->destroy(array);
-    memory->create(array,nmax,nvalues,"property/local:array");
-    array_local = array;
+    memory->destroy(alocal);
+    memory->create(alocal,nmax,nvalues,"property/local:array_local");
+    array_local = alocal;
   }
 
   memory->destroy(indices);
@@ -607,7 +666,7 @@ double ComputePropertyLocal::memory_usage()
 void ComputePropertyLocal::pack_patom1(int n)
 {
   int i;
-  int *tag = atom->tag;
+  tagint *tag = atom->tag;
 
   for (int m = 0; m < ncount; m++) {
     i = indices[m][0];
@@ -621,7 +680,7 @@ void ComputePropertyLocal::pack_patom1(int n)
 void ComputePropertyLocal::pack_patom2(int n)
 {
   int i;
-  int *tag = atom->tag;
+  tagint *tag = atom->tag;
 
   for (int m = 0; m < ncount; m++) {
     i = indices[m][1];
@@ -663,7 +722,7 @@ void ComputePropertyLocal::pack_ptype2(int n)
 void ComputePropertyLocal::pack_batom1(int n)
 {
   int i;
-  int *tag = atom->tag;
+  tagint *tag = atom->tag;
 
   for (int m = 0; m < ncount; m++) {
     i = indices[m][0];
@@ -677,7 +736,7 @@ void ComputePropertyLocal::pack_batom1(int n)
 void ComputePropertyLocal::pack_batom2(int n)
 {
   int i,j;
-  int **bond_atom = atom->bond_atom;
+  tagint **bond_atom = atom->bond_atom;
 
   for (int m = 0; m < ncount; m++) {
     i = indices[m][0];
@@ -707,7 +766,7 @@ void ComputePropertyLocal::pack_btype(int n)
 void ComputePropertyLocal::pack_aatom1(int n)
 {
   int i,j;
-  int **angle_atom1 = atom->angle_atom1;
+  tagint **angle_atom1 = atom->angle_atom1;
 
   for (int m = 0; m < ncount; m++) {
     i = indices[m][0];
@@ -722,7 +781,7 @@ void ComputePropertyLocal::pack_aatom1(int n)
 void ComputePropertyLocal::pack_aatom2(int n)
 {
   int i,j;
-  int **angle_atom2 = atom->angle_atom2;
+  tagint **angle_atom2 = atom->angle_atom2;
 
   for (int m = 0; m < ncount; m++) {
     i = indices[m][0];
@@ -737,7 +796,7 @@ void ComputePropertyLocal::pack_aatom2(int n)
 void ComputePropertyLocal::pack_aatom3(int n)
 {
   int i,j;
-  int **angle_atom3 = atom->angle_atom3;
+  tagint **angle_atom3 = atom->angle_atom3;
 
   for (int m = 0; m < ncount; m++) {
     i = indices[m][0];
@@ -767,7 +826,7 @@ void ComputePropertyLocal::pack_atype(int n)
 void ComputePropertyLocal::pack_datom1(int n)
 {
   int i,j;
-  int **dihedral_atom1 = atom->dihedral_atom1;
+  tagint **dihedral_atom1 = atom->dihedral_atom1;
 
   for (int m = 0; m < ncount; m++) {
     i = indices[m][0];
@@ -782,7 +841,7 @@ void ComputePropertyLocal::pack_datom1(int n)
 void ComputePropertyLocal::pack_datom2(int n)
 {
   int i,j;
-  int **dihedral_atom2 = atom->dihedral_atom2;
+  tagint **dihedral_atom2 = atom->dihedral_atom2;
 
   for (int m = 0; m < ncount; m++) {
     i = indices[m][0];
@@ -797,7 +856,7 @@ void ComputePropertyLocal::pack_datom2(int n)
 void ComputePropertyLocal::pack_datom3(int n)
 {
   int i,j;
-  int **dihedral_atom3 = atom->dihedral_atom3;
+  tagint **dihedral_atom3 = atom->dihedral_atom3;
 
   for (int m = 0; m < ncount; m++) {
     i = indices[m][0];
@@ -812,7 +871,7 @@ void ComputePropertyLocal::pack_datom3(int n)
 void ComputePropertyLocal::pack_datom4(int n)
 {
   int i,j;
-  int **dihedral_atom4 = atom->dihedral_atom4;
+  tagint **dihedral_atom4 = atom->dihedral_atom4;
 
   for (int m = 0; m < ncount; m++) {
     i = indices[m][0];
@@ -842,7 +901,7 @@ void ComputePropertyLocal::pack_dtype(int n)
 void ComputePropertyLocal::pack_iatom1(int n)
 {
   int i,j;
-  int **improper_atom1 = atom->improper_atom1;
+  tagint **improper_atom1 = atom->improper_atom1;
 
   for (int m = 0; m < ncount; m++) {
     i = indices[m][0];
@@ -857,7 +916,7 @@ void ComputePropertyLocal::pack_iatom1(int n)
 void ComputePropertyLocal::pack_iatom2(int n)
 {
   int i,j;
-  int **improper_atom2 = atom->improper_atom2;
+  tagint **improper_atom2 = atom->improper_atom2;
 
   for (int m = 0; m < ncount; m++) {
     i = indices[m][0];
@@ -872,7 +931,7 @@ void ComputePropertyLocal::pack_iatom2(int n)
 void ComputePropertyLocal::pack_iatom3(int n)
 {
   int i,j;
-  int **improper_atom3 = atom->improper_atom3;
+  tagint **improper_atom3 = atom->improper_atom3;
 
   for (int m = 0; m < ncount; m++) {
     i = indices[m][0];
@@ -887,7 +946,7 @@ void ComputePropertyLocal::pack_iatom3(int n)
 void ComputePropertyLocal::pack_iatom4(int n)
 {
   int i,j;
-  int **improper_atom4 = atom->improper_atom4;
+  tagint **improper_atom4 = atom->improper_atom4;
 
   for (int m = 0; m < ncount; m++) {
     i = indices[m][0];

@@ -11,15 +11,14 @@
    See the README file in the top-level LAMMPS directory.
 ------------------------------------------------------------------------- */
 
-#include "mpi.h"
-#include "string.h"
+#include <mpi.h>
+#include <string.h>
 #include "compute_temp.h"
 #include "atom.h"
 #include "update.h"
 #include "force.h"
 #include "domain.h"
-#include "modify.h"
-#include "fix.h"
+#include "comm.h"
 #include "group.h"
 #include "error.h"
 
@@ -45,16 +44,16 @@ ComputeTemp::ComputeTemp(LAMMPS *lmp, int narg, char **arg) :
 
 ComputeTemp::~ComputeTemp()
 {
-  delete [] vector;
+  if (!copymode)
+    delete [] vector;
 }
 
 /* ---------------------------------------------------------------------- */
 
-void ComputeTemp::init()
+void ComputeTemp::setup()
 {
-  fix_dof = 0;
-  for (int i = 0; i < modify->nfix; i++)
-    fix_dof += modify->fix[i]->dof(igroup);
+  dynamic = 0;
+  if (dynamic_user || group->dynamic[igroup]) dynamic = 1;
   dof_compute();
 }
 
@@ -62,8 +61,9 @@ void ComputeTemp::init()
 
 void ComputeTemp::dof_compute()
 {
-  double natoms = group->count(igroup);
-  dof = domain->dimension * natoms;
+  adjust_dof_fix();
+  natoms_temp = group->count(igroup);
+  dof = domain->dimension * natoms_temp;
   dof -= extra_dof + fix_dof;
   if (dof > 0.0) tfactor = force->mvv2e / (dof * force->boltz);
   else tfactor = 0.0;
@@ -97,6 +97,8 @@ double ComputeTemp::compute_scalar()
 
   MPI_Allreduce(&t,&scalar,1,MPI_DOUBLE,MPI_SUM,world);
   if (dynamic) dof_compute();
+  if (dof < 0.0 && natoms_temp > 0.0)
+    error->all(FLERR,"Temperature compute degrees of freedom < 0");
   scalar *= tfactor;
   return scalar;
 }

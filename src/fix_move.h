@@ -1,4 +1,4 @@
-/* ----------------------------------------------------------------------
+/* -*- c++ -*- ----------------------------------------------------------
    LAMMPS - Large-scale Atomic/Molecular Massively Parallel Simulator
    http://lammps.sandia.gov, Sandia National Laboratories
    Steve Plimpton, sjplimp@sandia.gov
@@ -20,7 +20,7 @@ FixStyle(move,FixMove)
 #ifndef LMP_FIX_MOVE_H
 #define LMP_FIX_MOVE_H
 
-#include "stdio.h"
+#include <stdio.h>
 #include "fix.h"
 
 namespace LAMMPS_NS {
@@ -40,7 +40,7 @@ class FixMove : public Fix {
   void write_restart(FILE *);
   void restart(char *);
   void grow_arrays(int);
-  void copy_arrays(int, int);
+  void copy_arrays(int, int, int);
   void set_arrays(int);
   int pack_exchange(int, double *);
   int unpack_exchange(int, double *);
@@ -61,13 +61,23 @@ class FixMove : public Fix {
   double dt,dtv,dtf;
   int xvar,yvar,zvar,vxvar,vyvar,vzvar;
   int xvarstyle,yvarstyle,zvarstyle,vxvarstyle,vyvarstyle,vzvarstyle;
-  int omega_flag,nlevels_respa;
+  int extra_flag,omega_flag,angmom_flag;
+  int radius_flag,ellipsoid_flag,line_flag,tri_flag,body_flag;
+  int theta_flag,quat_flag;
+  int nlevels_respa,nrestart;
   int time_origin;
 
   double **xoriginal;         // original coords of atoms
+  double *toriginal;          // original theta of atoms
+  double **qoriginal;         // original quat of atoms
   int displaceflag,velocityflag;
   int maxatom;
   double **displace,**velocity;
+
+  class AtomVecEllipsoid *avec_ellipsoid;
+  class AtomVecLine *avec_line;
+  class AtomVecTri *avec_tri;
+  class AtomVecBody *avec_body;
 };
 
 }
@@ -99,20 +109,7 @@ E: Fix move cannot define z or vz variable for 2d problem
 
 Self-explanatory.
 
-W: Fix move does not update angular momentum
-
-Atoms store this quantity, but fix move does not (yet) update it.
-
-W: Fix move does not update quaternions
-
-Atoms store this quantity, but fix move does not (yet) update it.
-
-E: Use of fix move with undefined lattice
-
-Must use lattice command with fix move command if units option is
-set to lattice.
-
-E: Fix move cannot have 0 length rotation vector
+E: Zero length rotation vector with fix move
 
 Self-explanatory.
 
@@ -128,7 +125,7 @@ E: Cannot add atoms to fix move variable
 
 Atoms can not be added afterwards to this fix option.
 
-E: Resetting timestep is not allowed with fix move
+E: Resetting timestep size is not allowed with fix move
 
 This is because fix move is moving atoms based on elapsed time.
 

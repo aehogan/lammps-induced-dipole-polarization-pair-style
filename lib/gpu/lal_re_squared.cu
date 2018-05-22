@@ -34,31 +34,31 @@ ucl_inline numtyp det_prime(const numtyp m[9], const numtyp m2[9])
 
 __kernel void k_resquared(const __global numtyp4 *restrict x_,
                           const __global numtyp4 *restrict q,
-                          const __global numtyp4 *restrict shape, 
-                          const __global numtyp4 *restrict well, 
-                          const __global numtyp *restrict splj, 
-                          const __global numtyp2 *restrict sig_eps, 
-                          const int ntypes, 
+                          const __global numtyp4 *restrict shape,
+                          const __global numtyp4 *restrict well,
+                          const __global numtyp *restrict splj,
+                          const __global numtyp2 *restrict sig_eps,
+                          const int ntypes,
                           const __global int *dev_nbor,
-                          const int stride,  
+                          const int stride,
                           __global acctyp4 *restrict ans,
-                          const int astride, 
+                          const int astride,
                           __global acctyp *restrict engv,
-                          __global int *restrict err_flag, 
+                          __global int *restrict err_flag,
                           const int eflag, const int vflag, const int inum,
                           const int t_per_atom) {
   int tid, ii, offset;
   atom_info(t_per_atom,ii,tid,offset);
 
   __local numtyp sp_lj[4];
-  sp_lj[0]=splj[0];    
-  sp_lj[1]=splj[1];    
-  sp_lj[2]=splj[2];    
+  sp_lj[0]=splj[0];
+  sp_lj[1]=splj[1];
+  sp_lj[2]=splj[2];
   sp_lj[3]=splj[3];
-  
+
   __local numtyp b_alpha, cr60;
   b_alpha=(numtyp)45.0/(numtyp)56.0;
-  cr60=ucl_cbrt((numtyp)60.0);    
+  cr60=ucl_cbrt((numtyp)60.0);
 
   acctyp energy=(acctyp)0;
   acctyp4 f;
@@ -74,11 +74,12 @@ __kernel void k_resquared(const __global numtyp4 *restrict x_,
     virial[i]=(acctyp)0;
 
   if (ii<inum) {
-    const __global int *nbor, *nbor_end;
-    int i, numj, n_stride;
+    int nbor, nbor_end;
+    int i, numj;
+    __local int n_stride;
     nbor_info_e(dev_nbor,stride,t_per_atom,ii,offset,i,numj,
                 n_stride,nbor_end,nbor);
-  
+
     numtyp4 ix; fetch4(ix,i,pos_tex);
     int itype=ix.w;
 
@@ -90,14 +91,14 @@ __kernel void k_resquared(const __global numtyp4 *restrict x_,
     numtyp lAtwo1_0[9], lAtwo1_1[9], lAtwo1_2[9];  // A'*S^2*lA
     numtyp lAsa1_0[9], lAsa1_1[9], lAsa1_2[9];   // lAtwo+lA'*sa
     numtyp4 ishape;
-    
+
     ishape=shape[itype];
     numtyp4 ishape2;
     ishape2.x=ishape.x*ishape.x;
     ishape2.y=ishape.y*ishape.y;
     ishape2.z=ishape.z*ishape.z;
     numtyp ilshape = ishape.x*ishape.y*ishape.z;
-    
+
     {
       numtyp aTs[9];    // A1'*S1^2
       gpu_quat_to_mat_trans(q,i,a1);
@@ -124,7 +125,7 @@ __kernel void k_resquared(const __global numtyp4 *restrict x_,
 
     numtyp factor_lj;
     for ( ; nbor<nbor_end; nbor+=n_stride) {
-      int j=*nbor;
+      int j=dev_nbor[nbor];
       factor_lj = sp_lj[sbmask(j)];
       j &= NEIGHMASK;
 
@@ -147,7 +148,7 @@ __kernel void k_resquared(const __global numtyp4 *restrict x_,
       numtyp a2[9];       // Rotation matrix (lab->body)
       numtyp gamma2[9];   // A'*S^2*A
       numtyp4 jshape;
-    
+
       jshape=shape[jtype];
       numtyp4 jshape2;
       jshape2.x=jshape.x*jshape.x;
@@ -188,7 +189,7 @@ __kernel void k_resquared(const __global numtyp4 *restrict x_,
       H12[7] = gamma1[7]*sigma1+gamma2[7]*sigma2;
       H12[8] = gamma1[8]*sigma1+gamma2[8]*sigma2;
       dH=gpu_det3(H12);
-      
+
       numtyp sigma1p2, sigma2p2, lambda, nu;
       sigma1p2 = sigma1*sigma1;
       sigma2p2 = sigma2*sigma2;
@@ -298,7 +299,7 @@ __kernel void k_resquared(const __global numtyp4 *restrict x_,
       hsec = ucl_recip(h12+(numtyp)3.0*sec);
       dspu = ucl_recip(h12)-hsec+stemp;
       pbsu = (numtyp)3.0*sigma*hsec;
-  
+
       numtyp dspr, pbsr;
       stemp = ucl_recip(ishape.x*cr60+h12)+
               ucl_recip(ishape.y*cr60+h12)+
@@ -309,7 +310,7 @@ __kernel void k_resquared(const __global numtyp4 *restrict x_,
       hsec = ucl_recip(h12+b_alpha*sec);
       dspr = (numtyp)7.0/h12-hsec+stemp;
       pbsr = b_alpha*sigma*hsec;
-  
+
       numtyp dH12[9];
       numtyp dUa, dUr, deta, dchi, ddH, dh12;
       numtyp dsigma1, dsigma2;

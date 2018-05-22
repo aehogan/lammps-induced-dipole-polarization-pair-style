@@ -11,15 +11,17 @@
    See the README file in the top-level LAMMPS directory.
 ------------------------------------------------------------------------- */
 
-#include "math.h"
-#include "stdio.h"
-#include "stdlib.h"
-#include "string.h"
+#include <math.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
 #include "fix_nve_limit.h"
 #include "atom.h"
 #include "force.h"
 #include "update.h"
 #include "respa.h"
+#include "modify.h"
+#include "comm.h"
 #include "error.h"
 
 using namespace LAMMPS_NS;
@@ -36,8 +38,9 @@ FixNVELimit::FixNVELimit(LAMMPS *lmp, int narg, char **arg) :
   scalar_flag = 1;
   global_freq = 1;
   extscalar = 1;
+  dynamic_group_allow = 1;
 
-  xlimit = atof(arg[3]);
+  xlimit = force->numeric(FLERR,arg[3]);
 
   ncount = 0;
 }
@@ -65,6 +68,15 @@ void FixNVELimit::init()
 
   if (strstr(update->integrate_style,"respa"))
     step_respa = ((Respa *) update->integrate)->step;
+
+  // warn if using fix shake, which will lead to invalid constraint forces
+
+  for (int i = 0; i < modify->nfix; i++)
+    if ((strcmp(modify->fix[i]->style,"shake") == 0)
+        || (strcmp(modify->fix[i]->style,"rattle") == 0)) {
+      if (comm->me == 0)
+        error->warning(FLERR,"Should not use fix nve/limit with fix shake or fix rattle");
+    }
 }
 
 /* ----------------------------------------------------------------------

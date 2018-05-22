@@ -1,4 +1,4 @@
-/* ----------------------------------------------------------------------
+/* -*- c++ -*- ----------------------------------------------------------
    LAMMPS - Large-scale Atomic/Molecular Massively Parallel Simulator
    http://lammps.sandia.gov, Sandia National Laboratories
    Steve Plimpton, sjplimp@sandia.gov
@@ -45,8 +45,7 @@ command-line option when running LAMMPS to see the offending line.
 
 E: Cannot create_box after simulation box is defined
 
-The create_box command cannot be used after a read_data, read_restart,
-or create_box command.
+A simulation box can only be defined once.
 
 E: Cannot run 2d simulation with nonperiodic Z dimension
 
@@ -55,11 +54,27 @@ run a 2d simulation.
 
 E: Create_box region ID does not exist
 
-A region ID used in the create_box command does not exist.
+Self-explanatory.
 
 E: Create_box region does not support a bounding box
 
 Not all regions represent bounded volumes.  You cannot use
 such a region with the create_box command.
+
+E: No bonds allowed with this atom style
+
+Self-explanatory.
+
+E: No angles allowed with this atom style
+
+Self-explanatory.
+
+E: No dihedrals allowed with this atom style
+
+Self-explanatory.
+
+E: No impropers allowed with this atom style
+
+Self-explanatory.
 
 */

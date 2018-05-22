@@ -15,10 +15,10 @@
    Contributing author: Mike Brown (SNL)
 ------------------------------------------------------------------------- */
 
-#include "math.h"
-#include "stdio.h"
-#include "stdlib.h"
-#include "string.h"
+#include <math.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
 #include "pair_resquared.h"
 #include "math_extra.h"
 #include "atom.h"
@@ -36,8 +36,8 @@ using namespace LAMMPS_NS;
 /* ---------------------------------------------------------------------- */
 
 PairRESquared::PairRESquared(LAMMPS *lmp) : Pair(lmp),
-                                            b_alpha(45.0/56.0),
-                                            cr60(pow(60.0,1.0/3.0))
+                                            cr60(pow(60.0,1.0/3.0)),
+                                            b_alpha(45.0/56.0)
 {
   single_enable = 0;
 
@@ -246,14 +246,14 @@ void PairRESquared::settings(int narg, char **arg)
 {
   if (narg != 1) error->all(FLERR,"Illegal pair_style command");
 
-  cut_global = force->numeric(arg[0]);
+  cut_global = force->numeric(FLERR,arg[0]);
 
   // reset cutoffs that have been explicitly set
 
   if (allocated) {
     int i,j;
     for (i = 1; i <= atom->ntypes; i++)
-      for (j = i+1; j <= atom->ntypes; j++)
+      for (j = i; j <= atom->ntypes; j++)
         if (setflag[i][j]) cut[i][j] = cut_global;
   }
 }
@@ -269,20 +269,20 @@ void PairRESquared::coeff(int narg, char **arg)
   if (!allocated) allocate();
 
   int ilo,ihi,jlo,jhi;
-  force->bounds(arg[0],atom->ntypes,ilo,ihi);
-  force->bounds(arg[1],atom->ntypes,jlo,jhi);
+  force->bounds(FLERR,arg[0],atom->ntypes,ilo,ihi);
+  force->bounds(FLERR,arg[1],atom->ntypes,jlo,jhi);
 
-  double epsilon_one = force->numeric(arg[2]);
-  double sigma_one = force->numeric(arg[3]);
-  double eia_one = force->numeric(arg[4]);
-  double eib_one = force->numeric(arg[5]);
-  double eic_one = force->numeric(arg[6]);
-  double eja_one = force->numeric(arg[7]);
-  double ejb_one = force->numeric(arg[8]);
-  double ejc_one = force->numeric(arg[9]);
+  double epsilon_one = force->numeric(FLERR,arg[2]);
+  double sigma_one = force->numeric(FLERR,arg[3]);
+  double eia_one = force->numeric(FLERR,arg[4]);
+  double eib_one = force->numeric(FLERR,arg[5]);
+  double eic_one = force->numeric(FLERR,arg[6]);
+  double eja_one = force->numeric(FLERR,arg[7]);
+  double ejb_one = force->numeric(FLERR,arg[8]);
+  double ejc_one = force->numeric(FLERR,arg[9]);
 
   double cut_one = cut_global;
-  if (narg == 11) cut_one = force->numeric(arg[10]);
+  if (narg == 11) cut_one = force->numeric(FLERR,arg[10]);
 
   int count = 0;
   for (int i = ilo; i <= ihi; i++) {
@@ -321,7 +321,7 @@ void PairRESquared::init_style()
   avec = (AtomVecEllipsoid *) atom->style_match("ellipsoid");
   if (!avec) error->all(FLERR,"Pair resquared requires atom style ellipsoid");
 
-  neighbor->request(this);
+  neighbor->request(this,instance_me);
 
   // per-type shape precalculations
   // require that atom shapes are identical within each type
@@ -391,7 +391,7 @@ double PairRESquared::init_one(int i, int j)
   lj3[i][j] = 4.0 * epsilon[i][j] * pow(sigma[i][j],12.0);
   lj4[i][j] = 4.0 * epsilon[i][j] * pow(sigma[i][j],6.0);
 
-  if (offset_flag) {
+  if (offset_flag && (cut[i][j] > 0.0)) {
     double ratio = sigma[i][j] / cut[i][j];
     offset[i][j] = 4.0 * epsilon[i][j] * (pow(ratio,12.0) - pow(ratio,6.0));
   } else offset[i][j] = 0.0;

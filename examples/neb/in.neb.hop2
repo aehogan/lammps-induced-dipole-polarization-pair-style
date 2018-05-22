@@ -15,11 +15,14 @@ variable	u uloop 20
 lattice		hex 0.9
 region		box block 0 20 0 11 -0.25 0.25
 region		box1 block 0 20 0 10 -0.25 0.25
-create_box	3 box
-create_atoms	1 region box1
-create_atoms	1 single 11.5 10.5 0
 
-mass		* 1.0
+#create_box	3 box
+#create_atoms	1 region box1
+#create_atoms	1 single 11.5 10.5 0
+#mass		* 1.0
+#write_data      initial.hop2
+
+read_data        initial.hop2
 
 # LJ potentials
 
@@ -39,7 +42,7 @@ group		lower region 1
 group		mobile subtract all lower
 set		group lower type 2
 
-timestep	0.005
+timestep	0.05
 
 # group of NEB atoms - either block or single atom ID 421
 
@@ -50,7 +53,7 @@ set		group nebatoms type 3
 group		nonneb subtract all nebatoms
 
 fix		1 lower setforce 0.0 0.0 0.0
-fix		2 nebatoms neb 1.0
+fix		2 nebatoms neb 1.0 
 fix		3 all enforce2d
 
 thermo		100
@@ -62,5 +65,4 @@ thermo		100
 
 min_style	fire
 
-#neb		0.0 1000 1000 100 final.hop2
-neb		0.0 0.01 1000 1000 100 final.hop2
+neb		0.0 0.05 1000 1000 100 final final.hop2

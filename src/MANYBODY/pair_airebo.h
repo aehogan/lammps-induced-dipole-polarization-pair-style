@@ -1,4 +1,4 @@
-/* ----------------------------------------------------------------------
+/* -*- c++ -*- ----------------------------------------------------------
    LAMMPS - Large-scale Atomic/Molecular Massively Parallel Simulator
    http://lammps.sandia.gov, Sandia National Laboratories
    Steve Plimpton, sjplimp@sandia.gov
@@ -21,7 +21,8 @@ PairStyle(airebo,PairAIREBO)
 #define LMP_PAIR_AIREBO_H
 
 #include "pair.h"
-#include "math.h"
+#include "my_page.h"
+#include <math.h>
 #include "math_const.h"
 
 namespace LAMMPS_NS {
@@ -38,17 +39,14 @@ class PairAIREBO : public Pair {
   double memory_usage();
 
  protected:
-  int **pages;                     // neighbor list pages
   int *map;                        // 0 (C), 1 (H), or -1 (NULL) for each type
 
   int me;
-  int ljflag,torflag;              // 0/1 if LJ,torsion terms included
-  int maxlocal;                    // size of numneigh, firstneigh arrays
-  int maxpage;                     // # of pages currently allocated
-  int pgsize;                      // size of neighbor page
-  int oneatom;                     // max # of neighbors for one atom
+  int ljflag,torflag;              // 0/1 if LJ/Morse,torsion terms included
+  int morseflag;                   // 1 if Morse instead of LJ for non-bonded
 
   double cutlj;                    // user-specified LJ cutoff
+  double sigcut,sigwid,sigmin;     // corresponding cutoff function
   double cutljrebosq;              // cut for when to compute
                                    // REBO neighs of ghost atoms
 
@@ -56,8 +54,13 @@ class PairAIREBO : public Pair {
   double **lj1,**lj2,**lj3,**lj4;  // pre-computed LJ coeffs for C,H types
   double cut3rebo;                 // maximum distance for 3rd REBO neigh
 
+  int maxlocal;                    // size of numneigh, firstneigh arrays
+  int pgsize;                      // size of neighbor page
+  int oneatom;                     // max # of neighbors for one atom
+  MyPage<int> *ipage;              // neighbor list pages
   int *REBO_numneigh;              // # of pair neighbors for each atom
   int **REBO_firstneigh;           // ptr to 1st neighbor of each atom
+
   double *closestdistsq;           // closest owned atom dist to each ghost
   double *nC,*nH;                  // sum of weighting fns with REBO neighs
 
@@ -66,6 +69,10 @@ class PairAIREBO : public Pair {
   double Q[2][2],alpha[2][2],A[2][2],rho[2][2],BIJc[2][2][3],Beta[2][2][3];
   double rcLJmin[2][2],rcLJmax[2][2],rcLJmaxsq[2][2],bLJmin[2][2],bLJmax[2][2];
   double epsilon[2][2],sigma[2][2],epsilonT[2][2];
+
+  // parameters for Morse variant
+
+  double epsilonM[2][2],alphaM[2][2],reqM[2][2];
 
   // spline coefficients
 
@@ -77,6 +84,7 @@ class PairAIREBO : public Pair {
 
   // spline knot values
 
+  double PCCf_2_0;
   double PCCf[5][5],PCCdfdx[5][5],PCCdfdy[5][5],PCHf[5][5];
   double PCHdfdx[5][5],PCHdfdy[5][5];
   double piCCf[5][5][11],piCCdfdx[5][5][11];
@@ -101,12 +109,17 @@ class PairAIREBO : public Pair {
   double piRCSpline(double, double, double, int, int, double *);
   double TijSpline(double, double, double, double *);
 
-  void add_pages(int howmany = 1);
   void read_file(char *);
 
   double Sp5th(double, double *, double *);
   double Spbicubic(double, double, double *, double *);
   double Sptricubic(double, double, double, double *, double *);
+  void Sptricubic_patch_adjust(double *, double, double, char);
+  void Sptricubic_patch_coeffs(double, double, double, double, double, double,
+                               double*, double*, double*, double*, double*);
+  void Spbicubic_patch_adjust(double *, double, double, char);
+  void Spbicubic_patch_coeffs(double, double, double, double, double *,
+                              double *, double *, double *);
   void spline_init();
 
   void allocate();
@@ -201,11 +214,11 @@ E: All pair coeffs are not set
 All pair coefficients must be set in the data file or by the
 pair_coeff command before running a simulation.
 
-E: Neighbor list overflow, boost neigh_modify one or page
+E: Neighbor list overflow, boost neigh_modify one
 
 There are too many neighbors of a single atom.  Use the neigh_modify
-command to increase the neighbor page size and the max number of
-neighbors allowed for one atom.
+command to increase the max number of neighbors allowed for one atom.
+You may also want to boost the page size.
 
 E: Cannot open AIREBO potential file %s
 

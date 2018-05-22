@@ -1,4 +1,4 @@
-/* ----------------------------------------------------------------------
+/* -*- c++ -*- ----------------------------------------------------------
    LAMMPS - Large-scale Atomic/Molecular Massively Parallel Simulator
    http://lammps.sandia.gov, Sandia National Laboratories
    Steve Plimpton, sjplimp@sandia.gov
@@ -32,7 +32,7 @@ class FixBondSwap : public Fix {
   int setmask();
   void init();
   void init_list(int, class NeighList *);
-  void pre_neighbor();
+  void post_integrate();
   int modify_param(int, char **);
   double compute_vector(int);
   double memory_usage();
@@ -69,6 +69,11 @@ E: Illegal ... command
 Self-explanatory.  Check the input script syntax and compare to the
 documentation for the command.  You can use -echo screen as a
 command-line option when running LAMMPS to see the offending line.
+
+E: Cannot use fix bond/swap with non-molecular systems
+
+Only systems with bonds that can be changed can be used.  Atom_style
+template does not qualify.
 
 E: Must use atom style with molecule IDs with fix bond/swap
 

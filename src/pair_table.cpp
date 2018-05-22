@@ -15,10 +15,10 @@
    Contributing author: Paul Crozier (SNL)
 ------------------------------------------------------------------------- */
 
-#include "mpi.h"
-#include "math.h"
-#include "stdlib.h"
-#include "string.h"
+#include <mpi.h>
+#include <math.h>
+#include <stdlib.h>
+#include <string.h>
 #include "pair_table.h"
 #include "atom.h"
 #include "force.h"
@@ -32,6 +32,7 @@ using namespace LAMMPS_NS;
 enum{NONE,RLINEAR,RSQ,BMP};
 
 #define MAXLINE 1024
+#define EPSILONR 1.0e-6
 
 /* ---------------------------------------------------------------------- */
 
@@ -45,6 +46,8 @@ PairTable::PairTable(LAMMPS *lmp) : Pair(lmp)
 
 PairTable::~PairTable()
 {
+  if (copymode) return;
+
   for (int m = 0; m < ntables; m++) free_table(&tables[m]);
   memory->sfree(tables);
 
@@ -62,6 +65,7 @@ void PairTable::compute(int eflag, int vflag)
   int i,j,ii,jj,inum,jnum,itype,jtype,itable;
   double xtmp,ytmp,ztmp,delx,dely,delz,evdwl,fpair;
   double rsq,factor_lj,fraction,value,a,b;
+  char estr[128];
   int *ilist,*jlist,*numneigh,**firstneigh;
   Table *tb;
 
@@ -108,25 +112,37 @@ void PairTable::compute(int eflag, int vflag)
 
       if (rsq < cutsq[itype][jtype]) {
         tb = &tables[tabindex[itype][jtype]];
-        if (rsq < tb->innersq)
-          error->one(FLERR,"Pair distance < table inner cutoff");
+        if (rsq < tb->innersq) {
+          sprintf(estr,"Pair distance < table inner cutoff: "
+                  "ijtype %d %d dist %g",itype,jtype,sqrt(rsq));
+          error->one(FLERR,estr);
+        }
 
         if (tabstyle == LOOKUP) {
           itable = static_cast<int> ((rsq - tb->innersq) * tb->invdelta);
-          if (itable >= tlm1)
-            error->one(FLERR,"Pair distance > table outer cutoff");
+          if (itable >= tlm1) {
+            sprintf(estr,"Pair distance > table outer cutoff: "
+                    "ijtype %d %d dist %g",itype,jtype,sqrt(rsq));
+            error->one(FLERR,estr);
+          }
           fpair = factor_lj * tb->f[itable];
         } else if (tabstyle == LINEAR) {
           itable = static_cast<int> ((rsq - tb->innersq) * tb->invdelta);
-          if (itable >= tlm1)
-            error->one(FLERR,"Pair distance > table outer cutoff");
+          if (itable >= tlm1) {
+            sprintf(estr,"Pair distance > table outer cutoff: "
+                    "ijtype %d %d dist %g",itype,jtype,sqrt(rsq));
+            error->one(FLERR,estr);
+          }
           fraction = (rsq - tb->rsq[itable]) * tb->invdelta;
           value = tb->f[itable] + fraction*tb->df[itable];
           fpair = factor_lj * value;
         } else if (tabstyle == SPLINE) {
           itable = static_cast<int> ((rsq - tb->innersq) * tb->invdelta);
-          if (itable >= tlm1)
-            error->one(FLERR,"Pair distance > table outer cutoff");
+          if (itable >= tlm1) {
+            sprintf(estr,"Pair distance > table outer cutoff: "
+                    "ijtype %d %d dist %g",itype,jtype,sqrt(rsq));
+            error->one(FLERR,estr);
+          }
           b = (rsq - tb->rsq[itable]) * tb->invdelta;
           a = 1.0 - b;
           value = a * tb->f[itable] + b * tb->f[itable+1] +
@@ -179,15 +195,15 @@ void PairTable::compute(int eflag, int vflag)
 void PairTable::allocate()
 {
   allocated = 1;
-  int nt = atom->ntypes;
+  const int nt = atom->ntypes + 1;
 
-  memory->create(setflag,nt+1,nt+1,"pair:setflag");
-  for (int i = 1; i <= nt; i++)
-    for (int j = i; j <= nt; j++)
-      setflag[i][j] = 0;
+  memory->create(setflag,nt,nt,"pair:setflag");
+  memory->create(cutsq,nt,nt,"pair:cutsq");
+  memory->create(tabindex,nt,nt,"pair:tabindex");
 
-  memory->create(cutsq,nt+1,nt+1,"pair:cutsq");
-  memory->create(tabindex,nt+1,nt+1,"pair:tabindex");
+  memset(&setflag[0][0],0,nt*nt*sizeof(int));
+  memset(&cutsq[0][0],0,nt*nt*sizeof(double));
+  memset(&tabindex[0][0],0,nt*nt*sizeof(int));
 }
 
 /* ----------------------------------------------------------------------
@@ -196,7 +212,7 @@ void PairTable::allocate()
 
 void PairTable::settings(int narg, char **arg)
 {
-  if (narg != 2) error->all(FLERR,"Illegal pair_style command");
+  if (narg < 2) error->all(FLERR,"Illegal pair_style command");
 
   // new settings
 
@@ -206,8 +222,22 @@ void PairTable::settings(int narg, char **arg)
   else if (strcmp(arg[0],"bitmap") == 0) tabstyle = BITMAP;
   else error->all(FLERR,"Unknown table style in pair_style command");
 
-  tablength = force->inumeric(arg[1]);
+  tablength = force->inumeric(FLERR,arg[1]);
   if (tablength < 2) error->all(FLERR,"Illegal number of pair table entries");
+
+  // optional keywords
+  // assert the tabulation is compatible with a specific long-range solver
+
+  int iarg = 2;
+  while (iarg < narg) {
+    if (strcmp(arg[iarg],"ewald") == 0) ewaldflag = 1;
+    else if (strcmp(arg[iarg],"pppm") == 0) pppmflag = 1;
+    else if (strcmp(arg[iarg],"msm") == 0) msmflag = 1;
+    else if (strcmp(arg[iarg],"dispersion") == 0) dispersionflag = 1;
+    else if (strcmp(arg[iarg],"tip4p") == 0) tip4pflag = 1;
+    else error->all(FLERR,"Illegal pair_style command");
+    iarg++;
+  }
 
   // delete old tables, since cannot just change settings
 
@@ -235,8 +265,8 @@ void PairTable::coeff(int narg, char **arg)
   if (!allocated) allocate();
 
   int ilo,ihi,jlo,jhi;
-  force->bounds(arg[0],atom->ntypes,ilo,ihi);
-  force->bounds(arg[1],atom->ntypes,jlo,jhi);
+  force->bounds(FLERR,arg[0],atom->ntypes,ilo,ihi);
+  force->bounds(FLERR,arg[1],atom->ntypes,jlo,jhi);
 
   int me;
   MPI_Comm_rank(world,&me);
@@ -249,7 +279,7 @@ void PairTable::coeff(int narg, char **arg)
 
   // set table cutoff
 
-  if (narg == 5) tb->cut = force->numeric(arg[4]);
+  if (narg == 5) tb->cut = force->numeric(FLERR,arg[4]);
   else if (tb->rflag) tb->cut = tb->rhi;
   else tb->cut = tb->rfile[tb->ninput-1];
 
@@ -329,7 +359,7 @@ void PairTable::read_table(Table *tb, char *file, char *keyword)
 
   // open file
 
-  FILE *fp = fopen(file,"r");
+  FILE *fp = force->open_potential(file);
   if (fp == NULL) {
     char str[128];
     sprintf(str,"Cannot open file %s",file);
@@ -376,20 +406,26 @@ void PairTable::read_table(Table *tb, char *file, char *keyword)
   // if rflag not set, use r from file
 
   int itmp;
-  double rtmp;
+  double rfile,rnew;
   union_int_float_t rsq_lookup;
+
+  int rerror = 0;
+  int cerror = 0;
 
   fgets(line,MAXLINE,fp);
   for (int i = 0; i < tb->ninput; i++) {
-    fgets(line,MAXLINE,fp);
-    sscanf(line,"%d %lg %lg %lg",&itmp,&rtmp,&tb->efile[i],&tb->ffile[i]);
+    if (NULL == fgets(line,MAXLINE,fp))
+      error->one(FLERR,"Premature end of file in pair table");
+    if (4 != sscanf(line,"%d %lg %lg %lg",
+                    &itmp,&rfile,&tb->efile[i],&tb->ffile[i]))  ++cerror;
 
+    rnew = rfile;
     if (tb->rflag == RLINEAR)
-      rtmp = tb->rlo + (tb->rhi - tb->rlo)*i/(tb->ninput-1);
+      rnew = tb->rlo + (tb->rhi - tb->rlo)*i/(tb->ninput-1);
     else if (tb->rflag == RSQ) {
-      rtmp = tb->rlo*tb->rlo +
+      rnew = tb->rlo*tb->rlo +
         (tb->rhi*tb->rhi - tb->rlo*tb->rlo)*i/(tb->ninput-1);
-      rtmp = sqrt(rtmp);
+      rnew = sqrt(rnew);
     } else if (tb->rflag == BMP) {
       rsq_lookup.i = i << nshiftbits;
       rsq_lookup.i |= masklo;
@@ -397,15 +433,71 @@ void PairTable::read_table(Table *tb, char *file, char *keyword)
         rsq_lookup.i = i << nshiftbits;
         rsq_lookup.i |= maskhi;
       }
-      rtmp = sqrtf(rsq_lookup.f);
+      rnew = sqrtf(rsq_lookup.f);
     }
 
-    tb->rfile[i] = rtmp;
+    if (tb->rflag && fabs(rnew-rfile)/rfile > EPSILONR) rerror++;
+
+    tb->rfile[i] = rnew;
   }
 
   // close file
 
   fclose(fp);
+
+  // warn if force != dE/dr at any point that is not an inflection point
+  // check via secant approximation to dE/dr
+  // skip two end points since do not have surrounding secants
+  // inflection point is where curvature changes sign
+
+  double r,e,f,rprev,rnext,eprev,enext,fleft,fright;
+
+  int ferror = 0;
+
+  // bitmapped tables do not follow regular ordering, so we cannot check them here
+
+  if (tb->rflag != BMP) {
+    for (int i = 1; i < tb->ninput-1; i++) {
+      r = tb->rfile[i];
+      rprev = tb->rfile[i-1];
+      rnext = tb->rfile[i+1];
+      e = tb->efile[i];
+      eprev = tb->efile[i-1];
+      enext = tb->efile[i+1];
+      f = tb->ffile[i];
+      fleft = - (e-eprev) / (r-rprev);
+      fright = - (enext-e) / (rnext-r);
+      if (f < fleft && f < fright) ferror++;
+      if (f > fleft && f > fright) ferror++;
+      //printf("Values %d: %g %g %g\n",i,r,e,f);
+      //printf("  secant %d %d %g: %g %g %g\n",i,ferror,r,fleft,fright,f);
+    }
+  }
+
+  if (ferror) {
+    char str[128];
+    sprintf(str,"%d of %d force values in table are inconsistent with -dE/dr.\n"
+            "  Should only be flagged at inflection points",ferror,tb->ninput);
+    error->warning(FLERR,str);
+  }
+
+  // warn if re-computed distance values differ from file values
+
+  if (rerror) {
+    char str[128];
+    sprintf(str,"%d of %d distance values in table with relative error\n"
+            "  over %g to re-computed values",rerror,tb->ninput,EPSILONR);
+    error->warning(FLERR,str);
+  }
+
+  // warn if data was read incompletely, e.g. columns were missing
+
+  if (cerror) {
+    char str[128];
+    sprintf(str,"%d of %d lines in table were incomplete\n"
+            "  or could not be parsed completely",cerror,tb->ninput);
+    error->warning(FLERR,str);
+  }
 }
 
 /* ----------------------------------------------------------------------
@@ -469,7 +561,7 @@ void PairTable::spline_table(Table *tb)
 
 /* ----------------------------------------------------------------------
    extract attributes from parameter line in table section
-   format of line: N value R/RSQ/BITMAP lo hi FP fplo fphi
+   format of line: N value R/RSQ/BITMAP lo hi FPRIME fplo fphi
    N is required, other params are optional
 ------------------------------------------------------------------------- */
 
@@ -493,7 +585,7 @@ void PairTable::param_extract(Table *tb, char *line)
       tb->rlo = atof(word);
       word = strtok(NULL," \t\n\r\f");
       tb->rhi = atof(word);
-    } else if (strcmp(word,"FP") == 0) {
+    } else if (strcmp(word,"FPRIME") == 0) {
       tb->fpflag = 1;
       word = strtok(NULL," \t\n\r\f");
       tb->fplo = atof(word);
@@ -868,6 +960,11 @@ void PairTable::write_restart_settings(FILE *fp)
 {
   fwrite(&tabstyle,sizeof(int),1,fp);
   fwrite(&tablength,sizeof(int),1,fp);
+  fwrite(&ewaldflag,sizeof(int),1,fp);
+  fwrite(&pppmflag,sizeof(int),1,fp);
+  fwrite(&msmflag,sizeof(int),1,fp);
+  fwrite(&dispersionflag,sizeof(int),1,fp);
+  fwrite(&tip4pflag,sizeof(int),1,fp);
 }
 
 /* ----------------------------------------------------------------------
@@ -879,9 +976,19 @@ void PairTable::read_restart_settings(FILE *fp)
   if (comm->me == 0) {
     fread(&tabstyle,sizeof(int),1,fp);
     fread(&tablength,sizeof(int),1,fp);
+    fread(&ewaldflag,sizeof(int),1,fp);
+    fread(&pppmflag,sizeof(int),1,fp);
+    fread(&msmflag,sizeof(int),1,fp);
+    fread(&dispersionflag,sizeof(int),1,fp);
+    fread(&tip4pflag,sizeof(int),1,fp);
   }
   MPI_Bcast(&tabstyle,1,MPI_INT,0,world);
   MPI_Bcast(&tablength,1,MPI_INT,0,world);
+  MPI_Bcast(&ewaldflag,1,MPI_INT,0,world);
+  MPI_Bcast(&pppmflag,1,MPI_INT,0,world);
+  MPI_Bcast(&msmflag,1,MPI_INT,0,world);
+  MPI_Bcast(&dispersionflag,1,MPI_INT,0,world);
+  MPI_Bcast(&tip4pflag,1,MPI_INT,0,world);
 }
 
 /* ---------------------------------------------------------------------- */

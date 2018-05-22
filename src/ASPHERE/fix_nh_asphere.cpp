@@ -15,9 +15,9 @@
    Contributing author: Mike Brown (SNL)
 ------------------------------------------------------------------------- */
 
-#include "string.h"
-#include "stdlib.h"
-#include "math.h"
+#include <string.h>
+#include <stdlib.h>
+#include <math.h>
 #include "math_extra.h"
 #include "fix_nh_asphere.h"
 #include "atom.h"
@@ -42,7 +42,8 @@ void FixNHAsphere::init()
 {
   avec = (AtomVecEllipsoid *) atom->style_match("ellipsoid");
   if (!avec)
-    error->all(FLERR,"Compute nvt/nph/npt asphere requires atom style ellipsoid");
+    error->all(FLERR,
+               "Compute nvt/nph/npt asphere requires atom style ellipsoid");
 
   // check that all particles are finite-size
   // no point particles allowed, spherical is OK

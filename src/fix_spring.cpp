@@ -15,16 +15,17 @@
    Contributing author: Paul Crozier (SNL)
 ------------------------------------------------------------------------- */
 
-#include "math.h"
-#include "stdlib.h"
-#include "string.h"
+#include <math.h>
+#include <stdlib.h>
+#include <string.h>
 #include "fix_spring.h"
 #include "atom.h"
 #include "update.h"
 #include "respa.h"
 #include "domain.h"
-#include "error.h"
+#include "force.h"
 #include "group.h"
+#include "error.h"
 
 using namespace LAMMPS_NS;
 using namespace FixConst;
@@ -36,7 +37,8 @@ enum{TETHER,COUPLE};
 /* ---------------------------------------------------------------------- */
 
 FixSpring::FixSpring(LAMMPS *lmp, int narg, char **arg) :
-  Fix(lmp, narg, arg)
+  Fix(lmp, narg, arg),
+  group2(NULL)
 {
   if (narg < 9) error->all(FLERR,"Illegal fix spring command");
 
@@ -46,21 +48,22 @@ FixSpring::FixSpring(LAMMPS *lmp, int narg, char **arg) :
   global_freq = 1;
   extscalar = 1;
   extvector = 1;
-
-  group2 = NULL;
+  dynamic_group_allow = 1;
+  respa_level_support = 1;
+  ilevel_respa = 0;
 
   if (strcmp(arg[3],"tether") == 0) {
     if (narg != 9) error->all(FLERR,"Illegal fix spring command");
     styleflag = TETHER;
-    k_spring = atof(arg[4]);
+    k_spring = force->numeric(FLERR,arg[4]);
     xflag = yflag = zflag = 1;
     if (strcmp(arg[5],"NULL") == 0) xflag = 0;
-    else xc = atof(arg[5]);
+    else xc = force->numeric(FLERR,arg[5]);
     if (strcmp(arg[6],"NULL") == 0) yflag = 0;
-    else yc = atof(arg[6]);
+    else yc = force->numeric(FLERR,arg[6]);
     if (strcmp(arg[7],"NULL") == 0) zflag = 0;
-    else zc = atof(arg[7]);
-    r0 = atof(arg[8]);
+    else zc = force->numeric(FLERR,arg[7]);
+    r0 = force->numeric(FLERR,arg[8]);
     if (r0 < 0) error->all(FLERR,"R0 < 0 for fix spring command");
 
   } else if (strcmp(arg[3],"couple") == 0) {
@@ -77,15 +80,15 @@ FixSpring::FixSpring(LAMMPS *lmp, int narg, char **arg) :
       error->all(FLERR,"Two groups cannot be the same in fix spring couple");
     group2bit = group->bitmask[igroup2];
 
-    k_spring = atof(arg[5]);
+    k_spring = force->numeric(FLERR,arg[5]);
     xflag = yflag = zflag = 1;
     if (strcmp(arg[6],"NULL") == 0) xflag = 0;
-    else xc = atof(arg[6]);
+    else xc = force->numeric(FLERR,arg[6]);
     if (strcmp(arg[7],"NULL") == 0) yflag = 0;
-    else yc = atof(arg[7]);
+    else yc = force->numeric(FLERR,arg[7]);
     if (strcmp(arg[8],"NULL") == 0) zflag = 0;
-    else zc = atof(arg[8]);
-    r0 = atof(arg[9]);
+    else zc = force->numeric(FLERR,arg[8]);
+    r0 = force->numeric(FLERR,arg[9]);
     if (r0 < 0) error->all(FLERR,"R0 < 0 for fix spring command");
 
   } else error->all(FLERR,"Illegal fix spring command");
@@ -128,8 +131,10 @@ void FixSpring::init()
   masstotal = group->mass(igroup);
   if (styleflag == COUPLE) masstotal2 = group->mass(igroup2);
 
-  if (strstr(update->integrate_style,"respa"))
-    nlevels_respa = ((Respa *) update->integrate)->nlevels;
+  if (strstr(update->integrate_style,"respa")) {
+    ilevel_respa = ((Respa *) update->integrate)->nlevels-1;
+    if (respa_level >= 0) ilevel_respa = MIN(respa_level,ilevel_respa);
+  }
 }
 
 /* ---------------------------------------------------------------------- */
@@ -139,9 +144,9 @@ void FixSpring::setup(int vflag)
   if (strstr(update->integrate_style,"verlet"))
     post_force(vflag);
   else {
-    ((Respa *) update->integrate)->copy_flevel_f(nlevels_respa-1);
-    post_force_respa(vflag,nlevels_respa-1,0);
-    ((Respa *) update->integrate)->copy_f_flevel(nlevels_respa-1);
+    ((Respa *) update->integrate)->copy_flevel_f(ilevel_respa);
+    post_force_respa(vflag,ilevel_respa,0);
+    ((Respa *) update->integrate)->copy_f_flevel(ilevel_respa);
   }
 }
 
@@ -165,6 +170,10 @@ void FixSpring::post_force(int vflag)
 void FixSpring::spring_tether()
 {
   double xcm[3];
+
+  if (group->dynamic[igroup])
+    masstotal = group->mass(igroup);
+
   group->xcm(igroup,masstotal,xcm);
 
   // fx,fy,fz = components of k * (r-r0) / masstotal
@@ -191,9 +200,11 @@ void FixSpring::spring_tether()
   if (dr < 0.0) ftotal[3] = -ftotal[3];
   espring = 0.5*k_spring * dr*dr;
 
-  fx /= masstotal;
-  fy /= masstotal;
-  fz /= masstotal;
+  if (masstotal > 0.0) {
+    fx /= masstotal;
+    fy /= masstotal;
+    fz /= masstotal;
+  }
 
   // apply restoring force to atoms in group
 
@@ -230,6 +241,13 @@ void FixSpring::spring_tether()
 void FixSpring::spring_couple()
 {
   double xcm[3],xcm2[3];
+
+  if (group->dynamic[igroup])
+    masstotal = group->mass(igroup);
+
+  if (group->dynamic[igroup2])
+    masstotal2 = group->mass(igroup2);
+
   group->xcm(igroup,masstotal,xcm);
   group->xcm(igroup2,masstotal2,xcm2);
 
@@ -258,12 +276,17 @@ void FixSpring::spring_couple()
   if (dr < 0.0) ftotal[3] = -ftotal[3];
   espring = 0.5*k_spring * dr*dr;
 
-  fx2 = fx/masstotal2;
-  fy2 = fy/masstotal2;
-  fz2 = fz/masstotal2;
-  fx /= masstotal;
-  fy /= masstotal;
-  fz /= masstotal;
+  if (masstotal2 > 0.0) {
+    fx2 = fx/masstotal2;
+    fy2 = fy/masstotal2;
+    fz2 = fz/masstotal2;
+  } else fx2 = fy2 = fz2 = 0.0;
+
+  if (masstotal > 0.0) {
+    fx /= masstotal;
+    fy /= masstotal;
+    fz /= masstotal;
+  } else fx = fy = fz = 0.0;
 
   // apply restoring force to atoms in group
   // f = -k*(r-r0)*mass/masstotal
@@ -314,7 +337,7 @@ void FixSpring::spring_couple()
 
 void FixSpring::post_force_respa(int vflag, int ilevel, int iloop)
 {
-  if (ilevel == nlevels_respa-1) post_force(vflag);
+  if (ilevel == ilevel_respa) post_force(vflag);
 }
 
 /* ---------------------------------------------------------------------- */

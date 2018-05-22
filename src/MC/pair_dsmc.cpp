@@ -15,10 +15,10 @@
    Contributing authors: Paul Crozier (SNL)
 ------------------------------------------------------------------------- */
 
-#include "math.h"
-#include "stdio.h"
-#include "stdlib.h"
-#include "string.h"
+#include <math.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
 #include "pair_dsmc.h"
 #include "atom.h"
 #include "comm.h"
@@ -28,7 +28,7 @@
 #include "domain.h"
 #include "update.h"
 #include "random_mars.h"
-#include "limits.h"
+#include <limits.h>
 
 using namespace LAMMPS_NS;
 
@@ -93,9 +93,9 @@ void PairDSMC::compute(int eflag, int vflag)
     int ycell = static_cast<int>((x[i][1] - domain->boxlo[1])/celly);
     int zcell = static_cast<int>((x[i][2] - domain->boxlo[2])/cellz);
 
-    if ((xcell < 0) or (xcell > ncellsx-1) or
-        (ycell < 0) or (ycell > ncellsy-1) or
-        (zcell < 0) or (zcell > ncellsz-1)) continue;
+    if ((xcell < 0) || (xcell > ncellsx-1) ||
+        (ycell < 0) || (ycell > ncellsy-1) ||
+        (zcell < 0) || (zcell > ncellsz-1)) continue;
 
     int icell = xcell + ycell*ncellsx + zcell*ncellsx*ncellsy;
     itype = type[i];
@@ -146,7 +146,7 @@ void PairDSMC::compute(int eflag, int vflag)
         double num_of_collisions_double = number_of_A * number_of_B *
           weighting * Vs_max * update->dt / vol;
 
-        if ((itype == jtype) and number_of_B)
+        if ((itype == jtype) && number_of_B)
           num_of_collisions_double *=
             0.5 * double(number_of_B - 1) / double(number_of_B);
 
@@ -161,7 +161,8 @@ void PairDSMC::compute(int eflag, int vflag)
         // perform collisions on pairs of particles in icell
 
         for (int k = 0; k < num_of_collisions; k++) {
-          if ((number_of_A < 1) or (number_of_B < 1)) break;
+          if ((number_of_A < 1) || (number_of_B < 1)) break;
+          if ((itype == jtype) && (number_of_A < 2)) break;
           int ith_A = static_cast<int>(random->uniform()*number_of_A);
           int jth_B = static_cast<int>(random->uniform()*number_of_B);
           int i = particle_list[itype][ith_A];
@@ -208,12 +209,12 @@ void PairDSMC::settings(int narg, char **arg)
   if (narg != 6) error->all(FLERR,"Illegal pair_style command");
 
   cut_global = 0.0;
-  max_cell_size = force->numeric(arg[0]);
-  seed = force->inumeric(arg[1]);
-  weighting = force->numeric(arg[2]);
-  T_ref = force->numeric(arg[3]);
-  recompute_vsigmamax_stride = force->inumeric(arg[4]);
-  vsigmamax_samples = force->inumeric(arg[5]);
+  max_cell_size = force->numeric(FLERR,arg[0]);
+  seed = force->inumeric(FLERR,arg[1]);
+  weighting = force->numeric(FLERR,arg[2]);
+  T_ref = force->numeric(FLERR,arg[3]);
+  recompute_vsigmamax_stride = force->inumeric(FLERR,arg[4]);
+  vsigmamax_samples = force->inumeric(FLERR,arg[5]);
 
   // initialize Marsaglia RNG with processor-unique seed
 
@@ -229,7 +230,7 @@ void PairDSMC::settings(int narg, char **arg)
   if (allocated) {
     int i,j;
     for (i = 1; i <= atom->ntypes; i++)
-      for (j = i+1; j <= atom->ntypes; j++)
+      for (j = i; j <= atom->ntypes; j++)
         if (setflag[i][j]) cut[i][j] = cut_global;
   }
 }
@@ -244,13 +245,13 @@ void PairDSMC::coeff(int narg, char **arg)
   if (!allocated) allocate();
 
   int ilo,ihi,jlo,jhi;
-  force->bounds(arg[0],atom->ntypes,ilo,ihi);
-  force->bounds(arg[1],atom->ntypes,jlo,jhi);
+  force->bounds(FLERR,arg[0],atom->ntypes,ilo,ihi);
+  force->bounds(FLERR,arg[1],atom->ntypes,jlo,jhi);
 
-  double sigma_one = force->numeric(arg[2]);
+  double sigma_one = force->numeric(FLERR,arg[2]);
 
   double cut_one = cut_global;
-  if (narg == 4) cut_one = force->numeric(arg[3]);
+  if (narg == 4) cut_one = force->numeric(FLERR,arg[3]);
 
   int count = 0;
   for (int i = ilo; i <= ihi; i++) {

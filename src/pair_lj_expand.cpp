@@ -11,10 +11,10 @@
    See the README file in the top-level LAMMPS directory.
 ------------------------------------------------------------------------- */
 
-#include "math.h"
-#include "stdio.h"
-#include "stdlib.h"
-#include "string.h"
+#include <math.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
 #include "pair_lj_expand.h"
 #include "atom.h"
 #include "comm.h"
@@ -29,13 +29,17 @@ using namespace MathConst;
 
 /* ---------------------------------------------------------------------- */
 
-PairLJExpand::PairLJExpand(LAMMPS *lmp) : Pair(lmp) {}
+PairLJExpand::PairLJExpand(LAMMPS *lmp) : Pair(lmp)
+{
+  writedata = 1;
+}
 
 /* ---------------------------------------------------------------------- */
 
 PairLJExpand::~PairLJExpand()
 {
-  if (allocated) {
+  if (!copymode) {
+   if (allocated) {
     memory->destroy(setflag);
     memory->destroy(cutsq);
 
@@ -48,6 +52,7 @@ PairLJExpand::~PairLJExpand()
     memory->destroy(lj3);
     memory->destroy(lj4);
     memory->destroy(offset);
+   }
   }
 }
 
@@ -167,14 +172,14 @@ void PairLJExpand::settings(int narg, char **arg)
 {
   if (narg != 1) error->all(FLERR,"Illegal pair_style command");
 
-  cut_global = force->numeric(arg[0]);
+  cut_global = force->numeric(FLERR,arg[0]);
 
   // reset cutoffs that have been explicitly set
 
   if (allocated) {
     int i,j;
     for (i = 1; i <= atom->ntypes; i++)
-      for (j = i+1; j <= atom->ntypes; j++)
+      for (j = i; j <= atom->ntypes; j++)
         if (setflag[i][j]) cut[i][j] = cut_global;
   }
 }
@@ -189,15 +194,15 @@ void PairLJExpand::coeff(int narg, char **arg)
   if (!allocated) allocate();
 
   int ilo,ihi,jlo,jhi;
-  force->bounds(arg[0],atom->ntypes,ilo,ihi);
-  force->bounds(arg[1],atom->ntypes,jlo,jhi);
+  force->bounds(FLERR,arg[0],atom->ntypes,ilo,ihi);
+  force->bounds(FLERR,arg[1],atom->ntypes,jlo,jhi);
 
-  double epsilon_one = force->numeric(arg[2]);
-  double sigma_one = force->numeric(arg[3]);
-  double shift_one = force->numeric(arg[4]);
+  double epsilon_one = force->numeric(FLERR,arg[2]);
+  double sigma_one = force->numeric(FLERR,arg[3]);
+  double shift_one = force->numeric(FLERR,arg[4]);
 
   double cut_one = cut_global;
-  if (narg == 6) cut_one = force->numeric(arg[5]);
+  if (narg == 6) cut_one = force->numeric(FLERR,arg[5]);
 
   int count = 0;
   for (int i = ilo; i <= ihi; i++) {
@@ -235,7 +240,7 @@ double PairLJExpand::init_one(int i, int j)
   lj3[i][j] = 4.0 * epsilon[i][j] * pow(sigma[i][j],12.0);
   lj4[i][j] = 4.0 * epsilon[i][j] * pow(sigma[i][j],6.0);
 
-  if (offset_flag) {
+  if (offset_flag && (cut[i][j] > 0.0)) {
     double ratio = sigma[i][j] / cut[i][j];
     offset[i][j] = 4.0 * epsilon[i][j] * (pow(ratio,12.0) - pow(ratio,6.0));
   } else offset[i][j] = 0.0;
@@ -264,26 +269,22 @@ double PairLJExpand::init_one(int i, int j)
 
     double sig2 = sigma[i][j]*sigma[i][j];
     double sig6 = sig2*sig2*sig2;
-    double shiftcut = shift[i][j] - cut[i][j];
-    double rc3  = shiftcut*shiftcut*shiftcut;
-    double rc4  = rc3*shiftcut;
-    double rc5  = rc4*shiftcut;
-    double rc6  = rc5*shiftcut;
-    double rc9  = rc6*rc3;
-    double rc10 = rc9*shiftcut;
-    double rc11 = rc10*shiftcut;
-    double rc12 = rc11*shiftcut;
-    double shift2 = shift[i][j]*shift[i][j];
-    double shift3 = shift2*shift[i][j];
-    etail_ij = 8.0*MY_PI*all[0]*all[1]*epsilon[i][j] *
-      sig6*((-1.0/(9.0*rc9) + shift[i][j]/(5.0*rc10) -
-             shift2/(11.0*rc11))*sig6 +
-            1.0/(3.0*rc3) - shift[i][j]/(2.0*rc4) + shift2/(5.0*rc5));
-    ptail_ij = 8.0*MY_PI*all[0]*all[1]*epsilon[i][j] *
-      sig6* ((-4.0/(3.0*rc9) + 18.0*shift[i][j]/(5.0*rc10) -
-             36.0*shift2/(11.0*rc11) + shift3/rc12)*sig6 +
-             2.0/rc3 - 9.0*shift[i][j]/(2.0*rc4) +
-             18.0*shift2/(5.0*rc5) - shift3/rc6)/3.0;
+    double rc1 = cut[i][j];
+    double rc2  = rc1*rc1;
+    double rc3  = rc2*rc1;
+    double rc9  = rc3*rc3*rc3;
+    double shift1 = shift[i][j];
+    double shift2 = shift1*shift1;
+    double shift3 = shift2*shift1;
+
+    etail_ij = 8.0*MY_PI*all[0]*all[1]*epsilon[i][j] * sig6 *
+      ((1.0/9.0 + 2.0*shift1/(10.0*rc1) + shift2/(11.0*rc2))*sig6/rc9 -
+       (1.0/3.0 + 2.0*shift1/(4.0*rc1) + shift2/(5.0*rc2))/rc3);
+    ptail_ij = 16.0*MY_PI*all[0]*all[1]*epsilon[i][j] * sig6 *
+      ((1.0/9.0 + 3.0*shift1/(10.0*rc1) +
+        3.0*shift2/(11.0*rc2) + shift3/(12.0*rc3))*2.0*sig6/rc9 -
+       (1.0/3.0 + 3.0*shift1/(4.0*rc1) +
+        3.0*shift2/(5.0*rc2) + shift3/(6.0*rc3))/rc3);
   }
 
   return cut[i][j] + shift[i][j];
@@ -369,6 +370,28 @@ void PairLJExpand::read_restart_settings(FILE *fp)
   MPI_Bcast(&offset_flag,1,MPI_INT,0,world);
   MPI_Bcast(&mix_flag,1,MPI_INT,0,world);
   MPI_Bcast(&tail_flag,1,MPI_INT,0,world);
+}
+
+/* ----------------------------------------------------------------------
+   proc 0 writes to data file
+------------------------------------------------------------------------- */
+
+void PairLJExpand::write_data(FILE *fp)
+{
+  for (int i = 1; i <= atom->ntypes; i++)
+    fprintf(fp,"%d %g %g %g\n",i,epsilon[i][i],sigma[i][i],shift[i][i]);
+}
+
+/* ----------------------------------------------------------------------
+   proc 0 writes all pairs to data file
+------------------------------------------------------------------------- */
+
+void PairLJExpand::write_data_all(FILE *fp)
+{
+  for (int i = 1; i <= atom->ntypes; i++)
+    for (int j = i; j <= atom->ntypes; j++)
+      fprintf(fp,"%d %d %g %g %g %g\n",i,j,
+              epsilon[i][j],sigma[i][j],shift[i][j],cut[i][j]);
 }
 
 /* ---------------------------------------------------------------------- */

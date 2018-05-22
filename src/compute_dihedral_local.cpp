@@ -11,11 +11,12 @@
    See the README file in the top-level LAMMPS directory.
 ------------------------------------------------------------------------- */
 
-#include "math.h"
-#include "string.h"
+#include <math.h>
+#include <string.h>
 #include "compute_dihedral_local.h"
 #include "atom.h"
 #include "atom_vec.h"
+#include "molecule.h"
 #include "update.h"
 #include "domain.h"
 #include "force.h"
@@ -33,7 +34,8 @@ using namespace MathConst;
 /* ---------------------------------------------------------------------- */
 
 ComputeDihedralLocal::ComputeDihedralLocal(LAMMPS *lmp, int narg, char **arg) :
-  Compute(lmp, narg, arg)
+  Compute(lmp, narg, arg),
+  vlocal(NULL), alocal(NULL)
 {
   if (narg < 4) error->all(FLERR,"Illegal compute dihedral/local command");
 
@@ -49,24 +51,22 @@ ComputeDihedralLocal::ComputeDihedralLocal(LAMMPS *lmp, int narg, char **arg) :
   pflag = -1;
   nvalues = 0;
 
-  int i;
   for (int iarg = 3; iarg < narg; iarg++) {
-    i = iarg-3;
     if (strcmp(arg[iarg],"phi") == 0) pflag = nvalues++;
     else error->all(FLERR,"Invalid keyword in compute dihedral/local command");
   }
 
   nmax = 0;
-  vector = NULL;
-  array = NULL;
+  vlocal = NULL;
+  alocal = NULL;
 }
 
 /* ---------------------------------------------------------------------- */
 
 ComputeDihedralLocal::~ComputeDihedralLocal()
 {
-  memory->destroy(vector);
-  memory->destroy(array);
+  memory->destroy(vlocal);
+  memory->destroy(alocal);
 }
 
 /* ---------------------------------------------------------------------- */
@@ -107,27 +107,34 @@ void ComputeDihedralLocal::compute_local()
 
 int ComputeDihedralLocal::compute_dihedrals(int flag)
 {
-  int i,m,n,atom1,atom2,atom3,atom4;
+  int i,m,n,nd,atom1,atom2,atom3,atom4,imol,iatom;
+  tagint tagprev;
   double vb1x,vb1y,vb1z,vb2x,vb2y,vb2z,vb3x,vb3y,vb3z,vb2xm,vb2ym,vb2zm;
-  double ax,ay,az,bx,by,bz,rasq,rbsq,rgsq,rg,rginv,ra2inv,rb2inv,rabinv;
+  double ax,ay,az,bx,by,bz,rasq,rbsq,rgsq,rg,ra2inv,rb2inv,rabinv;
   double s,c;
   double *pbuf;
 
   double **x = atom->x;
+  tagint *tag = atom->tag;
   int *num_dihedral = atom->num_dihedral;
-  int **dihedral_atom1 = atom->dihedral_atom1;
-  int **dihedral_atom2 = atom->dihedral_atom2;
-  int **dihedral_atom3 = atom->dihedral_atom3;
-  int **dihedral_atom4 = atom->dihedral_atom4;
-  int *tag = atom->tag;
+  tagint **dihedral_atom1 = atom->dihedral_atom1;
+  tagint **dihedral_atom2 = atom->dihedral_atom2;
+  tagint **dihedral_atom3 = atom->dihedral_atom3;
+  tagint **dihedral_atom4 = atom->dihedral_atom4;
   int *mask = atom->mask;
+
+  int *molindex = atom->molindex;
+  int *molatom = atom->molatom;
+  Molecule **onemols = atom->avec->onemols;
+
   int nlocal = atom->nlocal;
+  int molecular = atom->molecular;
 
   if (flag) {
     if (nvalues == 1) {
-      if (pflag >= 0) pbuf = vector;
+      if (pflag >= 0) pbuf = vlocal;
     } else {
-      if (pflag >= 0 && array) pbuf = &array[0][pflag];
+      if (pflag >= 0 && alocal) pbuf = &alocal[0][pflag];
       else pbuf = NULL;
     }
   }
@@ -135,13 +142,31 @@ int ComputeDihedralLocal::compute_dihedrals(int flag)
   m = n = 0;
   for (atom2 = 0; atom2 < nlocal; atom2++) {
     if (!(mask[atom2] & groupbit)) continue;
-    for (i = 0; i < num_dihedral[atom2]; i++) {
-      if (tag[atom2] != dihedral_atom2[atom2][i]) continue;
-      atom1 = atom->map(dihedral_atom1[atom2][i]);
+
+    if (molecular == 1) nd = num_dihedral[atom2];
+    else {
+      if (molindex[atom2] < 0) continue;
+      imol = molindex[atom2];
+      iatom = molatom[atom2];
+      nd = onemols[imol]->num_dihedral[iatom];
+    }
+
+    for (i = 0; i < nd; i++) {
+      if (molecular == 1) {
+        if (tag[atom2] != dihedral_atom2[atom2][i]) continue;
+        atom1 = atom->map(dihedral_atom1[atom2][i]);
+        atom3 = atom->map(dihedral_atom3[atom2][i]);
+        atom4 = atom->map(dihedral_atom4[atom2][i]);
+      } else {
+        if (tag[atom2] != onemols[imol]->dihedral_atom2[atom2][i]) continue;
+        tagprev = tag[atom2] - iatom - 1;
+        atom1 = atom->map(onemols[imol]->dihedral_atom1[atom2][i]+tagprev);
+        atom3 = atom->map(onemols[imol]->dihedral_atom3[atom2][i]+tagprev);
+        atom4 = atom->map(onemols[imol]->dihedral_atom4[atom2][i]+tagprev);
+      }
+
       if (atom1 < 0 || !(mask[atom1] & groupbit)) continue;
-      atom3 = atom->map(dihedral_atom3[atom2][i]);
       if (atom3 < 0 || !(mask[atom3] & groupbit)) continue;
-      atom4 = atom->map(dihedral_atom4[atom2][i]);
       if (atom4 < 0 || !(mask[atom4] & groupbit)) continue;
 
       if (flag) {
@@ -181,8 +206,7 @@ int ComputeDihedralLocal::compute_dihedrals(int flag)
           rgsq = vb2xm*vb2xm + vb2ym*vb2ym + vb2zm*vb2zm;
           rg = sqrt(rgsq);
 
-          rginv = ra2inv = rb2inv = 0.0;
-          if (rg > 0) rginv = 1.0/rg;
+          ra2inv = rb2inv = 0.0;
           if (rasq > 0) ra2inv = 1.0/rasq;
           if (rbsq > 0) rb2inv = 1.0/rbsq;
           rabinv = sqrt(ra2inv*rb2inv);
@@ -208,18 +232,18 @@ int ComputeDihedralLocal::compute_dihedrals(int flag)
 
 void ComputeDihedralLocal::reallocate(int n)
 {
-  // grow vector or array and indices array
+  // grow vector_local or array_local
 
   while (nmax < n) nmax += DELTA;
 
   if (nvalues == 1) {
-    memory->destroy(vector);
-    memory->create(vector,nmax,"bond/local:vector");
-    vector_local = vector;
+    memory->destroy(vlocal);
+    memory->create(vlocal,nmax,"dihedral/local:vector_local");
+    vector_local = vlocal;
   } else {
-    memory->destroy(array);
-    memory->create(array,nmax,nvalues,"bond/local:array");
-    array_local = array;
+    memory->destroy(alocal);
+    memory->create(alocal,nmax,nvalues,"dihedral/local:array_local");
+    array_local = alocal;
   }
 }
 

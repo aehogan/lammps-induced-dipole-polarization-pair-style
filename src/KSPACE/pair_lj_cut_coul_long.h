@@ -1,4 +1,4 @@
-/* ----------------------------------------------------------------------
+/* -*- c++ -*- ----------------------------------------------------------
    LAMMPS - Large-scale Atomic/Molecular Massively Parallel Simulator
    http://lammps.sandia.gov, Sandia National Laboratories
    Steve Plimpton, sjplimp@sandia.gov
@@ -33,12 +33,13 @@ class PairLJCutCoulLong : public Pair {
   virtual void settings(int, char **);
   void coeff(int, char **);
   virtual void init_style();
-  void init_list(int, class NeighList *);
   virtual double init_one(int, int);
   void write_restart(FILE *);
   void read_restart(FILE *);
   virtual void write_restart_settings(FILE *);
   virtual void read_restart_settings(FILE *);
+  void write_data(FILE *);
+  void write_data_all(FILE *);
   virtual double single(int, int, int, int, double, double, double, double &);
 
   void compute_inner();
@@ -56,7 +57,7 @@ class PairLJCutCoulLong : public Pair {
   double qdist;             // TIP4P distance from O site to negative charge
   double g_ewald;
 
-  void allocate();
+  virtual void allocate();
 };
 
 }
@@ -80,10 +81,9 @@ E: Pair style lj/cut/coul/long requires atom attribute q
 
 The atom style defined does not have this attribute.
 
-E: Pair style is incompatible with KSpace style
+E: Pair style requires a KSpace style
 
-If a pair style with a long-range Coulombic component is selected,
-then a kspace style must also be used.
+No kspace style is defined.
 
 E: Pair cutoff < Respa interior cutoff
 

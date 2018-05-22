@@ -21,7 +21,7 @@ KSpaceStyle(msm,MSM)
 #define LMP_MSM_H
 
 #include "lmptype.h"
-#include "mpi.h"
+#include <mpi.h>
 
 #include "kspace.h"
 
@@ -40,27 +40,30 @@ class MSM : public KSpace {
   double precision;
   int nfactors;
   int *factors;
-  double qsum,qsqsum,q2;
   double qqrd2e;
   double cutoff;
   double volume;
-  double *delxinv,*delyinv,*delzinv,*delvolinv;
+  double *delxinv,*delyinv,*delzinv;
+  double h_x,h_y,h_z;
+  double C_p;
 
   int *nx_msm,*ny_msm,*nz_msm;
   int *nxlo_in,*nylo_in,*nzlo_in;
   int *nxhi_in,*nyhi_in,*nzhi_in;
   int *nxlo_out,*nylo_out,*nzlo_out;
   int *nxhi_out,*nyhi_out,*nzhi_out;
-  int *ngrid;
+  int *ngrid,*active_flag;
   int *alpha,*betax,*betay,*betaz;
+  int nxlo_out_all,nylo_out_all,nzlo_out_all;
+  int nxhi_out_all,nyhi_out_all,nzhi_out_all;
   int nxlo_direct,nxhi_direct,nylo_direct;
   int nyhi_direct,nzlo_direct,nzhi_direct;
   int nmax_direct;
   int nlower,nupper;
   int peratom_allocate_flag;
   int levels;
-  
-  MPI_Comm *world_levels;  
+
+  MPI_Comm *world_levels;
 
   double ****qgrid;
   double ****egrid;
@@ -78,11 +81,11 @@ class MSM : public KSpace {
   int procgrid[3];                  // procs assigned in each dim of 3d grid
   int myloc[3];                     // which proc I am in each dim
   int ***procneigh_levels;          // my 6 neighboring procs, 0/1 = left/right
-  class CommGrid **cg;
-  class CommGrid **cg_peratom;
-  class CommGrid *cg_all;
-  class CommGrid *cg_peratom_all;
-  
+  class GridComm **cg;
+  class GridComm **cg_peratom;
+  class GridComm *cg_all;
+  class GridComm *cg_peratom_all;
+
   int current_level;
 
   int **part2grid;             // storage for particle -> grid mapping
@@ -94,7 +97,6 @@ class MSM : public KSpace {
   void set_proc_grid(int);
   void set_grid_local();
   void setup_grid();
-  double estimate_cutoff(double,double);
   double estimate_1d_error(double,double);
   double estimate_3d_error();
   double estimate_total_error();
@@ -108,18 +110,27 @@ class MSM : public KSpace {
   void particle_map();
   void make_rho();
   virtual void direct(int);
+  void direct_peratom(int);
   void direct_top(int);
+  void direct_peratom_top(int);
   void restriction(int);
   void prolongation(int);
+  void grid_swap_forward(int,double*** &);
+  void grid_swap_reverse(int,double*** &);
   void fieldforce();
   void fieldforce_peratom();
+  void compute_phis(const double &, const double &, const double &);
   void compute_phis_and_dphis(const double &, const double &, const double &);
-  double compute_phi(const double &);
-  double compute_dphi(const double &);
+  inline double compute_phi(const double &);
+  inline double compute_dphi(const double &);
   void get_g_direct();
   void get_virial_direct();
   void get_g_direct_top(int);
   void get_virial_direct_top(int);
+
+  // triclinic
+
+  int triclinic;
 
   // grid communication
   void pack_forward(int, double *, int, int *);
@@ -141,21 +152,21 @@ Self-explanatory.  Check the input script syntax and compare to the
 documentation for the command.  You can use -echo screen as a
 command-line option when running LAMMPS to see the offending line.
 
-E: Cannot (yet) use MSM with triclinic box
-
-This feature is not yet supported.
-
 E: Cannot (yet) use MSM with 2d simulation
 
 This feature is not yet supported.
+
+E: MSM can only currently be used with comm_style brick
+
+This is a current restriction in LAMMPS.
 
 E: Kspace style requires atom attribute q
 
 The atom style defined does not have these attributes.
 
-E: Cannot use slab correction with MSM
+W: Slab correction not needed for MSM
 
-Slab correction can only be used with Ewald and PPPM, not MSM.
+Slab correction is intended to be used with Ewald or PPPM and is not needed by MSM.
 
 E: MSM order must be 4, 6, 8, or 10
 
@@ -168,35 +179,18 @@ Single precision cannot be used with MSM.
 
 E: KSpace style is incompatible with Pair style
 
-Setting a kspace style requires that a pair style with a long-range
-Coulombic component be selected that is compatible with MSM.  Note
-that TIP4P is not (yet) supported by MSM.
+Setting a kspace style requires that a pair style with matching
+long-range Coulombic or dispersion components be used.
 
-E: Cannot use kspace solver on system with no charge
+E: Must use 'kspace_modify pressure/scalar no' to obtain per-atom virial with kspace_style MSM
 
-No atoms in system have a non-zero charge.
-
-E: System is not charge neutral, net charge = %g
-
-The total charge on all atoms on the system is not 0.0, which
-is not valid for MSM.
-
-E: MSM grid is too large
-
-The global MSM grid is larger than OFFSET in one or more dimensions.
-OFFSET is currently set to 16384.  You likely need to decrease the
-requested accuracy.
-
-W: MSM mesh too small, increasing to 2 points in each direction
-
-The global MSM grid is too small, so the number of grid points has been
-increased
+The kspace scalar pressure option cannot be used to obtain per-atom virial.
 
 E: KSpace accuracy must be > 0
 
 The kspace accuracy designated in the input must be greater than zero.
 
-W: Number of MSM mesh points increased to be a multiple of 2
+W: Number of MSM mesh points changed to be a multiple of 2
 
 MSM requires that the number of grid points in each direction be a multiple
 of two and the number of grid points in one or more directions have been
@@ -207,9 +201,27 @@ W: Adjusting Coulombic cutoff for MSM, new cutoff = %g
 The adjust/cutoff command is turned on and the Coulombic cutoff has been
 adjusted to match the user-specified accuracy.
 
+E: Too many MSM grid levels
+
+The max number of MSM grid levels is hardwired to 10.
+
+W: MSM mesh too small, increasing to 2 points in each direction
+
+Self-explanatory.
+
+E: MSM grid is too large
+
+The global MSM grid is larger than OFFSET in one or more dimensions.
+OFFSET is currently set to 16384.  You likely need to decrease the
+requested accuracy.
+
+E: Non-numeric box dimensions - simulation unstable
+
+The box size has apparently blown up.
+
 E: Out of range atoms - cannot compute MSM
 
-One or more atoms are attempting to map their charge to a MSM grid point 
+One or more atoms are attempting to map their charge to a MSM grid point
 that is not owned by a processor.  This is likely for one of two
 reasons, both of them bad.  First, it may mean that an atom near the
 boundary of a processor's sub-domain has moved more than 1/2 the

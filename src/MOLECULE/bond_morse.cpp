@@ -15,8 +15,8 @@
    Contributing author: Jeff Greathouse (SNL)
 ------------------------------------------------------------------------- */
 
-#include "math.h"
-#include "stdlib.h"
+#include <math.h>
+#include <stdlib.h>
 #include "bond_morse.h"
 #include "atom.h"
 #include "neighbor.h"
@@ -126,11 +126,11 @@ void BondMorse::coeff(int narg, char **arg)
   if (!allocated) allocate();
 
   int ilo,ihi;
-  force->bounds(arg[0],atom->nbondtypes,ilo,ihi);
+  force->bounds(FLERR,arg[0],atom->nbondtypes,ilo,ihi);
 
-  double d0_one = force->numeric(arg[1]);
-  double alpha_one = force->numeric(arg[2]);
-  double r0_one = force->numeric(arg[3]);
+  double d0_one = force->numeric(FLERR,arg[1]);
+  double alpha_one = force->numeric(FLERR,arg[2]);
+  double r0_one = force->numeric(FLERR,arg[3]);
 
   int count = 0;
   for (int i = ilo; i <= ihi; i++) {
@@ -184,12 +184,25 @@ void BondMorse::read_restart(FILE *fp)
   for (int i = 1; i <= atom->nbondtypes; i++) setflag[i] = 1;
 }
 
+/* ----------------------------------------------------------------------
+   proc 0 writes to data file
+------------------------------------------------------------------------- */
+
+void BondMorse::write_data(FILE *fp)
+{
+  for (int i = 1; i <= atom->nbondtypes; i++)
+    fprintf(fp,"%d %g %g %g\n",i,d0[i],alpha[i],r0[i]);
+}
+
 /* ---------------------------------------------------------------------- */
 
-double BondMorse::single(int type, double rsq, int i, int j)
+double BondMorse::single(int type, double rsq, int i, int j,
+                         double &fforce)
 {
   double r = sqrt(rsq);
   double dr = r - r0[type];
   double ralpha = exp(-alpha[type]*dr);
+  fforce = 0;
+  if (r > 0.0) fforce = -2.0*d0[type]*alpha[type]*(1-ralpha)*ralpha/r;
   return d0[type]*(1-ralpha)*(1-ralpha);
 }

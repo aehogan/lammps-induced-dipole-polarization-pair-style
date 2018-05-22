@@ -11,10 +11,9 @@
    See the README file in the top-level LAMMPS directory.
 ------------------------------------------------------------------------- */
 
-#include "lmptype.h"
-#include "mpi.h"
-#include "math.h"
-#include "stdlib.h"
+#include <mpi.h>
+#include <math.h>
+#include <stdlib.h>
 #include "improper_cvff.h"
 #include "atom.h"
 #include "comm.h"
@@ -32,7 +31,10 @@ using namespace LAMMPS_NS;
 
 /* ---------------------------------------------------------------------- */
 
-ImproperCvff::ImproperCvff(LAMMPS *lmp) : Improper(lmp) {}
+ImproperCvff::ImproperCvff(LAMMPS *lmp) : Improper(lmp)
+{
+  writedata = 1;
+}
 
 /* ---------------------------------------------------------------------- */
 
@@ -148,8 +150,9 @@ void ImproperCvff::compute(int eflag, int vflag)
       MPI_Comm_rank(world,&me);
       if (screen) {
         char str[128];
-        sprintf(str,
-                "Improper problem: %d " BIGINT_FORMAT " %d %d %d %d",
+        sprintf(str,"Improper problem: %d " BIGINT_FORMAT " "
+                TAGINT_FORMAT " " TAGINT_FORMAT " "
+                TAGINT_FORMAT " " TAGINT_FORMAT,
                 me,update->ntimestep,
                 atom->tag[i1],atom->tag[i2],atom->tag[i3],atom->tag[i4]);
         error->warning(FLERR,str,0);
@@ -295,11 +298,11 @@ void ImproperCvff::coeff(int narg, char **arg)
   if (!allocated) allocate();
 
   int ilo,ihi;
-  force->bounds(arg[0],atom->nimpropertypes,ilo,ihi);
+  force->bounds(FLERR,arg[0],atom->nimpropertypes,ilo,ihi);
 
-  double k_one = force->numeric(arg[1]);
-  int sign_one = force->inumeric(arg[2]);
-  int multiplicity_one = force->inumeric(arg[3]);
+  double k_one = force->numeric(FLERR,arg[1]);
+  int sign_one = force->inumeric(FLERR,arg[2]);
+  int multiplicity_one = force->inumeric(FLERR,arg[3]);
 
   int count = 0;
   for (int i = ilo; i <= ihi; i++) {
@@ -342,4 +345,14 @@ void ImproperCvff::read_restart(FILE *fp)
   MPI_Bcast(&multiplicity[1],atom->nimpropertypes,MPI_INT,0,world);
 
   for (int i = 1; i <= atom->nimpropertypes; i++) setflag[i] = 1;
+}
+
+/* ----------------------------------------------------------------------
+   proc 0 writes to data file
+------------------------------------------------------------------------- */
+
+void ImproperCvff::write_data(FILE *fp)
+{
+  for (int i = 1; i <= atom->nimpropertypes; i++)
+    fprintf(fp,"%d %g %d %d\n",i,k[i],sign[i],multiplicity[i]);
 }

@@ -1,4 +1,4 @@
-/* ----------------------------------------------------------------------
+/* -*- c++ -*- ----------------------------------------------------------
    LAMMPS - Large-scale Atomic/Molecular Massively Parallel Simulator
    http://lammps.sandia.gov, Sandia National Laboratories
    Steve Plimpton, sjplimp@sandia.gov
@@ -39,29 +39,35 @@ class Respa : public Integrate {
   int level_improper,level_pair,level_kspace;
   int level_inner,level_middle,level_outer;
 
+  int nhybrid_styles;     // number of hybrid pair styles
+  int *hybrid_level;      // level to compute pair hybrid sub-style at
+  int *hybrid_compute;    // selects whether to compute sub-style forces
+  int tally_global;       // 1 if pair style should tally global accumulators
+  int pair_compute;       // 1 if pair force need to be computed
+
   Respa(class LAMMPS *, int, char **);
-  ~Respa();
-  void init();
-  void setup();
-  void setup_minimal(int);
-  void run(int);
-  void cleanup();
-  void reset_dt();
+  virtual ~Respa();
+  virtual void init();
+  virtual void setup(int);
+  virtual void setup_minimal(int);
+  virtual void run(int);
+  virtual void cleanup();
+  virtual void reset_dt();
 
   void copy_f_flevel(int);
   void copy_flevel_f(int);
 
- private:
+ protected:
   int triclinic;                    // 0 if domain is orthog, 1 if triclinic
-  int torqueflag,erforceflag;
-  int e_flag,rho_flag;
+  int torqueflag,extraflag;
 
   int *newton;                      // newton flag at each level
   class FixRespa *fix_respa;        // Fix to store the force level array
 
-  void recurse(int);
+  virtual void recurse(int);
   void force_clear(int);
   void sum_flevel_f();
+  void set_compute_flags(int ilevel);
 };
 
 }
@@ -97,6 +103,12 @@ E: Cannot set respa middle without inner/outer
 In the rRESPA integrator, you must define both a inner and outer
 setting in order to use a middle setting.
 
+E: Cannot set respa hybrid and any of pair/inner/middle/outer
+
+In the rRESPA integrator, you must compute pairwise potentials either
+all together (pair), with different cutoff regions (inner/middle/outer),
+or per hybrid sub-style (hybrid).  You cannot mix those.
+
 E: Invalid order of forces within respa levels
 
 For respa, ordering of force computations within respa levels must
@@ -120,15 +132,6 @@ W: No fixes defined, atoms won't move
 
 If you are not using a fix like nve, nvt, npt then atom velocities and
 coordinates will not be updated during timestepping.
-
-W: Fix shake with rRESPA computes invalid pressures
-
-This is a known bug in LAMMPS that has not yet been fixed.  If you use
-SHAKE with rRESPA and perform a constant volume simulation (e.g. using
-fix npt) this only affects the output pressure, not the dynamics of
-the simulation.  If you use SHAKE with rRESPA and perform a constant
-pressure simulation (e.g. using fix npt) then you will be
-equilibrating to the wrong volume.
 
 E: Pair style does not support rRESPA inner/middle/outer
 

@@ -11,7 +11,7 @@
 
 ! f_driver = simple example of how an umbrella program
 !            can invoke LAMMPS as a library on some subset of procs
-! Syntax: f_driver P in.lammps
+! Syntax: simpleF P in.lammps
 !         P = # of procs to run LAMMPS on
 !             must be <= # of procs the driver code itself runs on
 !         in.lammps = LAMMPS input script
@@ -41,7 +41,7 @@ PROGRAM f_driver
   narg = command_argument_count()
 
   IF (narg /= 2) THEN
-     PRINT *, 'Syntax: f_driver P in.lammps'
+     PRINT *, 'Syntax: simpleF P in.lammps'
      CALL mpi_abort(MPI_COMM_WORLD,1,ierr)
   END IF
 
@@ -115,9 +115,12 @@ PROGRAM f_driver
      CALL lammps_get_natoms(ptr,natoms)
      ALLOCATE(x(3*natoms))
 
-     CALL lammps_gather_atoms(ptr,'x',1,3,x);
-     x(1) = x(1) + epsilon
-     CALL lammps_scatter_atoms(ptr,'x',1,3,x);
+     ! these calls are commented out, b/c libfwrapper.c
+     ! needs to be updated to use gather_atoms and scatter_atoms
+
+     !CALL lammps_gather_atoms(ptr,'x',1,3,x);
+     !x(1) = x(1) + epsilon
+     !CALL lammps_scatter_atoms(ptr,'x',1,3,x);
 
      DEALLOCATE(x)
 

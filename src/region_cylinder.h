@@ -1,4 +1,4 @@
-/* ----------------------------------------------------------------------
+/* -*- c++ -*- ----------------------------------------------------------
    LAMMPS - Large-scale Atomic/Molecular Massively Parallel Simulator
    http://lammps.sandia.gov, Sandia National Laboratories
    Steve Plimpton, sjplimp@sandia.gov
@@ -35,6 +35,8 @@ class RegCylinder : public Region {
   int surface_interior(double *, double);
   int surface_exterior(double *, double);
   void shape_update();
+  void set_velocity_shape();
+  void velocity_contact_shape(double *, double *);
 
  private:
   char axis;
@@ -65,5 +67,17 @@ E: Cannot use region INF or EDGE when box does not exist
 
 Regions that extend to the box boundaries can only be used after the
 create_box command has been used.
+
+E: Variable evaluation in region gave bad value
+
+Variable returned a radius < 0.0.
+
+E: Variable name for region cylinder does not exist
+
+Self-explanatory.
+
+E: Variable for region cylinder is invalid style
+
+Only equal-style variables are allowed.
 
 */

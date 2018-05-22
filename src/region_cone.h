@@ -1,4 +1,4 @@
-/* ----------------------------------------------------------------------
+/* -*- c++ -*- ----------------------------------------------------------
    LAMMPS - Large-scale Atomic/Molecular Massively Parallel Simulator
    http://lammps.sandia.gov, Sandia National Laboratories
    Steve Plimpton, sjplimp@sandia.gov
@@ -39,11 +39,7 @@ class RegCone : public Region {
   double lo,hi;
   double maxradius;
 
-  void point_on_line_segment(double *, double *, double *, double *);
   double closest(double *, double *, double *, double);
-
-  void subtract(double *, double *, double *);
-  double dotproduct(double *, double *);
 };
 
 }

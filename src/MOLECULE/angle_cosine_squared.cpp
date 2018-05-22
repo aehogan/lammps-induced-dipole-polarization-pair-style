@@ -15,8 +15,8 @@
    Contributing author: Naveen Michaud-Agrawal (Johns Hopkins U)
 ------------------------------------------------------------------------- */
 
-#include "math.h"
-#include "stdlib.h"
+#include <math.h>
+#include <stdlib.h>
 #include "angle_cosine_squared.h"
 #include "atom.h"
 #include "neighbor.h"
@@ -168,10 +168,10 @@ void AngleCosineSquared::coeff(int narg, char **arg)
   if (!allocated) allocate();
 
   int ilo,ihi;
-  force->bounds(arg[0],atom->nangletypes,ilo,ihi);
+  force->bounds(FLERR,arg[0],atom->nangletypes,ilo,ihi);
 
-  double k_one = force->numeric(arg[1]);
-  double theta0_one = force->numeric(arg[2]);
+  double k_one = force->numeric(FLERR,arg[1]);
+  double theta0_one = force->numeric(FLERR,arg[2]);
 
   // convert theta0 from degrees to radians
 
@@ -219,6 +219,16 @@ void AngleCosineSquared::read_restart(FILE *fp)
   MPI_Bcast(&theta0[1],atom->nangletypes,MPI_DOUBLE,0,world);
 
   for (int i = 1; i <= atom->nangletypes; i++) setflag[i] = 1;
+}
+
+/* ----------------------------------------------------------------------
+   proc 0 writes to data file
+------------------------------------------------------------------------- */
+
+void AngleCosineSquared::write_data(FILE *fp)
+{
+  for (int i = 1; i <= atom->nangletypes; i++)
+    fprintf(fp,"%d %g %g\n",i,k[i],theta0[i]/MY_PI*180.0);
 }
 
 /* ---------------------------------------------------------------------- */

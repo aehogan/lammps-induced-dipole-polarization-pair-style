@@ -15,10 +15,10 @@
    Contributing author: Mike Brown (SNL)
 ------------------------------------------------------------------------- */
 
-#include "math.h"
-#include "stdio.h"
-#include "stdlib.h"
-#include "string.h"
+#include <math.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
 #include "pair_gayberne.h"
 #include "math_extra.h"
 #include "atom.h"
@@ -28,16 +28,31 @@
 #include "neighbor.h"
 #include "neigh_list.h"
 #include "integrate.h"
+#include "citeme.h"
 #include "memory.h"
 #include "error.h"
 
 using namespace LAMMPS_NS;
 
+static const char cite_pair_gayberne[] =
+  "pair gayberne command:\n\n"
+  "@Article{Brown09,\n"
+  " author =  {W. M. Brown, M. K. Petersen, S. J. Plimpton, and G. S. Grest},\n"
+  " title =   {Liquid crystal nanodroplets in solution},\n"
+  " journal = {J.~Chem.~Phys.},\n"
+  " year =    2009,\n"
+  " volume =  130,\n"
+  " pages =   {044901}\n"
+  "}\n\n";
+
 /* ---------------------------------------------------------------------- */
 
 PairGayBerne::PairGayBerne(LAMMPS *lmp) : Pair(lmp)
 {
+  if (lmp->citeme) lmp->citeme->add(cite_pair_gayberne);
+
   single_enable = 0;
+  writedata = 1;
 }
 
 /* ----------------------------------------------------------------------
@@ -256,17 +271,17 @@ void PairGayBerne::settings(int narg, char **arg)
 {
   if (narg != 4) error->all(FLERR,"Illegal pair_style command");
 
-  gamma = force->numeric(arg[0]);
-  upsilon = force->numeric(arg[1])/2.0;
-  mu = force->numeric(arg[2]);
-  cut_global = force->numeric(arg[3]);
+  gamma = force->numeric(FLERR,arg[0]);
+  upsilon = force->numeric(FLERR,arg[1])/2.0;
+  mu = force->numeric(FLERR,arg[2]);
+  cut_global = force->numeric(FLERR,arg[3]);
 
   // reset cutoffs that have been explicitly set
 
   if (allocated) {
     int i,j;
     for (i = 1; i <= atom->ntypes; i++)
-      for (j = i+1; j <= atom->ntypes; j++)
+      for (j = i; j <= atom->ntypes; j++)
         if (setflag[i][j]) cut[i][j] = cut_global;
   }
 }
@@ -282,20 +297,20 @@ void PairGayBerne::coeff(int narg, char **arg)
   if (!allocated) allocate();
 
   int ilo,ihi,jlo,jhi;
-  force->bounds(arg[0],atom->ntypes,ilo,ihi);
-  force->bounds(arg[1],atom->ntypes,jlo,jhi);
+  force->bounds(FLERR,arg[0],atom->ntypes,ilo,ihi);
+  force->bounds(FLERR,arg[1],atom->ntypes,jlo,jhi);
 
-  double epsilon_one = force->numeric(arg[2]);
-  double sigma_one = force->numeric(arg[3]);
-  double eia_one = force->numeric(arg[4]);
-  double eib_one = force->numeric(arg[5]);
-  double eic_one = force->numeric(arg[6]);
-  double eja_one = force->numeric(arg[7]);
-  double ejb_one = force->numeric(arg[8]);
-  double ejc_one = force->numeric(arg[9]);
+  double epsilon_one = force->numeric(FLERR,arg[2]);
+  double sigma_one = force->numeric(FLERR,arg[3]);
+  double eia_one = force->numeric(FLERR,arg[4]);
+  double eib_one = force->numeric(FLERR,arg[5]);
+  double eic_one = force->numeric(FLERR,arg[6]);
+  double eja_one = force->numeric(FLERR,arg[7]);
+  double ejb_one = force->numeric(FLERR,arg[8]);
+  double ejc_one = force->numeric(FLERR,arg[9]);
 
   double cut_one = cut_global;
-  if (narg == 11) cut_one = force->numeric(arg[10]);
+  if (narg == 11) cut_one = force->numeric(FLERR,arg[10]);
 
   int count = 0;
   for (int i = ilo; i <= ihi; i++) {
@@ -335,7 +350,7 @@ void PairGayBerne::init_style()
   avec = (AtomVecEllipsoid *) atom->style_match("ellipsoid");
   if (!avec) error->all(FLERR,"Pair gayberne requires atom style ellipsoid");
 
-  neighbor->request(this);
+  neighbor->request(this,instance_me);
 
   // per-type shape precalculations
   // require that atom shapes are identical within each type
@@ -343,7 +358,8 @@ void PairGayBerne::init_style()
 
   for (int i = 1; i <= atom->ntypes; i++) {
     if (!atom->shape_consistency(i,shape1[i][0],shape1[i][1],shape1[i][2]))
-      error->all(FLERR,"Pair gayberne requires atoms with same type have same shape");
+      error->all(FLERR,
+                 "Pair gayberne requires atoms with same type have same shape");
     if (shape1[i][0] == 0.0)
       shape1[i][0] = shape1[i][1] = shape1[i][2] = 1.0;
     shape2[i][0] = shape1[i][0]*shape1[i][0];
@@ -375,7 +391,7 @@ double PairGayBerne::init_one(int i, int j)
   lj3[i][j] = 4.0 * epsilon[i][j] * pow(sigma[i][j],12.0);
   lj4[i][j] = 4.0 * epsilon[i][j] * pow(sigma[i][j],6.0);
 
-  if (offset_flag) {
+  if (offset_flag && (cut[i][j] > 0.0)) {
     double ratio = sigma[i][j] / cut[i][j];
     offset[i][j] = 4.0 * epsilon[i][j] * (pow(ratio,12.0) - pow(ratio,6.0));
   } else offset[i][j] = 0.0;
@@ -506,6 +522,34 @@ void PairGayBerne::read_restart_settings(FILE *fp)
   MPI_Bcast(&cut_global,1,MPI_DOUBLE,0,world);
   MPI_Bcast(&offset_flag,1,MPI_INT,0,world);
   MPI_Bcast(&mix_flag,1,MPI_INT,0,world);
+}
+
+/* ----------------------------------------------------------------------
+   proc 0 writes to data file
+------------------------------------------------------------------------- */
+
+void PairGayBerne::write_data(FILE *fp)
+{
+  for (int i = 1; i <= atom->ntypes; i++)
+    fprintf(fp,"%d %g %g %g %g %g %g %g %g\n",i,
+            epsilon[i][i],sigma[i][i],
+            pow(well[i][0],-mu),pow(well[i][1],-mu),pow(well[i][2],-mu),
+            pow(well[i][0],-mu),pow(well[i][1],-mu),pow(well[i][2],-mu));
+}
+
+/* ----------------------------------------------------------------------
+   proc 0 writes all pairs to data file
+------------------------------------------------------------------------- */
+
+void PairGayBerne::write_data_all(FILE *fp)
+{
+  for (int i = 1; i <= atom->ntypes; i++)
+    for (int j = i; j <= atom->ntypes; j++)
+      fprintf(fp,"%d %d %g %g %g %g %g %g %g %g %g\n",i,j,
+              epsilon[i][i],sigma[i][i],
+              pow(well[i][0],-mu),pow(well[i][1],-mu),pow(well[i][2],-mu),
+              pow(well[j][0],-mu),pow(well[j][1],-mu),pow(well[j][2],-mu),
+              cut[i][j]);
 }
 
 /* ----------------------------------------------------------------------

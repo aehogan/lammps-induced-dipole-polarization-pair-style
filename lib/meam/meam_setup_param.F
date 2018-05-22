@@ -1,17 +1,37 @@
-c     
+c
+c     do a sanity check on index parameters
+      subroutine meam_checkindex(num,lim,nidx,idx,ierr)
+      implicit none
+      integer i,num,lim,nidx,idx(3),ierr
+
+      ierr = 0
+      if (nidx.lt.num) then
+         ierr = 2
+         return
+      endif
+
+      do i=1,num
+         if ((idx(i).lt.1).or.(idx(i).gt.lim)) then
+            ierr = 3
+            return
+         endif
+      enddo
+      end
+
+c
 c     Declaration in pair_meam.h:
-c     
+c
 c     void meam_setup_param(int *, double *, int *, int *, int *);
-c     
+c
 c     Call in pair_meam.cpp
-c     
+c
 c     meam_setup_param(&which,&value,&nindex,index,&errorflag);
-c     
-c     
-c     
+c
+c
+c
 c     The "which" argument corresponds to the index of the "keyword" array
 c     in pair_meam.cpp:
-c     
+c
 c     0 = Ec_meam
 c     1 = alpha_meam
 c     2 = rho0_meam
@@ -34,7 +54,7 @@ c     18 = zbl_meam
 c     19 = emb_lin_neg
 c     20 = bkgd_dyn
 
-      subroutine meam_setup_param(which, value, nindex, 
+      subroutine meam_setup_param(which, value, nindex,
      $     index, errorflag)
 
       use meam_data
@@ -48,22 +68,32 @@ c     20 = bkgd_dyn
 
 c     0 = Ec_meam
       if (which.eq.0) then
+        call meam_checkindex(2,maxelt,nindex,index,errorflag)
+        if (errorflag.ne.0) return
         Ec_meam(index(1),index(2)) = value
 
 c     1 = alpha_meam
       else if (which.eq.1) then
+        call meam_checkindex(2,maxelt,nindex,index,errorflag)
+        if (errorflag.ne.0) return
         alpha_meam(index(1),index(2)) = value
-        
+
 c     2 = rho0_meam
       else if (which.eq.2) then
+        call meam_checkindex(1,maxelt,nindex,index,errorflag)
+        if (errorflag.ne.0) return
         rho0_meam(index(1)) = value
 
 c     3 = delta_meam
       else if (which.eq.3) then
+        call meam_checkindex(2,maxelt,nindex,index,errorflag)
+        if (errorflag.ne.0) return
         delta_meam(index(1),index(2)) = value
 
 c     4 = lattce_meam
       else if (which.eq.4) then
+        call meam_checkindex(2,maxelt,nindex,index,errorflag)
+        if (errorflag.ne.0) return
         if (value.eq.0) then
           lattce_meam(index(1),index(2)) = "fcc"
         else if (value.eq.1) then
@@ -86,24 +116,34 @@ c     4 = lattce_meam
 
 c     5 = attrac_meam
       else if (which.eq.5) then
+        call meam_checkindex(2,maxelt,nindex,index,errorflag)
+        if (errorflag.ne.0) return
         attrac_meam(index(1),index(2)) = value
 
 c     6 = repuls_meam
       else if (which.eq.6) then
+        call meam_checkindex(2,maxelt,nindex,index,errorflag)
+        if (errorflag.ne.0) return
         repuls_meam(index(1),index(2)) = value
 
 c     7 = nn2_meam
       else if (which.eq.7) then
+        call meam_checkindex(2,maxelt,nindex,index,errorflag)
+        if (errorflag.ne.0) return
         i1 = min(index(1),index(2))
         i2 = max(index(1),index(2))
         nn2_meam(i1,i2) = value
 
 c     8 = Cmin_meam
       else if (which.eq.8) then
+        call meam_checkindex(3,maxelt,nindex,index,errorflag)
+        if (errorflag.ne.0) return
         Cmin_meam(index(1),index(2),index(3)) = value
 
 c     9 = Cmax_meam
       else if (which.eq.9) then
+        call meam_checkindex(3,maxelt,nindex,index,errorflag)
+        if (errorflag.ne.0) return
         Cmax_meam(index(1),index(2),index(3)) = value
 
 c     10 = rc_meam
@@ -124,6 +164,8 @@ c     13 = gsmooth
 
 c     14 = re_meam
       else if (which.eq.14) then
+        call meam_checkindex(2,maxelt,nindex,index,errorflag)
+        if (errorflag.ne.0) return
         re_meam(index(1),index(2)) = value
 
 c     15 = ialloy
@@ -140,6 +182,8 @@ c     17 = erose_form
 
 c     18 = zbl_meam
       else if (which.eq.18) then
+        call meam_checkindex(2,maxelt,nindex,index,errorflag)
+        if (errorflag.ne.0) return
         i1 = min(index(1),index(2))
         i2 = max(index(1),index(2))
         zbl_meam(i1,i2) = value

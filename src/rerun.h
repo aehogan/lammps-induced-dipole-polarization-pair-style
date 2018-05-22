@@ -1,4 +1,4 @@
-/* ----------------------------------------------------------------------
+/* -*- c++ -*- ----------------------------------------------------------
    LAMMPS - Large-scale Atomic/Molecular Massively Parallel Simulator
    http://lammps.sandia.gov, Sandia National Laboratories
    Steve Plimpton, sjplimp@sandia.gov
@@ -37,18 +37,22 @@ class Rerun : protected Pointers {
 
 /* ERROR/WARNING messages:
 
+E: Rerun command before simulation box is defined
+
+The rerun command cannot be used before a read_data, read_restart, or
+create_box command.
+
 E: Illegal ... command
 
 Self-explanatory.  Check the input script syntax and compare to the
 documentation for the command.  You can use -echo screen as a
 command-line option when running LAMMPS to see the offending line.
 
-E: Rerun command before simulation box is defined
-
-The rerun command cannot be used before a read_data, read_restart, or
-create_box command.
-
 E: Rerun dump file does not contain requested snapshot
+
+Self-explanatory.
+
+E: Read rerun dump file timestep > specified stop
 
 Self-explanatory.
 

@@ -1,4 +1,4 @@
-/* ----------------------------------------------------------------------
+/* -*- c++ -*- ----------------------------------------------------------
    LAMMPS - Large-scale Atomic/Molecular Massively Parallel Simulator
    http://lammps.sandia.gov, Sandia National Laboratories
    Steve Plimpton, sjplimp@sandia.gov
@@ -34,7 +34,9 @@ class MinFire : public Min {
   int iterate(int);
 
  private:
-  double dt;
+  double dt,dtmax;
+  double alpha;
+  bigint last_negative;
 };
 
 }

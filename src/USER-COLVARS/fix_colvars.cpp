@@ -1,3 +1,12 @@
+// -*- c++ -*-
+
+// This file is part of the Collective Variables module (Colvars).
+// The original version of Colvars and its updates are located at:
+// https://github.com/colvars/colvars
+// Please update all Colvars source files before making any changes.
+// If you wish to distribute your changes, please submit them to the
+// Colvars repository at GitHub.
+
 /* ----------------------------------------------------------------------
    LAMMPS - Large-scale Atomic/Molecular Massively Parallel Simulator
    http://lammps.sandia.gov, Sandia National Laboratories
@@ -10,15 +19,15 @@
 
    See the README file in the top-level LAMMPS directory.
 ------------------------------------------------------------------------- */
+
 /* ----------------------------------------------------------------------
-   Contributing author:  Axel Kohlmeyer (TempleU)
+   Contributing author:  Axel Kohlmeyer (Temple U)
 ------------------------------------------------------------------------- */
 
 #include <math.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-
 #include <errno.h>
 
 #include "fix_colvars.h"
@@ -29,10 +38,24 @@
 #include "group.h"
 #include "memory.h"
 #include "modify.h"
+#include "random_park.h"
 #include "respa.h"
+#include "universe.h"
 #include "update.h"
+#include "citeme.h"
 
 #include "colvarproxy_lammps.h"
+
+static const char colvars_pub[] =
+  "fix colvars command:\n\n"
+  "@Article{fiorin13,\n"
+  " author =  {G.~Fiorin and M.{\\,}L.~Klein and J.~H{\\'e}nin},\n"
+  " title =   {Using collective variables to drive molecular"
+  " dynamics simulations},\n"
+  " journal = {Mol.~Phys.},\n"
+  " year =    2013,\n"
+  " note =    {doi: 10.1080/00268976.2013.813594}\n"
+  "}\n\n";
 
 /* re-usable integer hash table code with static linkage. */
 
@@ -63,8 +86,6 @@ static int inthash_lookup(void *tptr, int key);
 static int inthash_insert(inthash_t *tptr, int key, int data);
 /* delete the hash table */
 static void inthash_destroy(inthash_t *tptr);
-/* adapted sort for in-place sorting of map indices. */
-static void id_sort(int *idmap, int left, int right);
 
 /************************************************************************
  * integer hash code:
@@ -227,44 +248,6 @@ void inthash_destroy(inthash_t *tptr) {
   }
 }
 
-/************************************************************************
- * integer list sort code:
- ************************************************************************/
-
-/* sort for integer map. initial call  id_sort(idmap, 0, natoms - 1); */
-static void id_sort(int *idmap, int left, int right)
-{
-  int pivot, l_hold, r_hold;
-
-  l_hold = left;
-  r_hold = right;
-  pivot = idmap[left];
-
-  while (left < right) {
-    while ((idmap[right] >= pivot) && (left < right))
-      right--;
-    if (left != right) {
-      idmap[left] = idmap[right];
-      left++;
-    }
-    while ((idmap[left] <= pivot) && (left < right))
-      left++;
-    if (left != right) {
-      idmap[right] = idmap[left];
-      right--;
-    }
-  }
-  idmap[left] = pivot;
-  pivot = left;
-  left = l_hold;
-  right = r_hold;
-
-  if (left < pivot)
-    id_sort(idmap, left, pivot-1);
-  if (right > pivot)
-    id_sort(idmap, pivot+1, right);
-}
-
 /***************************************************************/
 
 using namespace LAMMPS_NS;
@@ -286,7 +269,6 @@ int FixColvars::instances=0;
   seed    <integer>         (seed for RNG, defaults to '1966')
   tstat   <fix label>       (label of thermostatting fix)
 
- TODO: add (optional) arguments for RNG seed, temperature compute
  ***************************************************************/
 FixColvars::FixColvars(LAMMPS *lmp, int narg, char **arg) :
   Fix(lmp, narg, arg)
@@ -294,25 +276,22 @@ FixColvars::FixColvars(LAMMPS *lmp, int narg, char **arg) :
   if (narg < 4)
     error->all(FLERR,"Illegal fix colvars command: too few arguments");
 
-  if (atom->tag_enable == 0)
-    error->all(FLERR,"Cannot use fix colvars without atom IDs defined");
-
-  if (atom->rmass_flag)
-    error->all(FLERR,"Cannot use fix colvars for atoms with rmass attribute");
-
-  if (instances)
-    error->all(FLERR,"Only one fix colvars can be active at a time");
+  if (instances > 0)
+    error->all(FLERR,"Only one colvars fix can be active at a time");
   ++instances;
 
   scalar_flag = 1;
   global_freq = 1;
   nevery = 1;
   extscalar = 1;
+  restart_global = 1;
 
   me = comm->me;
+  root2root = MPI_COMM_NULL;
 
   conf_file = strdup(arg[3]);
   rng_seed = 1966;
+  unwrap_flag = 1;
 
   inp_name = NULL;
   out_name = NULL;
@@ -320,13 +299,25 @@ FixColvars::FixColvars(LAMMPS *lmp, int narg, char **arg) :
 
   /* parse optional arguments */
   int argsdone = 4;
-  while (argsdone+1 < narg) {
+  while (argsdone < narg) {
+    // we have keyword/value pairs. check if value is missing
+    if (argsdone+1 == narg)
+      error->all(FLERR,"Missing argument to keyword");
+
     if (0 == strcmp(arg[argsdone], "input")) {
       inp_name = strdup(arg[argsdone+1]);
     } else if (0 == strcmp(arg[argsdone], "output")) {
       out_name = strdup(arg[argsdone+1]);
     } else if (0 == strcmp(arg[argsdone], "seed")) {
-      rng_seed = atoi(arg[argsdone+1]);
+      rng_seed = force->inumeric(FLERR,arg[argsdone+1]);
+    } else if (0 == strcmp(arg[argsdone], "unwrap")) {
+      if (0 == strcmp(arg[argsdone+1], "yes")) {
+        unwrap_flag = 1;
+      } else if (0 == strcmp(arg[argsdone+1], "no")) {
+        unwrap_flag = 0;
+      } else {
+        error->all(FLERR,"Incorrect fix colvars unwrap flag");
+      }
     } else if (0 == strcmp(arg[argsdone], "tstat")) {
       tmp_name = strdup(arg[argsdone+1]);
     } else {
@@ -341,8 +332,8 @@ FixColvars::FixColvars(LAMMPS *lmp, int narg, char **arg) :
   tstat_id = -1;
   energy = 0.0;
   nlevels_respa = 0;
+  init_flag = 0;
   num_coords = 0;
-  coords = forces = oforce = NULL;
   comm_buf = NULL;
   force_buf = NULL;
   proxy = NULL;
@@ -350,6 +341,8 @@ FixColvars::FixColvars(LAMMPS *lmp, int narg, char **arg) :
 
   /* storage required to communicate a single coordinate or force. */
   size_one = sizeof(struct commdata);
+
+  if (lmp->citeme) lmp->citeme->add(colvars_pub);
 }
 
 /*********************************
@@ -361,15 +354,7 @@ FixColvars::~FixColvars()
   memory->sfree(inp_name);
   memory->sfree(out_name);
   memory->sfree(tmp_name);
-  deallocate();
-  --instances;
-}
-
-/* ---------------------------------------------------------------------- */
-
-void FixColvars::deallocate()
-{
-  memory->destroy(comm_buf);
+  memory->sfree(comm_buf);
 
   if (proxy) {
     delete proxy;
@@ -378,21 +363,10 @@ void FixColvars::deallocate()
     delete hashtable;
   }
 
-  proxy = NULL;
-  idmap = NULL;
-  coords = NULL;
-  forces = NULL;
-  oforce = NULL;
-  comm_buf = NULL;
-}
+  if (root2root != MPI_COMM_NULL)
+    MPI_Comm_free(&root2root);
 
-/* ---------------------------------------------------------------------- */
-
-void FixColvars::post_run()
-{
-  deallocate();
-  memory->sfree(inp_name);
-  inp_name = strdup(out_name);
+  --instances;
 }
 
 /* ---------------------------------------------------------------------- */
@@ -404,79 +378,57 @@ int FixColvars::setmask()
   mask |= MIN_POST_FORCE;
   mask |= POST_FORCE;
   mask |= POST_FORCE_RESPA;
-  mask |= POST_RUN;
   mask |= END_OF_STEP;
+  mask |= POST_RUN;
   return mask;
 }
 
 /* ---------------------------------------------------------------------- */
 
-// initial setup of colvars run.
+// initial checks for colvars run.
 
 void FixColvars::init()
 {
+  if (atom->tag_enable == 0)
+    error->all(FLERR,"Cannot use fix colvars without atom IDs");
+
+  if (atom->map_style == 0)
+    error->all(FLERR,"Fix colvars requires an atom map, see atom_modify");
+
+  if ((me == 0) && (update->whichflag == 2))
+    error->warning(FLERR,"Using fix colvars with minimization");
+
   if (strstr(update->integrate_style,"respa"))
     nlevels_respa = ((Respa *) update->integrate)->nlevels;
+}
 
 
-  int i,nme,tmp,ndata;
+/* ---------------------------------------------------------------------- */
 
-  MPI_Status status;
-  MPI_Request request;
+void FixColvars::one_time_init()
+{
+  int i,tmp;
 
-  // collect a list of atom type by atom id for the entire system.
-  // the colvar module requires this information to set masses. :-(
+  if (init_flag) return;
+  init_flag = 1;
 
-  int *typemap,*type_buf;
-  int nlocal_max,tag_max,max;
-  const int * const tag  = atom->tag;
-  const int * const type = atom->type;
-  int nlocal = atom->nlocal;
-
-  max=0;
-  for (i = 0; i < nlocal; i++) max = MAX(max,tag[i]);
-  MPI_Allreduce(&max,&tag_max,1,MPI_INT,MPI_MAX,world);
-  MPI_Allreduce(&nlocal,&nlocal_max,1,MPI_INT,MPI_MAX,world);
-
-  if (me == 0) {
-    typemap = new int[tag_max+1];
-    memset(typemap,0,sizeof(int)*tag_max);
-  }
-  type_buf = new int[2*nlocal_max];
-
-  if (me == 0) {
-    for (i=0; i<nlocal; ++i)
-      typemap[tag[i]] = type[i];
-
-    // loop over procs to receive and apply remote data
-
-    for (i=1; i < comm->nprocs; ++i) {
-      MPI_Irecv(type_buf, 2*nlocal_max, MPI_INT, i, 0, world, &request);
-      MPI_Send(&tmp, 0, MPI_INT, i, 0, world);
-      MPI_Wait(&request, &status);
-      MPI_Get_count(&status, MPI_INT, &ndata);
-
-      for (int k=0; k<ndata; k+=2)
-        typemap[type_buf[k]] = type_buf[k+1];
-    }
-  } else { // me != 0
-
-    // copy tag/type data into communication buffer
-
-    nme = 0;
-    for (i=0; i<nlocal; ++i) {
-      type_buf[nme] = tag[i];
-      type_buf[nme+1] = type[i];
-      nme +=2;
-    }
-    /* blocking receive to wait until it is our turn to send data. */
-    MPI_Recv(&tmp, 0, MPI_INT, 0, 0, world, &status);
-    MPI_Rsend(type_buf, nme, MPI_INT, 0, 0, world);
+  if (universe->nworlds > 1) {
+    // create inter root communicator
+    int color = 1;
+    if (me == 0) color = 0;
+    MPI_Comm_split(universe->uworld,color,universe->iworld,&root2root);
   }
 
-  // now create and initialize the colvar proxy
+  // create and initialize the colvars proxy
 
   if (me == 0) {
+    if (screen) fputs("colvars: Creating proxy instance\n",screen);
+    if (logfile) fputs("colvars: Creating proxy instance\n",logfile);
+
+#ifdef LAMMPS_BIGBIG
+    if (screen) fputs("colvars: cannot handle atom ids > 2147483647\n",screen);
+    if (logfile) fputs("colvars: cannot handle atom ids > 2147483647\n",logfile);
+#endif
 
     if (inp_name) {
       if (strcmp(inp_name,"NULL") == 0) {
@@ -485,11 +437,12 @@ void FixColvars::init()
       }
     }
 
+    // try to determine thermostat target temperature
     double t_target = 0.0;
     if (tmp_name) {
-      if (strcmp(tmp_name,"NULL") == 0)
+      if (strcmp(tmp_name,"NULL") == 0) {
         tstat_id = -1;
-      else {
+      } else {
         tstat_id = modify->find_fix(tmp_name);
         if (tstat_id < 0) error->one(FLERR,"Could not find tstat fix ID");
         double *tt = (double*)modify->fix[tstat_id]->extract("t_target",tmp);
@@ -497,12 +450,11 @@ void FixColvars::init()
       }
     }
 
-    proxy = new colvarproxy_lammps(lmp,conf_file,inp_name,out_name,
-                                   rng_seed,t_target,typemap);
-    coords = proxy->get_coords();
-    forces = proxy->get_forces();
-    oforce = proxy->get_oforce();
-    num_coords = coords->size();
+    proxy = new colvarproxy_lammps(lmp,inp_name,out_name,
+                                   rng_seed,t_target,root2root);
+    proxy->init(conf_file);
+
+    num_coords = (proxy->modify_atom_positions()->size());
   }
 
   // send the list of all colvar atom IDs to all nodes.
@@ -513,8 +465,7 @@ void FixColvars::init()
   memory->create(force_buf,3*num_coords,"colvars:force_buf");
 
   if (me == 0) {
-    std::vector<int> *tags_list = proxy->get_tags();
-    std::vector<int> &tl = *tags_list;
+    std::vector<int> &tl = *(proxy->modify_atom_ids());
     inthash_t *hashtable=new inthash_t;
     inthash_init(hashtable, num_coords);
     idmap = (void *)hashtable;
@@ -524,12 +475,27 @@ void FixColvars::init()
       inthash_insert(hashtable, tl[i], i);
     }
   }
-  MPI_Bcast(taglist, num_coords, MPI_INT, 0, world);
+  MPI_Bcast(taglist, num_coords, MPI_LMP_TAGINT, 0, world);
+}
+
+/* ---------------------------------------------------------------------- */
+
+void FixColvars::setup(int vflag)
+{
+  const tagint * const tag  = atom->tag;
+  const int * const type = atom->type;
+  int i,nme,tmp,ndata;
+  int nlocal = atom->nlocal;
+
+  MPI_Status status;
+  MPI_Request request;
+
+  one_time_init();
 
   // determine size of comm buffer
   nme=0;
   for (i=0; i < num_coords; ++i) {
-    const int k = atom->map(taglist[i]);
+    const tagint k = atom->map(taglist[i]);
     if ((k >= 0) && (k < nlocal))
       ++nme;
   }
@@ -538,23 +504,54 @@ void FixColvars::init()
   memory->create(comm_buf,nmax,"colvars:comm_buf");
 
   const double * const * const x = atom->x;
+  const imageint * const image = atom->image;
+
+  const double xprd = domain->xprd;
+  const double yprd = domain->yprd;
+  const double zprd = domain->zprd;
+  const double xy = domain->xy;
+  const double xz = domain->xz;
+  const double yz = domain->yz;
 
   if (me == 0) {
 
-    std::vector<struct commdata> &cd = *coords;
-    std::vector<struct commdata> &of = *oforce;
+    std::vector<int>           &id = *(proxy->modify_atom_ids());
+    std::vector<int>           &tp = *(proxy->modify_atom_types());
+    std::vector<cvm::atom_pos> &cd = *(proxy->modify_atom_positions());
+    std::vector<cvm::rvector>  &of = *(proxy->modify_atom_total_forces());
+    std::vector<cvm::real>     &m  = *(proxy->modify_atom_masses());
+    std::vector<cvm::real>     &q  = *(proxy->modify_atom_charges());
 
     // store coordinate data in holding array, clear old forces
 
+
     for (i=0; i<num_coords; ++i) {
-      const int k = atom->map(taglist[i]);
+      const tagint k = atom->map(taglist[i]);
       if ((k >= 0) && (k < nlocal)) {
-        of[i].tag  = cd[i].tag  = tag[k];
-        of[i].type = cd[i].type = type[k];
-        cd[i].x = x[k][0];
-        cd[i].y = x[k][1];
-        cd[i].z = x[k][2];
+
         of[i].x = of[i].y = of[i].z = 0.0;
+
+        if (unwrap_flag) {
+          const int ix = (image[k] & IMGMASK) - IMGMAX;
+          const int iy = (image[k] >> IMGBITS & IMGMASK) - IMGMAX;
+          const int iz = (image[k] >> IMG2BITS) - IMGMAX;
+
+          cd[i].x = x[k][0] + ix * xprd + iy * xy + iz * xz;
+          cd[i].y = x[k][1] + iy * yprd + iz * yz;
+          cd[i].z = x[k][2] + iz * zprd;
+        } else {
+          cd[i].x = x[k][0];
+          cd[i].y = x[k][1];
+          cd[i].z = x[k][2];
+        }
+        if (atom->rmass_flag) {
+          m[i] = atom->rmass[k];
+        } else {
+          m[i] = atom->mass[type[k]];
+        }
+        if (atom->q_flag) {
+          q[i] = atom->q[k];
+        }
       }
     }
 
@@ -569,13 +566,20 @@ void FixColvars::init()
       ndata /= size_one;
 
       for (int k=0; k<ndata; ++k) {
+
         const int j = inthash_lookup(idmap, comm_buf[k].tag);
+
         if (j != HASH_FAIL) {
-          of[j].tag  = cd[j].tag  = comm_buf[k].tag;
-          of[j].type = cd[j].type = comm_buf[k].type;
+
+          tp[j] = comm_buf[k].type;
+
           cd[j].x = comm_buf[k].x;
           cd[j].y = comm_buf[k].y;
           cd[j].z = comm_buf[k].z;
+
+          m[j] = comm_buf[k].m;
+          q[j] = comm_buf[k].q;
+
           of[j].x = of[j].y = of[j].z = 0.0;
         }
       }
@@ -586,34 +590,56 @@ void FixColvars::init()
 
     nme = 0;
     for (i=0; i<num_coords; ++i) {
-      const int k = atom->map(taglist[i]);
+      const tagint k = atom->map(taglist[i]);
       if ((k >= 0) && (k < nlocal)) {
+
         comm_buf[nme].tag  = tag[k];
         comm_buf[nme].type = type[k];
-        comm_buf[nme].x    = x[k][0];
-        comm_buf[nme].y    = x[k][1];
-        comm_buf[nme].z    = x[k][2];
+
+        if (unwrap_flag) {
+          const int ix = (image[k] & IMGMASK) - IMGMAX;
+          const int iy = (image[k] >> IMGBITS & IMGMASK) - IMGMAX;
+          const int iz = (image[k] >> IMG2BITS) - IMGMAX;
+
+          comm_buf[nme].x = x[k][0] + ix * xprd + iy * xy + iz * xz;
+          comm_buf[nme].y = x[k][1] + iy * yprd + iz * yz;
+          comm_buf[nme].z = x[k][2] + iz * zprd;
+        } else {
+          comm_buf[nme].x = x[k][0];
+          comm_buf[nme].y = x[k][1];
+          comm_buf[nme].z = x[k][2];
+        }
+
+        if (atom->rmass_flag) {
+          comm_buf[nme].m = atom->rmass[k];
+        } else {
+          comm_buf[nme].m = atom->mass[type[k]];
+        }
+
+        if (atom->q_flag) {
+          comm_buf[nme].q = atom->q[k];
+        }
+
         ++nme;
       }
     }
     /* blocking receive to wait until it is our turn to send data. */
-    MPI_Recv(&tmp, 0, MPI_INT, 0, 0, world, &status);
+    MPI_Recv(&tmp, 0, MPI_INT, 0, 0, world, MPI_STATUS_IGNORE);
     MPI_Rsend(comm_buf, nme*size_one, MPI_BYTE, 0, 0, world);
   }
 
-  // clear temporary storage
-  if (me == 0) delete typemap;
-  delete type_buf;
-}
+  // run pre-run setup in colvarproxy
+  if (me == 0)
+    proxy->setup();
 
-/* ---------------------------------------------------------------------- */
-
-void FixColvars::setup(int vflag)
-{
-  if (strstr(update->integrate_style,"verlet"))
+  // initialize forces
+  if (strstr(update->integrate_style,"verlet") || (update->whichflag == 2))
     post_force(vflag);
-  else
-    post_force_respa(vflag,0,0);
+  else {
+    ((Respa *) update->integrate)->copy_flevel_f(nlevels_respa-1);
+    post_force_respa(vflag,nlevels_respa-1,0);
+    ((Respa *) update->integrate)->copy_f_flevel(nlevels_respa-1);
+  }
 }
 
 /* ---------------------------------------------------------------------- */
@@ -624,7 +650,7 @@ void FixColvars::post_force(int vflag)
   // some housekeeping: update status of the proxy as needed.
   if (me == 0) {
     if (proxy->want_exit())
-      error->one(FLERR,"Run halted on request from colvars module.\n");
+      error->one(FLERR,"Run aborted on request from colvars module.\n");
 
     if (tstat_id < 0) {
       proxy->set_temperature(0.0);
@@ -640,15 +666,23 @@ void FixColvars::post_force(int vflag)
     }
   }
 
-  const int * const tag = atom->tag;
+  const tagint * const tag = atom->tag;
   const double * const * const x = atom->x;
   double * const * const f = atom->f;
+  const imageint * const image = atom->image;
+
+  const double xprd = domain->xprd;
+  const double yprd = domain->yprd;
+  const double zprd = domain->zprd;
+  const double xy = domain->xy;
+  const double xz = domain->xz;
+  const double yz = domain->yz;
   const int nlocal = atom->nlocal;
 
   /* check and potentially grow local communication buffers. */
   int i,nmax_new,nme=0;
   for (i=0; i < num_coords; ++i) {
-    const int k = atom->map(taglist[i]);
+    const tagint k = atom->map(taglist[i]);
     if ((k >= 0) && (k < nlocal))
       ++nme;
   }
@@ -664,16 +698,28 @@ void FixColvars::post_force(int vflag)
   int tmp, ndata;
 
   if (me == 0) {
-    std::vector<struct commdata> &cd = *coords;
+
+    std::vector<cvm::atom_pos> &cd = *(proxy->modify_atom_positions());
 
     // store coordinate data
 
     for (i=0; i<num_coords; ++i) {
-      const int k = atom->map(taglist[i]);
+      const tagint k = atom->map(taglist[i]);
       if ((k >= 0) && (k < nlocal)) {
-        cd[i].x = x[k][0];
-        cd[i].y = x[k][1];
-        cd[i].z = x[k][2];
+
+        if (unwrap_flag) {
+          const int ix = (image[k] & IMGMASK) - IMGMAX;
+          const int iy = (image[k] >> IMGBITS & IMGMASK) - IMGMAX;
+          const int iz = (image[k] >> IMG2BITS) - IMGMAX;
+
+          cd[i].x = x[k][0] + ix * xprd + iy * xy + iz * xz;
+          cd[i].y = x[k][1] + iy * yprd + iz * yz;
+          cd[i].z = x[k][2] + iz * zprd;
+        } else {
+          cd[i].x = x[k][0];
+          cd[i].y = x[k][1];
+          cd[i].z = x[k][2];
+        }
       }
     }
 
@@ -700,17 +746,29 @@ void FixColvars::post_force(int vflag)
     /* copy coordinate data into communication buffer */
     nme = 0;
     for (i=0; i<num_coords; ++i) {
-      const int k = atom->map(taglist[i]);
+      const tagint k = atom->map(taglist[i]);
       if ((k >= 0) && (k < nlocal)) {
         comm_buf[nme].tag = tag[k];
-        comm_buf[nme].x = x[k][0];
-        comm_buf[nme].y = x[k][1];
-        comm_buf[nme].z = x[k][2];
+
+        if (unwrap_flag) {
+          const int ix = (image[k] & IMGMASK) - IMGMAX;
+          const int iy = (image[k] >> IMGBITS & IMGMASK) - IMGMAX;
+          const int iz = (image[k] >> IMG2BITS) - IMGMAX;
+
+          comm_buf[nme].x = x[k][0] + ix * xprd + iy * xy + iz * xz;
+          comm_buf[nme].y = x[k][1] + iy * yprd + iz * yz;
+          comm_buf[nme].z = x[k][2] + iz * zprd;
+        } else {
+          comm_buf[nme].x = x[k][0];
+          comm_buf[nme].y = x[k][1];
+          comm_buf[nme].z = x[k][2];
+        }
+
         ++nme;
       }
     }
     /* blocking receive to wait until it is our turn to send data. */
-    MPI_Recv(&tmp, 0, MPI_INT, 0, 0, world, &status);
+    MPI_Recv(&tmp, 0, MPI_INT, 0, 0, world, MPI_STATUS_IGNORE);
     MPI_Rsend(comm_buf, nme*size_one, MPI_BYTE, 0, 0, world);
   }
 
@@ -718,7 +776,7 @@ void FixColvars::post_force(int vflag)
   // call our workhorse and retrieve additional information.
   if (me == 0) {
     energy = proxy->compute();
-    store_forces = proxy->need_system_forces();
+    store_forces = proxy->total_forces_enabled();
   }
   ////////////////////////////////////////////////////////////////////////
 
@@ -729,7 +787,9 @@ void FixColvars::post_force(int vflag)
   // broadcast and apply biasing forces
 
   if (me == 0) {
-    std::vector<struct commdata> &fo = *forces;
+
+    std::vector<cvm::rvector> &fo = *(proxy->modify_atom_new_colvar_forces());
+
     double *fbuf = force_buf;
     for (int j=0; j < num_coords; ++j) {
       *fbuf++ = fo[j].x;
@@ -740,7 +800,7 @@ void FixColvars::post_force(int vflag)
   MPI_Bcast(force_buf, 3*num_coords, MPI_DOUBLE, 0, world);
 
   for (int i=0; i < num_coords; ++i) {
-    const int k = atom->map(taglist[i]);
+    const tagint k = atom->map(taglist[i]);
     if ((k >= 0) && (k < nlocal)) {
       f[k][0] += force_buf[3*i+0];
       f[k][1] += force_buf[3*i+1];
@@ -768,14 +828,14 @@ void FixColvars::end_of_step()
 {
   if (store_forces) {
 
-    const int * const tag = atom->tag;
+    const tagint * const tag = atom->tag;
     double * const * const f = atom->f;
     const int nlocal = atom->nlocal;
 
     /* check and potentially grow local communication buffers. */
     int i,nmax_new,nme=0;
     for (i=0; i < num_coords; ++i) {
-      const int k = atom->map(taglist[i]);
+      const tagint k = atom->map(taglist[i]);
       if ((k >= 0) && (k < nlocal))
         ++nme;
     }
@@ -793,10 +853,10 @@ void FixColvars::end_of_step()
     if (me == 0) {
 
       // store old force data
-      std::vector<struct commdata> &of = *oforce;
+      std::vector<cvm::rvector> &of = *(proxy->modify_atom_total_forces());
 
       for (i=0; i<num_coords; ++i) {
-        const int k = atom->map(taglist[i]);
+        const tagint k = atom->map(taglist[i]);
         if ((k >= 0) && (k < nlocal)) {
 
           const int j = inthash_lookup(idmap, tag[k]);
@@ -831,7 +891,7 @@ void FixColvars::end_of_step()
       /* copy total force data into communication buffer */
       nme = 0;
       for (i=0; i<num_coords; ++i) {
-        const int k = atom->map(taglist[i]);
+        const tagint k = atom->map(taglist[i]);
         if ((k >= 0) && (k < nlocal)) {
           comm_buf[nme].tag  = tag[k];
           comm_buf[nme].x    = f[k][0];
@@ -841,9 +901,45 @@ void FixColvars::end_of_step()
         }
       }
       /* blocking receive to wait until it is our turn to send data. */
-      MPI_Recv(&tmp, 0, MPI_INT, 0, 0, world, &status);
+      MPI_Recv(&tmp, 0, MPI_INT, 0, 0, world, MPI_STATUS_IGNORE);
       MPI_Rsend(comm_buf, nme*size_one, MPI_BYTE, 0, 0, world);
     }
+  }
+}
+
+/* ---------------------------------------------------------------------- */
+
+void FixColvars::write_restart(FILE *fp)
+{
+  if (me == 0) {
+    std::string rest_text("");
+    proxy->serialize_status(rest_text);
+    // TODO call write_output_files()
+    const char *cvm_state = rest_text.c_str();
+    int len = strlen(cvm_state) + 1; // need to include terminating NULL byte.
+    fwrite(&len,sizeof(int),1,fp);
+    fwrite(cvm_state,1,len,fp);
+  }
+}
+
+/* ---------------------------------------------------------------------- */
+
+void FixColvars::restart(char *buf)
+{
+  one_time_init();
+
+  if (me == 0) {
+    std::string rest_text(buf);
+    proxy->deserialize_status(rest_text);
+  }
+}
+
+/* ---------------------------------------------------------------------- */
+
+void FixColvars::post_run()
+{
+  if (me == 0) {
+    proxy->write_output_files();
   }
 }
 

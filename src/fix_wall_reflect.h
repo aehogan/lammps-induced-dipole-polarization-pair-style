@@ -1,4 +1,4 @@
-/* ----------------------------------------------------------------------
+/* -*- c++ -*- ----------------------------------------------------------
    LAMMPS - Large-scale Atomic/Molecular Massively Parallel Simulator
    http://lammps.sandia.gov, Sandia National Laboratories
    Steve Plimpton, sjplimp@sandia.gov
@@ -66,11 +66,6 @@ Self-explanatory.
 E: Cannot use fix wall/reflect zlo/zhi for a 2d simulation
 
 Self-explanatory.
-
-E: Use of fix wall with undefined lattice
-
-Must use lattice command with fix wall command if units option is set
-to lattice.
 
 E: Variable name for fix wall/reflect does not exist
 

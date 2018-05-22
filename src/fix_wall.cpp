@@ -11,9 +11,9 @@
    See the README file in the top-level LAMMPS directory.
 ------------------------------------------------------------------------- */
 
-#include "math.h"
-#include "stdlib.h"
-#include "string.h"
+#include <math.h>
+#include <stdlib.h>
+#include <string.h>
 #include "fix_wall.h"
 #include "atom.h"
 #include "input.h"
@@ -24,27 +24,31 @@
 #include "modify.h"
 #include "respa.h"
 #include "error.h"
+#include "force.h"
 
 using namespace LAMMPS_NS;
 using namespace FixConst;
 
-enum{XLO,XHI,YLO,YHI,ZLO,ZHI};
-enum{EDGE,CONSTANT,VARIABLE};
+enum{XLO=0,XHI=1,YLO=2,YHI=3,ZLO=4,ZHI=5};
+enum{NONE=0,EDGE,CONSTANT,VARIABLE};
 
 /* ---------------------------------------------------------------------- */
 
 FixWall::FixWall(LAMMPS *lmp, int narg, char **arg) :
-  Fix(lmp, narg, arg)
+  Fix(lmp, narg, arg),
+  nwall(0)
 {
   scalar_flag = 1;
   vector_flag = 1;
   global_freq = 1;
   extscalar = 1;
   extvector = 1;
+  respa_level_support = 1;
+  ilevel_respa = 0;
+  virial_flag = 1;
 
   // parse args
 
-  nwall = 0;
   int scaleflag = 1;
   fldflag = 0;
   int pbcflag = 0;
@@ -66,7 +70,7 @@ FixWall::FixWall(LAMMPS *lmp, int narg, char **arg) :
       else if (strcmp(arg[iarg],"zlo") == 0) newwall = ZLO;
       else if (strcmp(arg[iarg],"zhi") == 0) newwall = ZHI;
 
-      for (int m = 0; m < nwall; m++)
+      for (int m = 0; (m < nwall) && (m < 6); m++)
         if (newwall == wallwhich[m])
           error->all(FLERR,"Wall defined twice in fix wall command");
 
@@ -84,7 +88,7 @@ FixWall::FixWall(LAMMPS *lmp, int narg, char **arg) :
         strcpy(xstr[nwall],&arg[iarg+1][2]);
       } else {
         xstyle[nwall] = CONSTANT;
-        coord0[nwall] = atof(arg[iarg+1]);
+        coord0[nwall] = force->numeric(FLERR,arg[iarg+1]);
       }
 
       if (strstr(arg[iarg+2],"v_") == arg[iarg+2]) {
@@ -93,7 +97,7 @@ FixWall::FixWall(LAMMPS *lmp, int narg, char **arg) :
         strcpy(estr[nwall],&arg[iarg+2][2]);
         estyle[nwall] = VARIABLE;
       } else {
-        epsilon[nwall] = atof(arg[iarg+2]);
+        epsilon[nwall] = force->numeric(FLERR,arg[iarg+2]);
         estyle[nwall] = CONSTANT;
       }
 
@@ -103,11 +107,11 @@ FixWall::FixWall(LAMMPS *lmp, int narg, char **arg) :
         strcpy(sstr[nwall],&arg[iarg+3][2]);
         sstyle[nwall] = VARIABLE;
       } else {
-        sigma[nwall] = atof(arg[iarg+3]);
+        sigma[nwall] = force->numeric(FLERR,arg[iarg+3]);
         sstyle[nwall] = CONSTANT;
       }
 
-      cutoff[nwall] = atof(arg[iarg+4]);
+      cutoff[nwall] = force->numeric(FLERR,arg[iarg+4]);
       nwall++;
       iarg += 5;
 
@@ -163,9 +167,6 @@ FixWall::FixWall(LAMMPS *lmp, int narg, char **arg) :
     if (xstyle[m] != EDGE) flag = 1;
 
   if (flag) {
-    if (scaleflag && domain->lattice == NULL)
-      error->all(FLERR,"Use of fix wall with undefined lattice");
-
     if (scaleflag) {
       xscale = domain->lattice->xlattice;
       yscale = domain->lattice->ylattice;
@@ -182,13 +183,13 @@ FixWall::FixWall(LAMMPS *lmp, int narg, char **arg) :
   }
 
   // set xflag if any wall positions are variable
-  // set vflag if any wall positions or parameters are variable
+  // set varflag if any wall positions or parameters are variable
   // set wstyle to VARIABLE if either epsilon or sigma is a variable
 
-  vflag = xflag = 0;
+  varflag = xflag = 0;
   for (int m = 0; m < nwall; m++) {
     if (xstyle[m] == VARIABLE) xflag = 1;
-    if (xflag || estyle[m] == VARIABLE || sstyle[m] == VARIABLE) vflag = 1;
+    if (xflag || estyle[m] == VARIABLE || sstyle[m] == VARIABLE) varflag = 1;
     if (estyle[m] == VARIABLE || sstyle[m] == VARIABLE) wstyle[m] = VARIABLE;
     else wstyle[m] = CONSTANT;
   }
@@ -201,6 +202,8 @@ FixWall::FixWall(LAMMPS *lmp, int narg, char **arg) :
 
 FixWall::~FixWall()
 {
+  if (copymode) return;
+
   for (int m = 0; m < nwall; m++) {
     delete [] xstr[m];
     delete [] estr[m];
@@ -229,8 +232,6 @@ int FixWall::setmask()
 
 void FixWall::init()
 {
-  dt = update->dt;
-
   for (int m = 0; m < nwall; m++) {
     if (xstyle[m] == VARIABLE) {
       xindex[m] = input->variable->find(xstr[m]);
@@ -259,8 +260,10 @@ void FixWall::init()
 
   for (int m = 0; m < nwall; m++) precompute(m);
 
-  if (strstr(update->integrate_style,"respa"))
-    nlevels_respa = ((Respa *) update->integrate)->nlevels;
+  if (strstr(update->integrate_style,"respa")) {
+    ilevel_respa = ((Respa *) update->integrate)->nlevels-1;
+    if (respa_level >= 0) ilevel_respa = MIN(respa_level,ilevel_respa);
+  }
 }
 
 /* ---------------------------------------------------------------------- */
@@ -270,9 +273,9 @@ void FixWall::setup(int vflag)
   if (strstr(update->integrate_style,"verlet")) {
     if (!fldflag) post_force(vflag);
   } else {
-    ((Respa *) update->integrate)->copy_flevel_f(nlevels_respa-1);
-    post_force_respa(vflag,nlevels_respa-1,0);
-    ((Respa *) update->integrate)->copy_f_flevel(nlevels_respa-1);
+    ((Respa *) update->integrate)->copy_flevel_f(ilevel_respa);
+    post_force_respa(vflag,ilevel_respa,0);
+    ((Respa *) update->integrate)->copy_f_flevel(ilevel_respa);
   }
 }
 
@@ -296,14 +299,19 @@ void FixWall::pre_force(int vflag)
 
 void FixWall::post_force(int vflag)
 {
+
+  // energy and virial setup
+
   eflag = 0;
+  if (vflag) v_setup(vflag);
+  else evflag = 0;
   for (int m = 0; m <= nwall; m++) ewall[m] = 0.0;
 
   // coord = current position of wall
   // evaluate variables if necessary, wrap with clear/add
   // for epsilon/sigma variables need to re-invoke precompute()
 
-  if (vflag) modify->clearstep_compute();
+  if (varflag) modify->clearstep_compute();
 
   double coord;
   for (int m = 0; m < nwall; m++) {
@@ -321,7 +329,7 @@ void FixWall::post_force(int vflag)
       }
       if (sstyle[m] == VARIABLE) {
         sigma[m] = input->variable->compute_equal(sindex[m]);
-        if (sigma[m] < 0.0) 
+        if (sigma[m] < 0.0)
           error->all(FLERR,"Variable evaluation in fix wall gave bad value");
       }
       precompute(m);
@@ -330,14 +338,14 @@ void FixWall::post_force(int vflag)
     wall_particle(m,wallwhich[m],coord);
   }
 
-  if (vflag) modify->addstep_compute(update->ntimestep + 1);
+  if (varflag) modify->addstep_compute(update->ntimestep + 1);
 }
 
 /* ---------------------------------------------------------------------- */
 
 void FixWall::post_force_respa(int vflag, int ilevel, int iloop)
 {
-  if (ilevel == nlevels_respa-1) post_force(vflag);
+  if (ilevel == ilevel_respa) post_force(vflag);
 }
 
 /* ---------------------------------------------------------------------- */

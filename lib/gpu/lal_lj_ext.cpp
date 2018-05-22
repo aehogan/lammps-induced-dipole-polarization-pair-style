@@ -9,7 +9,7 @@
     This file is part of the LAMMPS Accelerator Library (LAMMPS_AL)
  __________________________________________________________________________
 
-    begin                : 
+    begin                :
     email                : brownw@ornl.gov
  ***************************************************************************/
 
@@ -48,13 +48,13 @@ int ljl_gpu_init(const int ntypes, double **cutsq, double **host_lj1,
     message=true;
 
   if (message) {
-    fprintf(screen,"Initializing GPU and compiling on process 0...");
+    fprintf(screen,"Initializing Device and compiling on process 0...");
     fflush(screen);
   }
 
   int init_ok=0;
   if (world_me==0)
-    init_ok=LJLMF.init(ntypes, cutsq, host_lj1, host_lj2, host_lj3, 
+    init_ok=LJLMF.init(ntypes, cutsq, host_lj1, host_lj2, host_lj3,
                        host_lj4, offset, special_lj, inum, nall, 300,
                        maxspecial, cell_size, gpu_split, screen);
 
@@ -65,9 +65,9 @@ int ljl_gpu_init(const int ntypes, double **cutsq, double **host_lj1,
   for (int i=0; i<procs_per_gpu; i++) {
     if (message) {
       if (last_gpu-first_gpu==0)
-        fprintf(screen,"Initializing GPU %d on core %d...",first_gpu,i);
+        fprintf(screen,"Initializing Device %d on core %d...",first_gpu,i);
       else
-        fprintf(screen,"Initializing GPUs %d-%d on core %d...",first_gpu,
+        fprintf(screen,"Initializing Devices %d-%d on core %d...",first_gpu,
                 last_gpu,i);
       fflush(screen);
     }
@@ -77,7 +77,7 @@ int ljl_gpu_init(const int ntypes, double **cutsq, double **host_lj1,
                          cell_size, gpu_split, screen);
 
     LJLMF.device->gpu_barrier();
-    if (message) 
+    if (message)
       fprintf(screen,"Done.\n");
   }
   if (message)
@@ -88,22 +88,43 @@ int ljl_gpu_init(const int ntypes, double **cutsq, double **host_lj1,
   return init_ok;
 }
 
+// ---------------------------------------------------------------------------
+// Copy updated coeffs from host to device
+// ---------------------------------------------------------------------------
+void ljl_gpu_reinit(const int ntypes, double **cutsq, double **host_lj1,
+                    double **host_lj2, double **host_lj3, double **host_lj4,
+                    double **offset) {
+  int world_me=LJLMF.device->world_me();
+  int gpu_rank=LJLMF.device->gpu_rank();
+  int procs_per_gpu=LJLMF.device->procs_per_gpu();
+
+  if (world_me==0)
+    LJLMF.reinit(ntypes, cutsq, host_lj1, host_lj2, host_lj3, host_lj4, offset);
+  LJLMF.device->world_barrier();
+
+  for (int i=0; i<procs_per_gpu; i++) {
+    if (gpu_rank==i && world_me!=0)
+      LJLMF.reinit(ntypes, cutsq, host_lj1, host_lj2, host_lj3, host_lj4, offset);
+    LJLMF.device->gpu_barrier();
+  }
+}
+
 void ljl_gpu_clear() {
   LJLMF.clear();
 }
 
 int ** ljl_gpu_compute_n(const int ago, const int inum_full,
                         const int nall, double **host_x, int *host_type,
-                        double *sublo, double *subhi, int *tag, int **nspecial,
-                        int **special, const bool eflag, const bool vflag,
+                        double *sublo, double *subhi, tagint *tag, int **nspecial,
+                        tagint **special, const bool eflag, const bool vflag,
                         const bool eatom, const bool vatom, int &host_start,
                         int **ilist, int **jnum, const double cpu_time,
                         bool &success) {
   return LJLMF.compute(ago, inum_full, nall, host_x, host_type, sublo,
                        subhi, tag, nspecial, special, eflag, vflag, eatom,
                        vatom, host_start, ilist, jnum, cpu_time, success);
-}  
-			
+}
+
 void ljl_gpu_compute(const int ago, const int inum_full, const int nall,
                      double **host_x, int *host_type, int *ilist, int *numj,
                      int **firstneigh, const bool eflag, const bool vflag,

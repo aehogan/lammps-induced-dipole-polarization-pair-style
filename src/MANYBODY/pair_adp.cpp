@@ -16,10 +16,10 @@
                          Chandra Veer Singh (Cornell)
 ------------------------------------------------------------------------- */
 
-#include "math.h"
-#include "stdio.h"
-#include "stdlib.h"
-#include "string.h"
+#include <math.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
 #include "pair_adp.h"
 #include "atom.h"
 #include "force.h"
@@ -44,6 +44,7 @@ PairADP::PairADP(LAMMPS *lmp) : Pair(lmp)
   fp = NULL;
   mu = NULL;
   lambda = NULL;
+  map = NULL;
 
   setfl = NULL;
 
@@ -66,6 +67,7 @@ PairADP::PairADP(LAMMPS *lmp) : Pair(lmp)
 
   single_enable = 0;
   one_coeff = 1;
+  manybody_flag = 1;
 }
 
 /* ----------------------------------------------------------------------
@@ -192,6 +194,7 @@ void PairADP::compute(int eflag, int vflag)
 
     for (jj = 0; jj < jnum; jj++) {
       j = jlist[jj];
+      j &= NEIGHMASK;
 
       delx = xtmp - x[j][0];
       dely = ytmp - x[j][1];
@@ -292,6 +295,7 @@ void PairADP::compute(int eflag, int vflag)
 
     for (jj = 0; jj < jnum; jj++) {
       j = jlist[jj];
+      j &= NEIGHMASK;
 
       delx = xtmp - x[j][0];
       dely = ytmp - x[j][1];
@@ -489,7 +493,7 @@ void PairADP::coeff(int narg, char **arg)
     for (j = i; j <= n; j++) {
       if (map[i] >= 0 && map[j] >= 0) {
         setflag[i][j] = 1;
-        if (i == j) atom->set_mass(i,setfl->mass[map[i]]);
+        if (i == j) atom->set_mass(FLERR,i,setfl->mass[map[i]]);
         count++;
       }
     }
@@ -510,7 +514,7 @@ void PairADP::init_style()
   file2array();
   array2spline();
 
-  neighbor->request(this);
+  neighbor->request(this,instance_me);
 }
 
 /* ----------------------------------------------------------------------
@@ -544,7 +548,7 @@ void PairADP::read_file(char *filename)
   char line[MAXLINE];
 
   if (me == 0) {
-    fp = fopen(filename,"r");
+    fp = force->open_potential(filename);
     if (fp == NULL) {
       char str[128];
       sprintf(str,"Cannot open ADP potential file %s",filename);
@@ -574,7 +578,7 @@ void PairADP::read_file(char *filename)
   char **words = new char*[file->nelements+1];
   nwords = 0;
   strtok(line," \t\n\r\f");
-  while (words[nwords++] = strtok(NULL," \t\n\r\f")) continue;
+  while ((words[nwords++] = strtok(NULL," \t\n\r\f"))) continue;
 
   file->elements = new char*[file->nelements];
   for (int i = 0; i < file->nelements; i++) {
@@ -924,13 +928,14 @@ void PairADP::grab(FILE *fp, int n, double *list)
     fgets(line,MAXLINE,fp);
     ptr = strtok(line," \t\n\r\f");
     list[i++] = atof(ptr);
-    while (ptr = strtok(NULL," \t\n\r\f")) list[i++] = atof(ptr);
+    while ((ptr = strtok(NULL," \t\n\r\f"))) list[i++] = atof(ptr);
   }
 }
 
 /* ---------------------------------------------------------------------- */
 
-int PairADP::pack_comm(int n, int *list, double *buf, int pbc_flag, int *pbc)
+int PairADP::pack_forward_comm(int n, int *list, double *buf,
+                               int pbc_flag, int *pbc)
 {
   int i,j,m;
 
@@ -948,12 +953,12 @@ int PairADP::pack_comm(int n, int *list, double *buf, int pbc_flag, int *pbc)
     buf[m++] = lambda[j][4];
     buf[m++] = lambda[j][5];
   }
-  return 10;
+  return m;
 }
 
 /* ---------------------------------------------------------------------- */
 
-void PairADP::unpack_comm(int n, int first, double *buf)
+void PairADP::unpack_forward_comm(int n, int first, double *buf)
 {
   int i,m,last;
 
@@ -993,7 +998,7 @@ int PairADP::pack_reverse_comm(int n, int first, double *buf)
   buf[m++] = lambda[i][4];
   buf[m++] = lambda[i][5];
   }
-  return 10;
+  return m;
 }
 
 /* ---------------------------------------------------------------------- */

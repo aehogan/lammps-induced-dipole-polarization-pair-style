@@ -15,9 +15,9 @@
    Contributing author: Craig Maloney (UCSB)
 ------------------------------------------------------------------------- */
 
-#include "math.h"
-#include "stdio.h"
-#include "stdlib.h"
+#include <math.h>
+#include <stdio.h>
+#include <stdlib.h>
 #include "pair_lj_smooth.h"
 #include "atom.h"
 #include "comm.h"
@@ -30,7 +30,10 @@ using namespace LAMMPS_NS;
 
 /* ---------------------------------------------------------------------- */
 
-PairLJSmooth::PairLJSmooth(LAMMPS *lmp) : Pair(lmp) {}
+PairLJSmooth::PairLJSmooth(LAMMPS *lmp) : Pair(lmp)
+{
+  writedata = 1;
+}
 
 /* ---------------------------------------------------------------------- */
 
@@ -192,8 +195,8 @@ void PairLJSmooth::settings(int narg, char **arg)
 {
   if (narg != 2) error->all(FLERR,"Illegal pair_style command");
 
-  cut_inner_global = force->numeric(arg[0]);
-  cut_global = force->numeric(arg[1]);
+  cut_inner_global = force->numeric(FLERR,arg[0]);
+  cut_global = force->numeric(FLERR,arg[1]);
 
   if (cut_inner_global <= 0.0 || cut_inner_global > cut_global)
     error->all(FLERR,"Illegal pair_style command");
@@ -203,7 +206,7 @@ void PairLJSmooth::settings(int narg, char **arg)
   if (allocated) {
     int i,j;
     for (i = 1; i <= atom->ntypes; i++)
-      for (j = i+1; j <= atom->ntypes; j++)
+      for (j = i; j <= atom->ntypes; j++)
         if (setflag[i][j]) {
           cut_inner[i][j] = cut_inner_global;
           cut[i][j] = cut_global;
@@ -222,17 +225,17 @@ void PairLJSmooth::coeff(int narg, char **arg)
   if (!allocated) allocate();
 
   int ilo,ihi,jlo,jhi;
-  force->bounds(arg[0],atom->ntypes,ilo,ihi);
-  force->bounds(arg[1],atom->ntypes,jlo,jhi);
+  force->bounds(FLERR,arg[0],atom->ntypes,ilo,ihi);
+  force->bounds(FLERR,arg[1],atom->ntypes,jlo,jhi);
 
-  double epsilon_one = force->numeric(arg[2]);
-  double sigma_one = force->numeric(arg[3]);
+  double epsilon_one = force->numeric(FLERR,arg[2]);
+  double sigma_one = force->numeric(FLERR,arg[3]);
 
   double cut_inner_one = cut_inner_global;
   double cut_one = cut_global;
   if (narg == 6) {
-    cut_inner_one = force->numeric(arg[4]);
-    cut_one = force->numeric(arg[5]);
+    cut_inner_one = force->numeric(FLERR,arg[4]);
+    cut_one = force->numeric(FLERR,arg[5]);
   }
 
   if (cut_inner_one <= 0.0 || cut_inner_one > cut_one)
@@ -396,6 +399,28 @@ void PairLJSmooth::read_restart_settings(FILE *fp)
   MPI_Bcast(&cut_global,1,MPI_DOUBLE,0,world);
   MPI_Bcast(&offset_flag,1,MPI_INT,0,world);
   MPI_Bcast(&mix_flag,1,MPI_INT,0,world);
+}
+
+/* ----------------------------------------------------------------------
+   proc 0 writes to data file
+------------------------------------------------------------------------- */
+
+void PairLJSmooth::write_data(FILE *fp)
+{
+  for (int i = 1; i <= atom->ntypes; i++)
+    fprintf(fp,"%d %g %g\n",i,epsilon[i][i],sigma[i][i]);
+}
+
+/* ----------------------------------------------------------------------
+   proc 0 writes all pairs to data file
+------------------------------------------------------------------------- */
+
+void PairLJSmooth::write_data_all(FILE *fp)
+{
+  for (int i = 1; i <= atom->ntypes; i++)
+    for (int j = i; j <= atom->ntypes; j++)
+      fprintf(fp,"%d %d %g %g %g %g\n",i,j,
+              epsilon[i][j],sigma[i][j],cut_inner[i][j],cut[i][j]);
 }
 
 /* ---------------------------------------------------------------------- */

@@ -24,57 +24,10 @@
   <http://www.gnu.org/licenses/>.
   ----------------------------------------------------------------------*/
 
-#include "pair_reax_c.h"
-#if defined(PURE_REAX)
-#include "traj.h"
-#include "list.h"
-#include "tool_box.h"
-#elif defined(LAMMPS_REAX)
+#include "pair_reaxc.h"
 #include "reaxc_traj.h"
 #include "reaxc_list.h"
 #include "reaxc_tool_box.h"
-#endif
-
-
-#if defined(PURE_REAX)
-int Set_My_Trajectory_View( MPI_File trj, int offset, MPI_Datatype etype,
-                            MPI_Comm comm, int my_rank, int my_n, int big_n )
-{
-  int my_disp;
-  int length[3];
-  MPI_Aint line_len;
-  MPI_Aint disp[3];
-  MPI_Datatype type[3];
-  MPI_Datatype view;
-
-  /* line length inferred from etype */
-  MPI_Type_extent( etype, &line_len );
-  line_len /= sizeof(char);
-
-  /* determine where to start writing into the mpi file */
-  my_disp = SumScan( my_n, my_rank, MASTER_NODE, comm );
-  my_disp -= my_n;
-
-  /* create atom_info_view */
-  length[0] = 1;
-  length[1] = my_n;
-  length[2] = 1;
-  disp[0] = 0;
-  disp[1] = line_len * my_disp;
-  disp[2] = line_len * big_n;
-  type[0] = MPI_LB;
-  type[1] = etype;
-  type[2] = MPI_UB;
-
-  MPI_Type_struct( 3, length, disp, type, &view );
-  MPI_Type_commit( &view );
-
-  MPI_File_set_view( trj, offset, etype, view, "native", MPI_INFO_NULL );
-
-  return my_disp;
-}
-#endif
-
 
 int Reallocate_Output_Buffer( output_controls *out_control, int req_space,
                               MPI_Comm comm )
@@ -98,32 +51,9 @@ int Reallocate_Output_Buffer( output_controls *out_control, int req_space,
 void Write_Skip_Line( output_controls *out_control, mpi_datatypes *mpi_data,
                       int my_rank, int skip, int num_section )
 {
-#if defined(PURE_REAX)
-  MPI_Status status;
-
-  if( out_control->traj_method == MPI_TRAJ ) {
-    MPI_File_set_view( out_control->trj, out_control->trj_offset,
-                       mpi_data->header_line, mpi_data->header_line,
-                       "native", MPI_INFO_NULL );
-    if( my_rank == MASTER_NODE ) {
-      sprintf( out_control->line, INT2_LINE, "chars_to_skip_section:",
-               skip, num_section );
-      MPI_File_write( out_control->trj, out_control->line, 1,
-                      mpi_data->header_line, &status );
-    }
-    out_control->trj_offset += HEADER_LINE_LEN;
-  }
-  else {
-    if( my_rank == MASTER_NODE )
-      fprintf( out_control->strj, INT2_LINE,
-               "chars_to_skip_section:", skip, num_section );
-  }
-#elif defined(LAMMPS_REAX)
   if( my_rank == MASTER_NODE )
     fprintf( out_control->strj, INT2_LINE,
              "chars_to_skip_section:", skip, num_section );
-#endif
-
 }
 
 
@@ -131,7 +61,6 @@ int Write_Header( reax_system *system, control_params *control,
                   output_controls *out_control, mpi_datatypes *mpi_data )
 {
   int  num_hdr_lines, my_hdr_lines, buffer_req;
-  MPI_Status status;
   char ensembles[ens_N][25] =  { "NVE", "NVT", "fully flexible NPT",
                                  "semi isotropic NPT", "isotropic NPT" };
   char reposition[3][25] = { "fit to periodic box", "CoM to center of box",
@@ -172,7 +101,7 @@ int Write_Header( reax_system *system, control_params *control,
              out_control->traj_title );
     strncat( out_control->buffer, out_control->line, HEADER_LINE_LEN+1 );
 
-    sprintf( out_control->line, INT_LINE, "number_of_atoms:", system->bigN );
+    sprintf( out_control->line, BIGINT_LINE, "number_of_atoms:", system->bigN );
     strncat( out_control->buffer, out_control->line, HEADER_LINE_LEN+1 );
 
     sprintf( out_control->line, STR_LINE, "ensemble_type:",
@@ -191,14 +120,6 @@ int Write_Header( reax_system *system, control_params *control,
     sprintf( out_control->line, STR_LINE, "is_this_a_restart?:",
              (control->restart ? "yes" : "no") );
     strncat( out_control->buffer, out_control->line, HEADER_LINE_LEN+1 );
-
-    //sprintf( out_control->line, STR_LINE, "restarted_from_file:",
-    //     (control->restart ? control->restart_from : "NA") );
-    //strncat( out_control->buffer, out_control->line, HEADER_LINE_LEN+1 );
-
-    //sprintf( out_control->line, STR_LINE, "kept_restart_velocities?:",
-    //     (control->restart ? (control->random_vel ? "no":"yes"):"NA") );
-    //strncat( out_control->buffer, out_control->line, HEADER_LINE_LEN+1 );
 
     sprintf( out_control->line, STR_LINE, "write_restart_files?:",
              ((out_control->restart_freq > 0) ? "yes" : "no") );
@@ -331,25 +252,8 @@ int Write_Header( reax_system *system, control_params *control,
   }
 
   /* dump out the buffer */
-#if defined(PURE_REAX)
-  if( out_control->traj_method == MPI_TRAJ ) {
-    out_control->trj_offset = 0;
-    Set_My_Trajectory_View( out_control->trj,
-                            out_control->trj_offset, mpi_data->header_line,
-                            mpi_data->world, system->my_rank,
-                            my_hdr_lines, num_hdr_lines );
-    MPI_File_write_all( out_control->trj, out_control->buffer,
-                        num_hdr_lines, mpi_data->header_line, &status );
-    out_control->trj_offset = (num_hdr_lines) * HEADER_LINE_LEN;
-  }
-  else {
-    if( system->my_rank == MASTER_NODE )
-      fprintf( out_control->strj, "%s", out_control->buffer );
-  }
-#elif defined(LAMMPS_REAX)
   if( system->my_rank == MASTER_NODE )
     fprintf( out_control->strj, "%s", out_control->buffer );
-#endif
 
   return SUCCESS;
 }
@@ -360,7 +264,6 @@ int Write_Init_Desc( reax_system *system, control_params *control,
 {
   int i, me, np, cnt, buffer_len, buffer_req;
   reax_atom *p_atom;
-  //MPI_Request request;
   MPI_Status status;
 
   me = system->my_rank;
@@ -388,33 +291,6 @@ int Write_Init_Desc( reax_system *system, control_params *control,
              out_control->line, INIT_DESC_LEN+1 );
   }
 
-#if defined(PURE_REAX)
-  if( out_control->traj_method == MPI_TRAJ ) {
-    Set_My_Trajectory_View( out_control->trj, out_control->trj_offset,
-                            mpi_data->init_desc_line, mpi_data->world,
-                            me, system->n, system->bigN );
-    MPI_File_write( out_control->trj, out_control->buffer, system->n,
-                    mpi_data->init_desc_line, &status );
-    out_control->trj_offset += system->bigN * INIT_DESC_LEN;
-  }
-  else{
-    if( me != MASTER_NODE )
-      MPI_Send( out_control->buffer, buffer_req-1, MPI_CHAR, MASTER_NODE,
-                np * INIT_DESCS + me, mpi_data->world );
-    else{
-      buffer_len = system->n * INIT_DESC_LEN;
-      for( i = 0; i < np; ++i )
-        if( i != MASTER_NODE ) {
-          MPI_Recv( out_control->buffer + buffer_len, buffer_req - buffer_len,
-                    MPI_CHAR, i, np*INIT_DESCS+i, mpi_data->world, &status );
-          MPI_Get_count( &status, MPI_CHAR, &cnt );
-          buffer_len += cnt;
-        }
-      out_control->buffer[buffer_len] = 0;
-      fprintf( out_control->strj, "%s", out_control->buffer );
-    }
-  }
-#elif defined(LAMMPS_REAX)
   if( me != MASTER_NODE )
     MPI_Send( out_control->buffer, buffer_req-1, MPI_CHAR, MASTER_NODE,
               np * INIT_DESCS + me, mpi_data->world );
@@ -430,7 +306,6 @@ int Write_Init_Desc( reax_system *system, control_params *control,
     out_control->buffer[buffer_len] = 0;
     fprintf( out_control->strj, "%s", out_control->buffer );
   }
-#endif
 
   return SUCCESS;
 }
@@ -465,58 +340,7 @@ int Init_Traj( reax_system *system, control_params *control,
   out_control->buffer_len = 0;
   out_control->buffer = NULL;
 
-  /* fprintf( stderr, "p%d: init_traj: atom_line_len = %d "                \
-     "bond_line_len = %d, angle_line_len = %d\n"                        \
-     "max_line = %d, max_buffer_size = %d\n",
-     system->my_rank, out_control->atom_line_len,
-     out_control->bond_line_len, out_control->angle_line_len,
-     MAX_TRJ_LINE_LEN, MAX_TRJ_BUFFER_SIZE ); */
-
   /* write trajectory header and atom info, if applicable */
-#if defined(PURE_REAX)
-  if( out_control->traj_method == MPI_TRAJ ) {
-    /* attemp to delete the file to get rid of remnants of previous runs */
-    if( system->my_rank == MASTER_NODE ) {
-      MPI_File_delete( fname, MPI_INFO_NULL );
-    }
-
-    /* open a fresh trajectory file */
-    if( MPI_File_open( mpi_data->world, fname,
-                       MPI_MODE_CREATE | MPI_MODE_WRONLY, MPI_INFO_NULL,
-                       &(out_control->trj) ) ) {
-      strcpy( msg, "init_traj: unable to open trajectory file" );
-      return FAILURE;
-    }
-
-    /* build the mpi structs for trajectory */
-    /* header_line */
-    MPI_Type_contiguous( HEADER_LINE_LEN, MPI_CHAR, &(mpi_data->header_line) );
-    MPI_Type_commit( &(mpi_data->header_line) );
-    /* init_desc_line */
-    MPI_Type_contiguous( INIT_DESC_LEN, MPI_CHAR, &(mpi_data->init_desc_line) );
-    MPI_Type_commit( &(mpi_data->init_desc_line) );
-    /* atom */
-    MPI_Type_contiguous( out_control->atom_line_len, MPI_CHAR,
-                         &(mpi_data->atom_line) );
-    MPI_Type_commit( &(mpi_data->atom_line) );
-    /* bonds */
-    MPI_Type_contiguous( out_control->bond_line_len, MPI_CHAR,
-                         &(mpi_data->bond_line) );
-    MPI_Type_commit( &(mpi_data->bond_line) );
-    /* angles */
-    MPI_Type_contiguous( out_control->angle_line_len, MPI_CHAR,
-                         &(mpi_data->angle_line) );
-    MPI_Type_commit( &(mpi_data->angle_line) );
-  }
-  else if( out_control->traj_method == REG_TRAJ) {
-    if( system->my_rank == MASTER_NODE )
-      out_control->strj = fopen( fname, "w" );
-  }
-  else {
-    strcpy( msg, "init_traj: unknown trajectory option" );
-    return FAILURE;
-  }
-#elif defined(LAMMPS_REAX)
   if( out_control->traj_method == REG_TRAJ) {
     if( system->my_rank == MASTER_NODE )
       out_control->strj = fopen( fname, "w" );
@@ -525,20 +349,8 @@ int Init_Traj( reax_system *system, control_params *control,
     strcpy( msg, "init_traj: unknown trajectory option" );
     return FAILURE;
   }
-#endif
-
-
-#if defined(DEBUG_FOCUS)
-  fprintf( stderr, "p%d: initiated trajectory\n", system->my_rank );
-#endif
   Write_Header( system, control, out_control, mpi_data );
-#if defined(DEBUG_FOCUS)
-  fprintf( stderr, "p%d: header written\n", system->my_rank );
-#endif
   Write_Init_Desc( system, control, out_control, mpi_data );
-#if defined(DEBUG_FOCUS)
-  fprintf( stderr, "p%d: atom descriptions written\n", system->my_rank );
-#endif
 
   return SUCCESS;
 }
@@ -549,7 +361,6 @@ int Write_Frame_Header( reax_system *system, control_params *control,
                         mpi_datatypes *mpi_data )
 {
   int me, num_frm_hdr_lines, my_frm_hdr_lines, buffer_req;
-  MPI_Status status;
 
   me = system->my_rank;
   /* frame header lengths */
@@ -663,24 +474,8 @@ int Write_Frame_Header( reax_system *system, control_params *control,
   }
 
   /* dump out the buffer */
-#if defined(PURE_REAX)
-  if( out_control->traj_method == MPI_TRAJ ) {
-    Set_My_Trajectory_View( out_control->trj, out_control->trj_offset,
-                            mpi_data->header_line, mpi_data->world,
-                            me, my_frm_hdr_lines, num_frm_hdr_lines );
-
-    MPI_File_write_all(out_control->trj, out_control->buffer, my_frm_hdr_lines,
-                       mpi_data->header_line, &status);
-    out_control->trj_offset += (num_frm_hdr_lines) * HEADER_LINE_LEN;
-  }
-  else {
-    if( system->my_rank == MASTER_NODE )
-      fprintf( out_control->strj, "%s", out_control->buffer );
-  }
-#elif defined(LAMMPS_REAX)
   if( system->my_rank == MASTER_NODE )
     fprintf( out_control->strj, "%s", out_control->buffer );
-#endif
 
   return SUCCESS;
 }
@@ -745,33 +540,6 @@ int Write_Atoms( reax_system *system, control_params *control,
     strncpy( out_control->buffer + i*line_len, out_control->line, line_len+1 );
   }
 
-#if defined(PURE_REAX)
-  if( out_control->traj_method == MPI_TRAJ ) {
-    Set_My_Trajectory_View( out_control->trj, out_control->trj_offset,
-                            mpi_data->atom_line, mpi_data->world,
-                            me, system->n, system->bigN );
-    MPI_File_write( out_control->trj, out_control->buffer, system->n,
-                    mpi_data->atom_line, &status );
-    out_control->trj_offset += (system->bigN) * out_control->atom_line_len;
-  }
-  else{
-    if( me != MASTER_NODE )
-      MPI_Send( out_control->buffer, buffer_req-1, MPI_CHAR, MASTER_NODE,
-                np*ATOM_LINES+me, mpi_data->world );
-    else{
-      buffer_len = system->n * line_len;
-      for( i = 0; i < np; ++i )
-        if( i != MASTER_NODE ) {
-          MPI_Recv( out_control->buffer + buffer_len, buffer_req - buffer_len,
-                    MPI_CHAR, i, np*ATOM_LINES+i, mpi_data->world, &status );
-          MPI_Get_count( &status, MPI_CHAR, &cnt );
-          buffer_len += cnt;
-        }
-      out_control->buffer[buffer_len] = 0;
-      fprintf( out_control->strj, "%s", out_control->buffer );
-    }
-  }
-#elif defined(LAMMPS_REAX)
   if( me != MASTER_NODE )
     MPI_Send( out_control->buffer, buffer_req-1, MPI_CHAR, MASTER_NODE,
               np*ATOM_LINES+me, mpi_data->world );
@@ -787,7 +555,6 @@ int Write_Atoms( reax_system *system, control_params *control,
     out_control->buffer[buffer_len] = 0;
     fprintf( out_control->strj, "%s", out_control->buffer );
   }
-#endif
 
   return SUCCESS;
 }
@@ -863,34 +630,6 @@ int Write_Bonds(reax_system *system, control_params *control, reax_list *bonds,
     }
   }
 
-
-#if defined(PURE_REAX)
-  if( out_control->traj_method == MPI_TRAJ ) {
-    Set_My_Trajectory_View( out_control->trj, out_control->trj_offset,
-                            mpi_data->bond_line, mpi_data->world,
-                            me, my_bonds, num_bonds );
-    MPI_File_write( out_control->trj, out_control->buffer, my_bonds,
-                    mpi_data->bond_line, &status );
-    out_control->trj_offset += num_bonds * line_len;
-  }
-  else{
-    if( me != MASTER_NODE )
-      MPI_Send( out_control->buffer, buffer_req-1, MPI_CHAR, MASTER_NODE,
-                np*BOND_LINES+me, mpi_data->world );
-    else{
-      buffer_len = my_bonds * line_len;
-      for( i = 0; i < np; ++i )
-        if( i != MASTER_NODE ) {
-          MPI_Recv( out_control->buffer + buffer_len, buffer_req - buffer_len,
-                    MPI_CHAR, i, np*BOND_LINES+i, mpi_data->world, &status );
-          MPI_Get_count( &status, MPI_CHAR, &cnt );
-          buffer_len += cnt;
-        }
-      out_control->buffer[buffer_len] = 0;
-      fprintf( out_control->strj, "%s", out_control->buffer );
-    }
-  }
-#elif defined(LAMMPS_REAX)
   if( me != MASTER_NODE )
     MPI_Send( out_control->buffer, buffer_req-1, MPI_CHAR, MASTER_NODE,
               np*BOND_LINES+me, mpi_data->world );
@@ -906,7 +645,6 @@ int Write_Bonds(reax_system *system, control_params *control, reax_list *bonds,
     out_control->buffer[buffer_len] = 0;
     fprintf( out_control->strj, "%s", out_control->buffer );
   }
-#endif
 
   return SUCCESS;
 }
@@ -987,33 +725,6 @@ int Write_Angles( reax_system *system, control_params *control,
         }
     }
 
-#if defined(PURE_REAX)
-  if( out_control->traj_method == MPI_TRAJ ){
-    Set_My_Trajectory_View( out_control->trj, out_control->trj_offset,
-                            mpi_data->angle_line, mpi_data->world,
-                            me, my_angles, num_angles );
-    MPI_File_write( out_control->trj, out_control->buffer, my_angles,
-                    mpi_data->angle_line, &status );
-    out_control->trj_offset += num_angles * line_len;
-  }
-  else{
-    if( me != MASTER_NODE )
-      MPI_Send( out_control->buffer, buffer_req-1, MPI_CHAR, MASTER_NODE,
-                np*ANGLE_LINES+me, mpi_data->world );
-    else{
-      buffer_len = my_angles * line_len;
-      for( i = 0; i < np; ++i )
-        if( i != MASTER_NODE ) {
-          MPI_Recv( out_control->buffer + buffer_len, buffer_req - buffer_len,
-                    MPI_CHAR, i, np*ANGLE_LINES+i, mpi_data->world, &status );
-          MPI_Get_count( &status, MPI_CHAR, &cnt );
-          buffer_len += cnt;
-        }
-      out_control->buffer[buffer_len] = 0;
-      fprintf( out_control->strj, "%s", out_control->buffer );
-    }
-  }
-#elif defined(LAMMPS_REAX)
   if( me != MASTER_NODE )
     MPI_Send( out_control->buffer, buffer_req-1, MPI_CHAR, MASTER_NODE,
               np*ANGLE_LINES+me, mpi_data->world );
@@ -1029,7 +740,6 @@ int Write_Angles( reax_system *system, control_params *control,
     out_control->buffer[buffer_len] = 0;
     fprintf( out_control->strj, "%s", out_control->buffer );
   }
-#endif
 
   return SUCCESS;
 }
@@ -1039,9 +749,6 @@ int Append_Frame( reax_system *system, control_params *control,
                   simulation_data *data, reax_list **lists,
                   output_controls *out_control, mpi_datatypes *mpi_data )
 {
-#if defined(DEBUG_FOCUS)
-  fprintf( stderr, "p%d: appending frame %d\n", system->my_rank, data->step );
-#endif
   Write_Frame_Header( system, control, data, out_control, mpi_data );
 
   if( out_control->write_atoms )
@@ -1053,9 +760,6 @@ int Append_Frame( reax_system *system, control_params *control,
   if( out_control->write_angles )
     Write_Angles( system, control, (*lists + BONDS), (*lists + THREE_BODIES),
                   out_control, mpi_data );
-#if defined(DEBUG_FOCUS)
-  fprintf( stderr, "p%d: appended frame %d\n", system->my_rank, data->step );
-#endif
 
   return SUCCESS;
 }
@@ -1063,15 +767,8 @@ int Append_Frame( reax_system *system, control_params *control,
 
 int End_Traj( int my_rank, output_controls *out_control )
 {
-#if defined(PURE_REAX)
-  if( out_control->traj_method == MPI_TRAJ )
-    MPI_File_close( &(out_control->trj) );
-  else if( my_rank == MASTER_NODE )
-    fclose( out_control->strj );
-#elif defined(LAMMPS_REAX)
   if( my_rank == MASTER_NODE )
     fclose( out_control->strj );
-#endif
 
   free( out_control->buffer );
   free( out_control->line );

@@ -23,12 +23,14 @@
 #include "domain.h"
 
 #include "math_const.h"
+#include "math_special.h"
 
 #include <math.h>
 
 #include "suffix.h"
 using namespace LAMMPS_NS;
 using namespace MathConst;
+using namespace MathSpecial;
 
 #define SMALL 0.001
 
@@ -61,21 +63,24 @@ void AngleCosinePeriodicOMP::compute(int eflag, int vflag)
 
     loop_setup_thr(ifrom, ito, tid, inum, nthreads);
     ThrData *thr = fix->get_thr(tid);
+    thr->timer(Timer::START);
     ev_setup_thr(eflag, vflag, nall, eatom, vatom, thr);
 
-    if (evflag) {
-      if (eflag) {
-        if (force->newton_bond) eval<1,1,1>(ifrom, ito, thr);
-        else eval<1,1,0>(ifrom, ito, thr);
+    if (inum > 0) {
+      if (evflag) {
+        if (eflag) {
+          if (force->newton_bond) eval<1,1,1>(ifrom, ito, thr);
+          else eval<1,1,0>(ifrom, ito, thr);
+        } else {
+          if (force->newton_bond) eval<1,0,1>(ifrom, ito, thr);
+          else eval<1,0,0>(ifrom, ito, thr);
+        }
       } else {
-        if (force->newton_bond) eval<1,0,1>(ifrom, ito, thr);
-        else eval<1,0,0>(ifrom, ito, thr);
+        if (force->newton_bond) eval<0,0,1>(ifrom, ito, thr);
+        else eval<0,0,0>(ifrom, ito, thr);
       }
-    } else {
-      if (force->newton_bond) eval<0,0,1>(ifrom, ito, thr);
-      else eval<0,0,0>(ifrom, ito, thr);
     }
-
+    thr->timer(Timer::BOND);
     reduce_thr(this, eflag, vflag, thr);
   } // end of omp parallel region
 }
@@ -86,34 +91,35 @@ void AngleCosinePeriodicOMP::eval(int nfrom, int nto, ThrData * const thr)
   int i,i1,i2,i3,n,m,type,b_factor;
   double delx1,dely1,delz1,delx2,dely2,delz2;
   double eangle,f1[3],f3[3];
-  double rsq1,rsq2,r1,r2,c,s,a,a11,a12,a22;
+  double rsq1,rsq2,r1,r2,c,a,a11,a12,a22;
   double tn,tn_1,tn_2,un,un_1,un_2;
 
-  const double * const * const x = atom->x;
-  double * const * const f = thr->get_f();
-  const int * const * const anglelist = neighbor->anglelist;
+  const dbl3_t * _noalias const x = (dbl3_t *) atom->x[0];
+  dbl3_t * _noalias const f = (dbl3_t *) thr->get_f()[0];
+  const int4_t * _noalias const anglelist = (int4_t *) neighbor->anglelist[0];
   const int nlocal = atom->nlocal;
+  eangle = 0.0;
 
   for (n = nfrom; n < nto; n++) {
-    i1 = anglelist[n][0];
-    i2 = anglelist[n][1];
-    i3 = anglelist[n][2];
-    type = anglelist[n][3];
+    i1 = anglelist[n].a;
+    i2 = anglelist[n].b;
+    i3 = anglelist[n].c;
+    type = anglelist[n].t;
 
     // 1st bond
 
-    delx1 = x[i1][0] - x[i2][0];
-    dely1 = x[i1][1] - x[i2][1];
-    delz1 = x[i1][2] - x[i2][2];
+    delx1 = x[i1].x - x[i2].x;
+    dely1 = x[i1].y - x[i2].y;
+    delz1 = x[i1].z - x[i2].z;
 
     rsq1 = delx1*delx1 + dely1*dely1 + delz1*delz1;
     r1 = sqrt(rsq1);
 
     // 2nd bond
 
-    delx2 = x[i3][0] - x[i2][0];
-    dely2 = x[i3][1] - x[i2][1];
-    delz2 = x[i3][2] - x[i2][2];
+    delx2 = x[i3].x - x[i2].x;
+    dely2 = x[i3].y - x[i2].y;
+    delz2 = x[i3].z - x[i2].z;
 
     rsq2 = delx2*delx2 + dely2*dely2 + delz2*delz2;
     r2 = sqrt(rsq2);
@@ -143,10 +149,6 @@ void AngleCosinePeriodicOMP::eval(int nfrom, int nto, ThrData * const thr)
     un_1 = 2.0;
     un_2 = 0.0;
 
-    s = sqrt(1.0 - c*c);
-    if (s < SMALL) s = SMALL;
-    s = 1.0/s;
-
     // force & energy
 
     tn_2 = c;
@@ -161,8 +163,8 @@ void AngleCosinePeriodicOMP::eval(int nfrom, int nto, ThrData * const thr)
       un_2 = un_1;
       un_1 = un;
     }
-    tn = b_factor*pow(-1.0,(double)m)*tn;
-    un = b_factor*pow(-1.0,(double)m)*m*un;
+    tn = b_factor*powsign(m)*tn;
+    un = b_factor*powsign(m)*m*un;
 
     if (EFLAG) eangle = 2*k[type]*(1.0 - tn);
 
@@ -181,21 +183,21 @@ void AngleCosinePeriodicOMP::eval(int nfrom, int nto, ThrData * const thr)
     // apply force to each of 3 atoms
 
     if (NEWTON_BOND || i1 < nlocal) {
-      f[i1][0] += f1[0];
-      f[i1][1] += f1[1];
-      f[i1][2] += f1[2];
+      f[i1].x += f1[0];
+      f[i1].y += f1[1];
+      f[i1].z += f1[2];
     }
 
     if (NEWTON_BOND || i2 < nlocal) {
-      f[i2][0] -= f1[0] + f3[0];
-      f[i2][1] -= f1[1] + f3[1];
-      f[i2][2] -= f1[2] + f3[2];
+      f[i2].x -= f1[0] + f3[0];
+      f[i2].y -= f1[1] + f3[1];
+      f[i2].z -= f1[2] + f3[2];
     }
 
     if (NEWTON_BOND || i3 < nlocal) {
-      f[i3][0] += f3[0];
-      f[i3][1] += f3[1];
-      f[i3][2] += f3[2];
+      f[i3].x += f3[0];
+      f[i3].y += f3[1];
+      f[i3].z += f3[2];
     }
 
     if (EVFLAG) ev_tally_thr(this,i1,i2,i3,nlocal,NEWTON_BOND,eangle,f1,f3,

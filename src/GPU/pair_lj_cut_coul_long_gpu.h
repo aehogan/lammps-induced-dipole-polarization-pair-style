@@ -1,4 +1,4 @@
-/* ----------------------------------------------------------------------
+/* -*- c++ -*- ----------------------------------------------------------
    LAMMPS - Large-scale Atomic/Molecular Massively Parallel Simulator
    http://lammps.sandia.gov, Sandia National Laboratories
    Steve Plimpton, sjplimp@sandia.gov
@@ -31,6 +31,7 @@ class PairLJCutCoulLongGPU : public PairLJCutCoulLong {
   void cpu_compute(int, int, int, int, int *, int *, int **);
   void compute(int, int);
   void init_style();
+  void reinit();
   double memory_usage();
 
  enum { GPU_FORCE, GPU_NEIGH, GPU_HYB_NEIGH };
@@ -38,7 +39,6 @@ class PairLJCutCoulLongGPU : public PairLJCutCoulLong {
  private:
   int gpu_mode;
   double cpu_time;
-  int *gpulist;
 };
 
 }
@@ -60,9 +60,8 @@ E: Cannot use newton pair with lj/cut/coul/long/gpu pair style
 
 Self-explanatory.
 
-E: Pair style is incompatible with KSpace style
+E: Pair style requires a KSpace style
 
-If a pair style with a long-range Coulombic component is selected,
-then a kspace style must also be used.
+No kspace style is defined.
 
 */

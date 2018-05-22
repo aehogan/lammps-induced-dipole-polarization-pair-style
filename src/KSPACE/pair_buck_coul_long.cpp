@@ -11,10 +11,10 @@
    See the README file in the top-level LAMMPS directory.
 ------------------------------------------------------------------------- */
 
-#include "math.h"
-#include "stdio.h"
-#include "stdlib.h"
-#include "string.h"
+#include <math.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
 #include "pair_buck_coul_long.h"
 #include "atom.h"
 #include "comm.h"
@@ -42,6 +42,7 @@ using namespace MathConst;
 PairBuckCoulLong::PairBuckCoulLong(LAMMPS *lmp) : Pair(lmp)
 {
   ewaldflag = pppmflag = 1;
+  writedata = 1;
   ftable = NULL;
 }
 
@@ -49,21 +50,23 @@ PairBuckCoulLong::PairBuckCoulLong(LAMMPS *lmp) : Pair(lmp)
 
 PairBuckCoulLong::~PairBuckCoulLong()
 {
-  if (allocated) {
-    memory->destroy(setflag);
-    memory->destroy(cutsq);
+  if (!copymode) {
+    if (allocated) {
+      memory->destroy(setflag);
+      memory->destroy(cutsq);
 
-    memory->destroy(cut_lj);
-    memory->destroy(cut_ljsq);
-    memory->destroy(a);
-    memory->destroy(rho);
-    memory->destroy(c);
-    memory->destroy(rhoinv);
-    memory->destroy(buck1);
-    memory->destroy(buck2);
-    memory->destroy(offset);
+      memory->destroy(cut_lj);
+      memory->destroy(cut_ljsq);
+      memory->destroy(a);
+      memory->destroy(rho);
+      memory->destroy(c);
+      memory->destroy(rhoinv);
+      memory->destroy(buck1);
+      memory->destroy(buck2);
+      memory->destroy(offset);
+    }
+    if (ftable) free_tables();
   }
-  if (ftable) free_tables();
 }
 
 /* ---------------------------------------------------------------------- */
@@ -122,7 +125,7 @@ void PairBuckCoulLong::compute(int eflag, int vflag)
       jtype = type[j];
 
       if (rsq < cutsq[itype][jtype]) {
-        r2inv = 1.0/rsq;          
+        r2inv = 1.0/rsq;
         if (rsq < cut_coulsq) {
           if (!ncoultablebits || rsq <= tabinnersq) {
             r = sqrt(rsq);
@@ -228,16 +231,16 @@ void PairBuckCoulLong::settings(int narg, char **arg)
 {
   if (narg < 1 || narg > 2) error->all(FLERR,"Illegal pair_style command");
 
-  cut_lj_global = force->numeric(arg[0]);
+  cut_lj_global = force->numeric(FLERR,arg[0]);
   if (narg == 1) cut_coul = cut_lj_global;
-  else cut_coul = force->numeric(arg[1]);
+  else cut_coul = force->numeric(FLERR,arg[1]);
 
   // reset cutoffs that have been explicitly set
 
   if (allocated) {
     int i,j;
     for (i = 1; i <= atom->ntypes; i++)
-      for (j = i+1; j <= atom->ntypes; j++)
+      for (j = i; j <= atom->ntypes; j++)
         if (setflag[i][j]) cut_lj[i][j] = cut_lj_global;
   }
 }
@@ -248,21 +251,21 @@ void PairBuckCoulLong::settings(int narg, char **arg)
 
 void PairBuckCoulLong::coeff(int narg, char **arg)
 {
-  if (narg < 5 || narg > 6) 
+  if (narg < 5 || narg > 6)
     error->all(FLERR,"Incorrect args for pair coefficients");
   if (!allocated) allocate();
 
   int ilo,ihi,jlo,jhi;
-  force->bounds(arg[0],atom->ntypes,ilo,ihi);
-  force->bounds(arg[1],atom->ntypes,jlo,jhi);
+  force->bounds(FLERR,arg[0],atom->ntypes,ilo,ihi);
+  force->bounds(FLERR,arg[1],atom->ntypes,jlo,jhi);
 
-  double a_one = force->numeric(arg[2]);
-  double rho_one = force->numeric(arg[3]);
+  double a_one = force->numeric(FLERR,arg[2]);
+  double rho_one = force->numeric(FLERR,arg[3]);
   if (rho_one <= 0) error->all(FLERR,"Incorrect args for pair coefficients");
-  double c_one = force->numeric(arg[4]);
+  double c_one = force->numeric(FLERR,arg[4]);
 
   double cut_lj_one = cut_lj_global;
-  if (narg == 6) cut_lj_one = force->numeric(arg[5]);
+  if (narg == 6) cut_lj_one = force->numeric(FLERR,arg[5]);
 
   int count = 0;
   for (int i = ilo; i <= ihi; i++) {
@@ -294,7 +297,7 @@ double PairBuckCoulLong::init_one(int i, int j)
   buck1[i][j] = a[i][j]/rho[i][j];
   buck2[i][j] = 6.0*c[i][j];
 
-  if (offset_flag) {
+  if (offset_flag && (cut_lj[i][j] > 0.0)) {
     double rexp = exp(-cut_lj[i][j]/rho[i][j]);
     offset[i][j] = a[i][j]*rexp - c[i][j]/pow(cut_lj[i][j],6.0);
   } else offset[i][j] = 0.0;
@@ -353,11 +356,11 @@ void PairBuckCoulLong::init_style()
   // insure use of KSpace long-range solver, set g_ewald
 
   if (force->kspace == NULL)
-    error->all(FLERR,"Pair style requres a KSpace style");
+    error->all(FLERR,"Pair style requires a KSpace style");
   g_ewald = force->kspace->g_ewald;
 
-  neighbor->request(this);
-  
+  neighbor->request(this,instance_me);
+
   // setup force tables
 
   if (ncoultablebits) init_tables(cut_coul,NULL);
@@ -452,6 +455,28 @@ void PairBuckCoulLong::read_restart_settings(FILE *fp)
   MPI_Bcast(&tail_flag,1,MPI_INT,0,world);
   MPI_Bcast(&ncoultablebits,1,MPI_INT,0,world);
   MPI_Bcast(&tabinner,1,MPI_DOUBLE,0,world);
+}
+
+/* ----------------------------------------------------------------------
+   proc 0 writes to data file
+------------------------------------------------------------------------- */
+
+void PairBuckCoulLong::write_data(FILE *fp)
+{
+  for (int i = 1; i <= atom->ntypes; i++)
+    fprintf(fp,"%d %g %g %g\n",i,a[i][i],rho[i][i],c[i][i]);
+}
+
+/* ----------------------------------------------------------------------
+   proc 0 writes all pairs to data file
+------------------------------------------------------------------------- */
+
+void PairBuckCoulLong::write_data_all(FILE *fp)
+{
+  for (int i = 1; i <= atom->ntypes; i++)
+    for (int j = i; j <= atom->ntypes; j++)
+      fprintf(fp,"%d %d %g %g %g %g\n",i,j,
+              a[i][j],rho[i][j],c[i][j],cut_lj[i][j]);
 }
 
 /* ---------------------------------------------------------------------- */

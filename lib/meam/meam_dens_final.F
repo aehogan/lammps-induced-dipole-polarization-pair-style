@@ -3,7 +3,7 @@ c
 c  void meam_dens_final_(int *, int *, int *, int *, int *, double *, double *,
 c                int *, int *, int *,
 c		 double *, double *, double *, double *, double *, double *,
-c		 double *, double *, double *, double *, double *, double *, 
+c		 double *, double *, double *, double *, double *, double *,
 c		 double *, double *, double *, double *, double *, int *);
 c
 c Call from pair_meam.cpp has the form:
@@ -69,12 +69,24 @@ c     Complete the calculation of density
           do m = 1,10
             rho3(i) = rho3(i) + v3D(m)*Arho3(m,i)*Arho3(m,i)
           enddo
-          
+
           if( rho0(i) .gt. 0.0 ) then
             if (ialloy.eq.1) then
-              t_ave(1,i) = t_ave(1,i)/tsq_ave(1,i)
-              t_ave(2,i) = t_ave(2,i)/tsq_ave(2,i)
-              t_ave(3,i) = t_ave(3,i)/tsq_ave(3,i)
+              if (tsq_ave(1,i) .ne. 0.0d0) then
+                t_ave(1,i) = t_ave(1,i)/tsq_ave(1,i)
+              else
+                t_ave(1,i) = 0.0d0
+              endif
+              if (tsq_ave(2,i) .ne. 0.0d0) then
+                t_ave(2,i) = t_ave(2,i)/tsq_ave(2,i)
+              else
+                t_ave(2,i) = 0.0d0
+              endif
+              if (tsq_ave(3,i) .ne. 0.0d0) then
+                t_ave(3,i) = t_ave(3,i)/tsq_ave(3,i)
+              else
+                t_ave(3,i) = 0.0d0
+              endif
             else if (ialloy.eq.2) then
               t_ave(1,i) = t1_meam(elti)
               t_ave(2,i) = t2_meam(elti)
@@ -85,10 +97,10 @@ c     Complete the calculation of density
               t_ave(3,i) = t_ave(3,i)/rho0(i)
             endif
           endif
-          
-          Gamma(i) = t_ave(1,i)*rho1(i) 
+
+          Gamma(i) = t_ave(1,i)*rho1(i)
      $         + t_ave(2,i)*rho2(i) + t_ave(3,i)*rho3(i)
-          
+
           if( rho0(i) .gt. 0.0 ) then
             Gamma(i) = Gamma(i)/(rho0(i)*rho0(i))
           end if
@@ -98,13 +110,14 @@ c     Complete the calculation of density
           call G_gam(Gamma(i),ibar_meam(elti),
      $         gsmooth_factor,G,errorflag)
           if (errorflag.ne.0) return
+          call get_shpfcn(shp,lattce_meam(elti,elti))
           if (ibar_meam(elti).le.0) then
             Gbar = 1.d0
+            dGbar = 0.d0
           else
-            call get_shpfcn(shp,lattce_meam(elti,elti))
             if (mix_ref_t.eq.1) then
-              gam = (t_ave(1,i)*shpi(1)+t_ave(2,i)*shpi(2)
-     $             +t_ave(3,i)*shpi(3))/(Z*Z)
+              gam = (t_ave(1,i)*shp(1)+t_ave(2,i)*shp(2)
+     $             +t_ave(3,i)*shp(3))/(Z*Z)
             else
               gam = (t1_meam(elti)*shp(1)+t2_meam(elti)*shp(2)
      $             +t3_meam(elti)*shp(3))/(Z*Z)
@@ -119,9 +132,8 @@ c     Complete the calculation of density
               Gbar = 1.d0
               dGbar = 0.d0
             else
-              call get_shpfcn(shpi,lattce_meam(elti,elti))
-              gam = (t_ave(1,i)*shpi(1)+t_ave(2,i)*shpi(2)
-     $             +t_ave(3,i)*shpi(3))/(Z*Z)
+              gam = (t_ave(1,i)*shp(1)+t_ave(2,i)*shp(2)
+     $             +t_ave(3,i)*shp(3))/(Z*Z)
               call dG_gam(gam,ibar_meam(elti),gsmooth_factor,
      $             Gbar,dGbar)
             endif
@@ -137,9 +149,9 @@ c     Complete the calculation of density
           denom = 1.d0/rho_bkgd
 
           call dG_gam(Gamma(i),ibar_meam(elti),gsmooth_factor,G,dG)
-          
+
           dGamma1(i) = (G - 2*dG*Gamma(i))*denom
-          
+
           if( rho0(i) .ne. 0.d0 ) then
             dGamma2(i) = (dG/rho0(i))*denom
           else
@@ -156,7 +168,7 @@ c     included for backward compatibility
           endif
 
           B = A_meam(elti)*Ec_meam(elti,elti)
-          
+
           if( rhob .ne. 0.d0 ) then
             if (emb_lin_neg.eq.1 .and. rhob.le.0) then
               fp(i) = -B
@@ -188,7 +200,7 @@ c     included for backward compatibility
           endif
         endif
       enddo
-      
+
       return
       end
 
@@ -198,10 +210,11 @@ cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc
 c     Compute G(Gamma) based on selection flag ibar:
 c   0 => G = sqrt(1+Gamma)
 c   1 => G = exp(Gamma/2)
-c   2 => not implemented 
+c   2 => not implemented
 c   3 => G = 2/(1+exp(-Gamma))
 c   4 => G = sqrt(1+Gamma)
 c  -5 => G = +-sqrt(abs(1+Gamma))
+      use meam_data , only: fm_exp
       implicit none
       real*8 Gamma,G
       real*8 gsmooth_factor, gsmooth_switchpoint
@@ -219,7 +232,7 @@ c         G = 0.01*(-0.99/Gamma)**99
           G = sqrt(1.d0+Gamma)
         endif
       else if (ibar.eq.1) then
-        G = exp(Gamma/2.d0)
+        G = fm_exp(Gamma/2.d0)
       else if (ibar.eq.3) then
         G = 2.d0/(1.d0+exp(-Gamma))
       else if (ibar.eq.-5) then
@@ -239,11 +252,12 @@ cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc
       subroutine dG_gam(Gamma,ibar,gsmooth_factor,G,dG)
 c Compute G(Gamma) and dG(gamma) based on selection flag ibar:
 c   0 => G = sqrt(1+Gamma)
-c   1 => G = exp(Gamma/2)
-c   2 => not implemented 
-c   3 => G = 2/(1+exp(-Gamma))
+c   1 => G = fm_exp(Gamma/2)
+c   2 => not implemented
+c   3 => G = 2/(1+fm_exp(-Gamma))
 c   4 => G = sqrt(1+Gamma)
 c  -5 => G = +-sqrt(abs(1+Gamma))
+      use meam_data , only: fm_exp
       real*8 Gamma,G,dG
       real*8 gsmooth_factor, gsmooth_switchpoint
       integer ibar
@@ -262,10 +276,10 @@ c         G = 0.01*(-0.99/Gamma)**99
           dG = 1.d0/(2.d0*G)
         endif
       else if (ibar.eq.1) then
-        G = exp(Gamma/2.d0)
+        G = fm_exp(Gamma/2.d0)
         dG = G/2.d0
       else if (ibar.eq.3) then
-        G = 2.d0/(1.d0+exp(-Gamma))
+        G = 2.d0/(1.d0+fm_exp(-Gamma))
         dG = G*(2.d0-G)/2
       else if (ibar.eq.-5) then
         if ((1.d0+Gamma).ge.0) then

@@ -1,4 +1,4 @@
-/* ----------------------------------------------------------------------
+/* -*- c++ -*- ----------------------------------------------------------
    LAMMPS - Large-scale Atomic/Molecular Massively Parallel Simulator
    http://lammps.sandia.gov, Sandia National Laboratories
    Steve Plimpton, sjplimp@sandia.gov
@@ -20,85 +20,103 @@ namespace LAMMPS_NS {
 
 class NeighRequest : protected Pointers {
  public:
-  void *requestor;       // class that made request
-  int id;                // ID of request
-                         // used to track multiple requests from one class
+  int index;                // index of which neigh request this is
+  void *requestor;          // class that made request
+  int requestor_instance;   // instance of that class (only Fix, Compute, Pair)
+  int id;                   // ID of request as stored by requestor
+                            // used to track multiple requests from one class
 
-  // which class is requesting the list, one flag is 1, others are 0
+  // -----------------------------
+  // flags set by requesting class for attributes of neighor list they need
+  // all must be set appropriately, all have defaults
+  // -----------------------------
 
-  int pair;              // set by default
+  // which class style requests the list
+  // one flag is 1, others are 0
+
+  int pair;              // pair is set by default
   int fix;
   int compute;
   int command;
+  int neigh;
 
-  // kind of list requested, one flag is 1, others are 0
-  // set by requesting class
+  // half/full setting, determines which neighbors appear in list
+  // one flag is 1, other is 0
 
-  int half;              // 1 if half neigh list (set by default)
-  int full;              // 1 if full neigh list
+  int half;              // half neigh list (set by default)
+  int full;              // full neigh list
 
-  int gran;              // 1 if granular list 
-  int granhistory;       // 1 if granular history list
+  // attribute flags, all are 0 by default
 
-  int respainner;        // 1 if a rRESPA inner list
-  int respamiddle;       // 1 if a rRESPA middle list
-  int respaouter;        // 1 if a rRESPA outer list
+  int occasional;        // how often list is built
+                         // 0 if needed every reneighboring during run
+                         // 1 if only occasionally needed by a fix, compute, etc
 
-  int half_from_full;    // 1 if half list computed from previous full list
+  int newton;            // which owned/ghost pairs appear in list
+                         // 0 if use force::newton_pair setting
+                         // 1 if override with pair newton on
+                         // 2 if override with pair newton off
 
-  // 0 if needed every reneighboring during run
-  // 1 if occasionally needed by a fix, compute, etc
-  // set by requesting class
+  int ghost;             // 1 if includes ghost atom neighbors
+  int size;              // 1 if pair cutoff set by particle radius
+  int history;           // 1 if there is also neigh history info (FixNeighHist)
+  int granonesided;      // 1 if one-sided granular list for
+                         //   sphere/surf interactions
+  int respainner;        // 1 if need a rRESPA inner list
+  int respamiddle;       // 1 if need a rRESPA middle list
+  int respaouter;        // 1 if need a rRESPA outer list
+  int bond;              // 1 if store bond neighbors instead of atom neighs
+  int omp;               // set by USER-OMP package
+  int intel;             // set by USER-INTEL package
+  int kokkos_host;       // set by KOKKOS package
+  int kokkos_device;
+  int ssa;               // set by USER-DPD package, for Shardlow lists
+  int cut;               // 1 if use a non-standard cutoff length
+  double cutoff;         // special cutoff distance for this list
 
-  int occasional;
-
-  // 0 if use force::newton_pair setting
-  // 1 if override with pair newton on
-  // 2 if override with pair newton off
-
-  int newton;
-
-  // 0 if user of list wants no encoding of special bond flags and all neighs
-  // 1 if user of list wants special bond flags encoded, set by default
-
-  int special;
-
-  // number of auxiliary floating point values to store, 0 if none
-  // set by requesting class
-
-  int dnum;
-
-  // 1 if also need neighbors of ghosts
-
-  int ghost;
-
-  // 1 if neighbor list build will be done on GPU
-
-  int cudable;
-
-  // 1 if using multi-threaded neighbor list build
-
-  int omp;
-
-  // set by neighbor and pair_hybrid after all requests are made
-  // these settings do not change kind value
-
-  int copy;              // 1 if this list copied from another list
+  // flags set by pair hybrid
 
   int skip;              // 1 if this list skips atom types from another list
   int *iskip;            // iskip[i] if atoms of type I are not in list
   int **ijskip;          // ijskip[i][j] if pairs of type I,J are not in list
 
-  int otherlist;         // index of other list to copy or skip from
+  // command_style only set if command = 1
+  // allows print_pair_info() to access command name
+
+  const char *command_style;
+
+  // -----------------------------
+  // flags set by Neighbor class to morph original requests
+  // -----------------------------
+
+  int skiplist;          // index of list to skip from
+  int off2on;            // 1 if this is newton on list, but skips from off list
+
+  int copy;              // 1 if this list copied from another list
+  int copylist;          // index of list to copy from
+
+  int halffull;          // 1 if half list computed from another full list
+  int halffulllist;      // index of full list to derive half from
+
+  int unique;            // 1 if this list requires its own
+                         // NStencil, Nbin class - because of requestor cutoff
+
+  // -----------------------------
+  // internal settings made by Neighbor class
+  // -----------------------------
+
+  int index_bin;         // index of NBin class assigned to this request
+  int index_stencil;     // index of NStencil class assigned to this request
+  int index_pair;        // index of NPair class assigned to this request
 
   // methods
 
   NeighRequest(class LAMMPS *);
   ~NeighRequest();
+  void archive();
   int identical(NeighRequest *);
-  int same_kind(NeighRequest *);
   int same_skip(NeighRequest *);
-  void copy_request(NeighRequest *);
+  void copy_request(NeighRequest *, int);
 };
 
 }

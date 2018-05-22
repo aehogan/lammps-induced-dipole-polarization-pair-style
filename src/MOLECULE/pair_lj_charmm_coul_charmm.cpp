@@ -15,10 +15,10 @@
    Contributing author: Paul Crozier (SNL)
 ------------------------------------------------------------------------- */
 
-#include "math.h"
-#include "stdio.h"
-#include "stdlib.h"
-#include "string.h"
+#include <math.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
 #include "pair_lj_charmm_coul_charmm.h"
 #include "atom.h"
 #include "comm.h"
@@ -36,13 +36,15 @@ PairLJCharmmCoulCharmm::PairLJCharmmCoulCharmm(LAMMPS *lmp) : Pair(lmp)
 {
   implicit = 0;
   mix_flag = ARITHMETIC;
+  writedata = 1;
 }
 
 /* ---------------------------------------------------------------------- */
 
 PairLJCharmmCoulCharmm::~PairLJCharmmCoulCharmm()
 {
-  if (allocated) {
+  if (!copymode) {
+   if (allocated) {
     memory->destroy(setflag);
     memory->destroy(cutsq);
 
@@ -58,6 +60,7 @@ PairLJCharmmCoulCharmm::~PairLJCharmmCoulCharmm()
     memory->destroy(lj14_2);
     memory->destroy(lj14_3);
     memory->destroy(lj14_4);
+   }
   }
 }
 
@@ -107,6 +110,7 @@ void PairLJCharmmCoulCharmm::compute(int eflag, int vflag)
       factor_lj = special_lj[sbmask(j)];
       factor_coul = special_coul[sbmask(j)];
       j &= NEIGHMASK;
+      jtype = type[j];
 
       delx = xtmp - x[j][0];
       dely = ytmp - x[j][1];
@@ -121,15 +125,12 @@ void PairLJCharmmCoulCharmm::compute(int eflag, int vflag)
           if (rsq > cut_coul_innersq) {
             switch1 = (cut_coulsq-rsq) * (cut_coulsq-rsq) *
               (cut_coulsq + 2.0*rsq - 3.0*cut_coul_innersq) / denom_coul;
-            switch2 = 12.0*rsq * (cut_coulsq-rsq) *
-              (rsq-cut_coul_innersq) / denom_coul;
-            forcecoul *= switch1 + switch2;
+            forcecoul *= switch1;
           }
         } else forcecoul = 0.0;
 
         if (rsq < cut_ljsq) {
           r6inv = r2inv*r2inv*r2inv;
-          jtype = type[j];
           forcelj = r6inv * (lj1[itype][jtype]*r6inv - lj2[itype][jtype]);
           if (rsq > cut_lj_innersq) {
             switch1 = (cut_ljsq-rsq) * (cut_ljsq-rsq) *
@@ -224,14 +225,14 @@ void PairLJCharmmCoulCharmm::settings(int narg, char **arg)
   if (narg != 2 && narg != 4)
     error->all(FLERR,"Illegal pair_style command");
 
-  cut_lj_inner = force->numeric(arg[0]);
-  cut_lj = force->numeric(arg[1]);
+  cut_lj_inner = force->numeric(FLERR,arg[0]);
+  cut_lj = force->numeric(FLERR,arg[1]);
   if (narg == 2) {
     cut_coul_inner = cut_lj_inner;
     cut_coul = cut_lj;
   } else {
-    cut_coul_inner = force->numeric(arg[2]);
-    cut_coul = force->numeric(arg[3]);
+    cut_coul_inner = force->numeric(FLERR,arg[2]);
+    cut_coul = force->numeric(FLERR,arg[3]);
   }
 }
 
@@ -246,16 +247,16 @@ void PairLJCharmmCoulCharmm::coeff(int narg, char **arg)
   if (!allocated) allocate();
 
   int ilo,ihi,jlo,jhi;
-  force->bounds(arg[0],atom->ntypes,ilo,ihi);
-  force->bounds(arg[1],atom->ntypes,jlo,jhi);
+  force->bounds(FLERR,arg[0],atom->ntypes,ilo,ihi);
+  force->bounds(FLERR,arg[1],atom->ntypes,jlo,jhi);
 
-  double epsilon_one = force->numeric(arg[2]);
-  double sigma_one = force->numeric(arg[3]);
+  double epsilon_one = force->numeric(FLERR,arg[2]);
+  double sigma_one = force->numeric(FLERR,arg[3]);
   double eps14_one = epsilon_one;
   double sigma14_one = sigma_one;
   if (narg == 6) {
-    eps14_one = force->numeric(arg[4]);
-    sigma14_one = force->numeric(arg[5]);
+    eps14_one = force->numeric(FLERR,arg[4]);
+    sigma14_one = force->numeric(FLERR,arg[5]);
   }
 
   int count = 0;
@@ -283,7 +284,7 @@ void PairLJCharmmCoulCharmm::init_style()
     error->all(FLERR,
                "Pair style lj/charmm/coul/charmm requires atom attribute q");
 
-  neighbor->request(this);
+  neighbor->request(this,instance_me);
 
   // require cut_lj_inner < cut_lj, cut_coul_inner < cut_coul
 
@@ -393,6 +394,29 @@ void PairLJCharmmCoulCharmm::read_restart(FILE *fp)
 }
 
 /* ----------------------------------------------------------------------
+   proc 0 writes to data file
+------------------------------------------------------------------------- */
+
+void PairLJCharmmCoulCharmm::write_data(FILE *fp)
+{
+  for (int i = 1; i <= atom->ntypes; i++)
+    fprintf(fp,"%d %g %g %g %g\n",
+            i,epsilon[i][i],sigma[i][i],eps14[i][i],sigma14[i][i]);
+}
+
+/* ----------------------------------------------------------------------
+   proc 0 writes all pairs to data file
+------------------------------------------------------------------------- */
+
+void PairLJCharmmCoulCharmm::write_data_all(FILE *fp)
+{
+  for (int i = 1; i <= atom->ntypes; i++)
+    for (int j = i; j <= atom->ntypes; j++)
+      fprintf(fp,"%d %d %g %g %g %g\n",i,j,
+              epsilon[i][j],sigma[i][j],eps14[i][j],sigma14[i][j]);
+}
+
+/* ----------------------------------------------------------------------
   proc 0 writes to restart file
 ------------------------------------------------------------------------- */
 
@@ -444,9 +468,7 @@ double PairLJCharmmCoulCharmm::single(int i, int j, int itype, int jtype,
     if (rsq > cut_coul_innersq) {
       switch1 = (cut_coulsq-rsq) * (cut_coulsq-rsq) *
         (cut_coulsq + 2.0*rsq - 3.0*cut_coul_innersq) / denom_coul;
-      switch2 = 12.0*rsq * (cut_coulsq-rsq) *
-        (rsq-cut_coul_innersq) / denom_coul;
-      forcecoul *= switch1 + switch2;
+      forcecoul *= switch1;
     }
   } else forcecoul = 0.0;
 

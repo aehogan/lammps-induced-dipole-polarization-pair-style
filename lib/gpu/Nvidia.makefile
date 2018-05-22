@@ -28,7 +28,8 @@ OBJS = $(OBJ_DIR)/lal_atom.o $(OBJ_DIR)/lal_ans.o \
        $(OBJ_DIR)/lal_neighbor.o $(OBJ_DIR)/lal_neighbor_shared.o \
        $(OBJ_DIR)/lal_device.o $(OBJ_DIR)/lal_base_atomic.o \
        $(OBJ_DIR)/lal_base_charge.o $(OBJ_DIR)/lal_base_ellipsoid.o \
-       $(OBJ_DIR)/lal_base_dipole.o \
+       $(OBJ_DIR)/lal_base_dipole.o $(OBJ_DIR)/lal_base_three.o \
+       $(OBJ_DIR)/lal_base_dpd.o \
        $(OBJ_DIR)/lal_pppm.o $(OBJ_DIR)/lal_pppm_ext.o \
        $(OBJ_DIR)/lal_gayberne.o $(OBJ_DIR)/lal_gayberne_ext.o \
        $(OBJ_DIR)/lal_re_squared.o $(OBJ_DIR)/lal_re_squared_ext.o \
@@ -42,9 +43,10 @@ OBJS = $(OBJ_DIR)/lal_atom.o $(OBJ_DIR)/lal_ans.o \
        $(OBJ_DIR)/lal_coul_long.o $(OBJ_DIR)/lal_coul_long_ext.o \
        $(OBJ_DIR)/lal_morse.o $(OBJ_DIR)/lal_morse_ext.o \
        $(OBJ_DIR)/lal_charmm_long.o $(OBJ_DIR)/lal_charmm_long_ext.o \
-       $(OBJ_DIR)/lal_cg_cmm.o $(OBJ_DIR)/lal_cg_cmm_ext.o \
-       $(OBJ_DIR)/lal_cg_cmm_long.o $(OBJ_DIR)/lal_cg_cmm_long_ext.o \
+       $(OBJ_DIR)/lal_lj_sdk.o $(OBJ_DIR)/lal_lj_sdk_ext.o \
+       $(OBJ_DIR)/lal_lj_sdk_long.o $(OBJ_DIR)/lal_lj_sdk_long_ext.o \
        $(OBJ_DIR)/lal_eam.o $(OBJ_DIR)/lal_eam_ext.o \
+       $(OBJ_DIR)/lal_eam_fs_ext.o $(OBJ_DIR)/lal_eam_alloy_ext.o \
        $(OBJ_DIR)/lal_buck.o $(OBJ_DIR)/lal_buck_ext.o \
        $(OBJ_DIR)/lal_buck_coul.o $(OBJ_DIR)/lal_buck_coul_ext.o \
        $(OBJ_DIR)/lal_buck_coul_long.o $(OBJ_DIR)/lal_buck_coul_long_ext.o \
@@ -59,7 +61,23 @@ OBJS = $(OBJ_DIR)/lal_atom.o $(OBJ_DIR)/lal_ans.o \
        $(OBJ_DIR)/lal_gauss.o $(OBJ_DIR)/lal_gauss_ext.o \
        $(OBJ_DIR)/lal_yukawa_colloid.o $(OBJ_DIR)/lal_yukawa_colloid_ext.o \
        $(OBJ_DIR)/lal_lj_coul_debye.o $(OBJ_DIR)/lal_lj_coul_debye_ext.o \
-       $(OBJ_DIR)/lal_coul_dsf.o $(OBJ_DIR)/lal_coul_dsf_ext.o
+       $(OBJ_DIR)/lal_coul_dsf.o $(OBJ_DIR)/lal_coul_dsf_ext.o \
+       $(OBJ_DIR)/lal_sw.o $(OBJ_DIR)/lal_sw_ext.o \
+       $(OBJ_DIR)/lal_vashishta.o $(OBJ_DIR)/lal_vashishta_ext.o \
+       $(OBJ_DIR)/lal_beck.o $(OBJ_DIR)/lal_beck_ext.o \
+       $(OBJ_DIR)/lal_mie.o $(OBJ_DIR)/lal_mie_ext.o \
+       $(OBJ_DIR)/lal_soft.o $(OBJ_DIR)/lal_soft_ext.o \
+       $(OBJ_DIR)/lal_lj_coul_msm.o $(OBJ_DIR)/lal_lj_coul_msm_ext.o \
+       $(OBJ_DIR)/lal_lj_gromacs.o $(OBJ_DIR)/lal_lj_gromacs_ext.o \
+       $(OBJ_DIR)/lal_dpd.o $(OBJ_DIR)/lal_dpd_ext.o \
+       $(OBJ_DIR)/lal_tersoff.o $(OBJ_DIR)/lal_tersoff_ext.o \
+       $(OBJ_DIR)/lal_tersoff_zbl.o $(OBJ_DIR)/lal_tersoff_zbl_ext.o \
+       $(OBJ_DIR)/lal_tersoff_mod.o $(OBJ_DIR)/lal_tersoff_mod_ext.o \
+       $(OBJ_DIR)/lal_coul.o $(OBJ_DIR)/lal_coul_ext.o \
+       $(OBJ_DIR)/lal_coul_debye.o $(OBJ_DIR)/lal_coul_debye_ext.o \
+       $(OBJ_DIR)/lal_zbl.o $(OBJ_DIR)/lal_zbl_ext.o \
+       $(OBJ_DIR)/lal_lj_cubic.o $(OBJ_DIR)/lal_lj_cubic_ext.o \
+       $(OBJ_DIR)/lal_ufm.o $(OBJ_DIR)/lal_ufm_ext.o 
 
 CBNS = $(OBJ_DIR)/device.cubin $(OBJ_DIR)/device_cubin.h \
        $(OBJ_DIR)/atom.cubin $(OBJ_DIR)/atom_cubin.h \
@@ -82,8 +100,8 @@ CBNS = $(OBJ_DIR)/device.cubin $(OBJ_DIR)/device_cubin.h \
        $(OBJ_DIR)/coul_long.cubin $(OBJ_DIR)/coul_long_cubin.h \
        $(OBJ_DIR)/morse.cubin $(OBJ_DIR)/morse_cubin.h \
        $(OBJ_DIR)/charmm_long.cubin $(OBJ_DIR)/charmm_long_cubin.h \
-       $(OBJ_DIR)/cg_cmm.cubin $(OBJ_DIR)/cg_cmm_cubin.h \
-       $(OBJ_DIR)/cg_cmm_long.cubin $(OBJ_DIR)/cg_cmm_long_cubin.h \
+       $(OBJ_DIR)/lj_sdk.cubin $(OBJ_DIR)/lj_sdk_cubin.h \
+       $(OBJ_DIR)/lj_sdk_long.cubin $(OBJ_DIR)/lj_sdk_long_cubin.h \
        $(OBJ_DIR)/eam.cubin $(OBJ_DIR)/eam_cubin.h \
        $(OBJ_DIR)/buck.cubin $(OBJ_DIR)/buck_cubin.h \
        $(OBJ_DIR)/buck_coul_long.cubin $(OBJ_DIR)/buck_coul_long_cubin.h \
@@ -99,9 +117,28 @@ CBNS = $(OBJ_DIR)/device.cubin $(OBJ_DIR)/device_cubin.h \
        $(OBJ_DIR)/gauss.cubin $(OBJ_DIR)/gauss_cubin.h \
        $(OBJ_DIR)/yukawa_colloid.cubin $(OBJ_DIR)/yukawa_colloid_cubin.h \
        $(OBJ_DIR)/lj_coul_debye.cubin $(OBJ_DIR)/lj_coul_debye_cubin.h \
-       $(OBJ_DIR)/coul_dsf.cubin $(OBJ_DIR)/coul_dsf_cubin.h
+       $(OBJ_DIR)/coul_dsf.cubin $(OBJ_DIR)/coul_dsf_cubin.h \
+       $(OBJ_DIR)/sw.cubin $(OBJ_DIR)/sw_cubin.h \
+       $(OBJ_DIR)/vashishta.cubin $(OBJ_DIR)/vashishta_cubin.h \
+       $(OBJ_DIR)/beck.cubin $(OBJ_DIR)/beck_cubin.h \
+       $(OBJ_DIR)/mie.cubin $(OBJ_DIR)/mie_cubin.h \
+       $(OBJ_DIR)/soft.cubin $(OBJ_DIR)/soft_cubin.h \
+       $(OBJ_DIR)/lj_coul_msm.cubin $(OBJ_DIR)/lj_coul_msm_cubin.h \
+       $(OBJ_DIR)/lj_gromacs.cubin $(OBJ_DIR)/lj_gromacs_cubin.h \
+       $(OBJ_DIR)/dpd.cubin $(OBJ_DIR)/dpd_cubin.h \
+       $(OBJ_DIR)/tersoff.cubin $(OBJ_DIR)/tersoff_cubin.h \
+       $(OBJ_DIR)/tersoff_zbl.cubin $(OBJ_DIR)/tersoff_zbl_cubin.h \
+       $(OBJ_DIR)/tersoff_mod.cubin $(OBJ_DIR)/tersoff_mod_cubin.h \
+       $(OBJ_DIR)/coul.cubin $(OBJ_DIR)/coul_cubin.h \
+       $(OBJ_DIR)/coul_debye.cubin $(OBJ_DIR)/coul_debye_cubin.h \
+       $(OBJ_DIR)/zbl.cubin $(OBJ_DIR)/zbl_cubin.h \
+       $(OBJ_DIR)/lj_cubic.cubin $(OBJ_DIR)/lj_cubic_cubin.h \
+       $(OBJ_DIR)/ufm.cubin $(OBJ_DIR)/ufm_cubin.h
 
-all: $(GPU_LIB) $(EXECS)
+all: $(OBJ_DIR) $(GPU_LIB) $(EXECS)
+
+$(OBJ_DIR):
+	mkdir -p $@
 
 $(OBJ_DIR)/cudpp.o: cudpp_mini/cudpp.cpp
 	$(CUDR) -o $@ -c cudpp_mini/cudpp.cpp -Icudpp_mini
@@ -171,6 +208,12 @@ $(OBJ_DIR)/lal_base_ellipsoid.o: $(ALL_H) lal_base_ellipsoid.h lal_base_ellipsoi
 
 $(OBJ_DIR)/lal_base_dipole.o: $(ALL_H) lal_base_dipole.h lal_base_dipole.cpp
 	$(CUDR) -o $@ -c lal_base_dipole.cpp
+
+$(OBJ_DIR)/lal_base_three.o: $(ALL_H) lal_base_three.h lal_base_three.cpp
+	$(CUDR) -o $@ -c lal_base_three.cpp
+
+$(OBJ_DIR)/lal_base_dpd.o: $(ALL_H) lal_base_dpd.h lal_base_dpd.cpp
+	$(CUDR) -o $@ -c lal_base_dpd.cpp
 
 $(OBJ_DIR)/pppm_f.cubin: lal_pppm.cu lal_precision.h lal_preprocessor.h
 	$(CUDA) --cubin -DNV_KERNEL -Dgrdtyp=float -Dgrdtyp4=float4 -o $@ lal_pppm.cu
@@ -352,29 +395,29 @@ $(OBJ_DIR)/lal_lj_expand.o: $(ALL_H) lal_lj_expand.h lal_lj_expand.cpp $(OBJ_DIR
 $(OBJ_DIR)/lal_lj_expand_ext.o: $(ALL_H) lal_lj_expand.h lal_lj_expand_ext.cpp lal_base_atomic.h
 	$(CUDR) -o $@ -c lal_lj_expand_ext.cpp -I$(OBJ_DIR)
 
-$(OBJ_DIR)/cg_cmm.cubin: lal_cg_cmm.cu lal_precision.h lal_preprocessor.h
-	$(CUDA) --cubin -DNV_KERNEL -o $@ lal_cg_cmm.cu
+$(OBJ_DIR)/lj_sdk.cubin: lal_lj_sdk.cu lal_precision.h lal_preprocessor.h
+	$(CUDA) --cubin -DNV_KERNEL -o $@ lal_lj_sdk.cu
 
-$(OBJ_DIR)/cg_cmm_cubin.h: $(OBJ_DIR)/cg_cmm.cubin $(OBJ_DIR)/cg_cmm.cubin
-	$(BIN2C) -c -n cg_cmm $(OBJ_DIR)/cg_cmm.cubin > $(OBJ_DIR)/cg_cmm_cubin.h
+$(OBJ_DIR)/lj_sdk_cubin.h: $(OBJ_DIR)/lj_sdk.cubin $(OBJ_DIR)/lj_sdk.cubin
+	$(BIN2C) -c -n lj_sdk $(OBJ_DIR)/lj_sdk.cubin > $(OBJ_DIR)/lj_sdk_cubin.h
 
-$(OBJ_DIR)/lal_cg_cmm.o: $(ALL_H) lal_cg_cmm.h lal_cg_cmm.cpp $(OBJ_DIR)/cg_cmm_cubin.h $(OBJ_DIR)/lal_base_atomic.o
-	$(CUDR) -o $@ -c lal_cg_cmm.cpp -I$(OBJ_DIR)
+$(OBJ_DIR)/lal_lj_sdk.o: $(ALL_H) lal_lj_sdk.h lal_lj_sdk.cpp $(OBJ_DIR)/lj_sdk_cubin.h $(OBJ_DIR)/lal_base_atomic.o
+	$(CUDR) -o $@ -c lal_lj_sdk.cpp -I$(OBJ_DIR)
 
-$(OBJ_DIR)/lal_cg_cmm_ext.o: $(ALL_H) lal_cg_cmm.h lal_cg_cmm_ext.cpp lal_base_atomic.h
-	$(CUDR) -o $@ -c lal_cg_cmm_ext.cpp -I$(OBJ_DIR)
+$(OBJ_DIR)/lal_lj_sdk_ext.o: $(ALL_H) lal_lj_sdk.h lal_lj_sdk_ext.cpp lal_base_atomic.h
+	$(CUDR) -o $@ -c lal_lj_sdk_ext.cpp -I$(OBJ_DIR)
 
-$(OBJ_DIR)/cg_cmm_long.cubin: lal_cg_cmm_long.cu lal_precision.h lal_preprocessor.h
-	$(CUDA) --cubin -DNV_KERNEL -o $@ lal_cg_cmm_long.cu
+$(OBJ_DIR)/lj_sdk_long.cubin: lal_lj_sdk_long.cu lal_precision.h lal_preprocessor.h
+	$(CUDA) --cubin -DNV_KERNEL -o $@ lal_lj_sdk_long.cu
 
-$(OBJ_DIR)/cg_cmm_long_cubin.h: $(OBJ_DIR)/cg_cmm_long.cubin $(OBJ_DIR)/cg_cmm_long.cubin
-	$(BIN2C) -c -n cg_cmm_long $(OBJ_DIR)/cg_cmm_long.cubin > $(OBJ_DIR)/cg_cmm_long_cubin.h
+$(OBJ_DIR)/lj_sdk_long_cubin.h: $(OBJ_DIR)/lj_sdk_long.cubin $(OBJ_DIR)/lj_sdk_long.cubin
+	$(BIN2C) -c -n lj_sdk_long $(OBJ_DIR)/lj_sdk_long.cubin > $(OBJ_DIR)/lj_sdk_long_cubin.h
 
-$(OBJ_DIR)/lal_cg_cmm_long.o: $(ALL_H) lal_cg_cmm_long.h lal_cg_cmm_long.cpp $(OBJ_DIR)/cg_cmm_long_cubin.h $(OBJ_DIR)/lal_base_atomic.o
-	$(CUDR) -o $@ -c lal_cg_cmm_long.cpp -I$(OBJ_DIR)
+$(OBJ_DIR)/lal_lj_sdk_long.o: $(ALL_H) lal_lj_sdk_long.h lal_lj_sdk_long.cpp $(OBJ_DIR)/lj_sdk_long_cubin.h $(OBJ_DIR)/lal_base_atomic.o
+	$(CUDR) -o $@ -c lal_lj_sdk_long.cpp -I$(OBJ_DIR)
 
-$(OBJ_DIR)/lal_cg_cmm_long_ext.o: $(ALL_H) lal_cg_cmm_long.h lal_cg_cmm_long_ext.cpp lal_base_charge.h
-	$(CUDR) -o $@ -c lal_cg_cmm_long_ext.cpp -I$(OBJ_DIR)
+$(OBJ_DIR)/lal_lj_sdk_long_ext.o: $(ALL_H) lal_lj_sdk_long.h lal_lj_sdk_long_ext.cpp lal_base_charge.h
+	$(CUDR) -o $@ -c lal_lj_sdk_long_ext.cpp -I$(OBJ_DIR)
 
 $(OBJ_DIR)/eam.cubin: lal_eam.cu lal_precision.h lal_preprocessor.h
 	$(CUDA) --cubin -DNV_KERNEL -o $@ lal_eam.cu
@@ -387,6 +430,12 @@ $(OBJ_DIR)/lal_eam.o: $(ALL_H) lal_eam.h lal_eam.cpp $(OBJ_DIR)/eam_cubin.h $(OB
 
 $(OBJ_DIR)/lal_eam_ext.o: $(ALL_H) lal_eam.h lal_eam_ext.cpp lal_base_atomic.h
 	$(CUDR) -o $@ -c lal_eam_ext.cpp -I$(OBJ_DIR)
+
+$(OBJ_DIR)/lal_eam_fs_ext.o: $(ALL_H) lal_eam.h lal_eam_fs_ext.cpp lal_base_atomic.h
+	$(CUDR) -o $@ -c lal_eam_fs_ext.cpp -I$(OBJ_DIR)
+
+$(OBJ_DIR)/lal_eam_alloy_ext.o: $(ALL_H) lal_eam.h lal_eam_alloy_ext.cpp lal_base_atomic.h
+	$(CUDR) -o $@ -c lal_eam_alloy_ext.cpp -I$(OBJ_DIR)
 
 $(OBJ_DIR)/buck.cubin: lal_buck.cu lal_precision.h lal_preprocessor.h
 	$(CUDA) --cubin -DNV_KERNEL -o $@ lal_buck.cu
@@ -568,17 +617,210 @@ $(OBJ_DIR)/lal_coul_dsf.o: $(ALL_H) lal_coul_dsf.h lal_coul_dsf.cpp $(OBJ_DIR)/c
 $(OBJ_DIR)/lal_coul_dsf_ext.o: $(ALL_H) lal_coul_dsf.h lal_coul_dsf_ext.cpp lal_base_charge.h
 	$(CUDR) -o $@ -c lal_coul_dsf_ext.cpp -I$(OBJ_DIR)
 
+$(OBJ_DIR)/vashishta.cubin: lal_vashishta.cu lal_precision.h lal_preprocessor.h
+	$(CUDA) --cubin -DNV_KERNEL -o $@ lal_vashishta.cu
+
+$(OBJ_DIR)/vashishta_cubin.h: $(OBJ_DIR)/vashishta.cubin $(OBJ_DIR)/vashishta.cubin
+	$(BIN2C) -c -n vashishta $(OBJ_DIR)/vashishta.cubin > $(OBJ_DIR)/vashishta_cubin.h
+
+$(OBJ_DIR)/lal_vashishta.o: $(ALL_H) lal_vashishta.h lal_vashishta.cpp $(OBJ_DIR)/vashishta_cubin.h $(OBJ_DIR)/lal_base_three.o
+	$(CUDR) -o $@ -c lal_vashishta.cpp -I$(OBJ_DIR)
+
+$(OBJ_DIR)/lal_vashishta_ext.o: $(ALL_H) lal_vashishta.h lal_vashishta_ext.cpp lal_base_three.h
+	$(CUDR) -o $@ -c lal_vashishta_ext.cpp -I$(OBJ_DIR)
+
+$(OBJ_DIR)/sw.cubin: lal_sw.cu lal_precision.h lal_preprocessor.h
+	$(CUDA) --cubin -DNV_KERNEL -o $@ lal_sw.cu
+
+$(OBJ_DIR)/sw_cubin.h: $(OBJ_DIR)/sw.cubin $(OBJ_DIR)/sw.cubin
+	$(BIN2C) -c -n sw $(OBJ_DIR)/sw.cubin > $(OBJ_DIR)/sw_cubin.h
+
+$(OBJ_DIR)/lal_sw.o: $(ALL_H) lal_sw.h lal_sw.cpp $(OBJ_DIR)/sw_cubin.h $(OBJ_DIR)/lal_base_three.o
+	$(CUDR) -o $@ -c lal_sw.cpp -I$(OBJ_DIR)
+
+$(OBJ_DIR)/lal_sw_ext.o: $(ALL_H) lal_sw.h lal_sw_ext.cpp lal_base_three.h
+	$(CUDR) -o $@ -c lal_sw_ext.cpp -I$(OBJ_DIR)
+
+$(OBJ_DIR)/beck.cubin: lal_beck.cu lal_precision.h lal_preprocessor.h
+	$(CUDA) --cubin -DNV_KERNEL -o $@ lal_beck.cu
+
+$(OBJ_DIR)/beck_cubin.h: $(OBJ_DIR)/beck.cubin $(OBJ_DIR)/beck.cubin
+	$(BIN2C) -c -n beck $(OBJ_DIR)/beck.cubin > $(OBJ_DIR)/beck_cubin.h
+
+$(OBJ_DIR)/lal_beck.o: $(ALL_H) lal_beck.h lal_beck.cpp $(OBJ_DIR)/beck_cubin.h $(OBJ_DIR)/lal_base_atomic.o
+	$(CUDR) -o $@ -c lal_beck.cpp -I$(OBJ_DIR)
+
+$(OBJ_DIR)/lal_beck_ext.o: $(ALL_H) lal_beck.h lal_beck_ext.cpp lal_base_atomic.h
+	$(CUDR) -o $@ -c lal_beck_ext.cpp -I$(OBJ_DIR)
+
+$(OBJ_DIR)/mie.cubin: lal_mie.cu lal_precision.h lal_preprocessor.h
+	$(CUDA) --cubin -DNV_KERNEL -o $@ lal_mie.cu
+
+$(OBJ_DIR)/mie_cubin.h: $(OBJ_DIR)/mie.cubin $(OBJ_DIR)/mie.cubin
+	$(BIN2C) -c -n mie $(OBJ_DIR)/mie.cubin > $(OBJ_DIR)/mie_cubin.h
+
+$(OBJ_DIR)/lal_mie.o: $(ALL_H) lal_mie.h lal_mie.cpp $(OBJ_DIR)/mie_cubin.h $(OBJ_DIR)/lal_base_atomic.o
+	$(CUDR) -o $@ -c lal_mie.cpp -I$(OBJ_DIR)
+
+$(OBJ_DIR)/lal_mie_ext.o: $(ALL_H) lal_mie.h lal_mie_ext.cpp lal_base_atomic.h
+	$(CUDR) -o $@ -c lal_mie_ext.cpp -I$(OBJ_DIR)
+
+$(OBJ_DIR)/soft.cubin: lal_soft.cu lal_precision.h lal_preprocessor.h
+	$(CUDA) --cubin -DNV_KERNEL -o $@ lal_soft.cu
+
+$(OBJ_DIR)/soft_cubin.h: $(OBJ_DIR)/soft.cubin $(OBJ_DIR)/soft.cubin
+	$(BIN2C) -c -n soft $(OBJ_DIR)/soft.cubin > $(OBJ_DIR)/soft_cubin.h
+
+$(OBJ_DIR)/lal_soft.o: $(ALL_H) lal_soft.h lal_soft.cpp $(OBJ_DIR)/soft_cubin.h $(OBJ_DIR)/lal_base_atomic.o
+	$(CUDR) -o $@ -c lal_soft.cpp -I$(OBJ_DIR)
+
+$(OBJ_DIR)/lal_soft_ext.o: $(ALL_H) lal_soft.h lal_soft_ext.cpp lal_base_atomic.h
+	$(CUDR) -o $@ -c lal_soft_ext.cpp -I$(OBJ_DIR)
+
+$(OBJ_DIR)/lj_coul_msm.cubin: lal_lj_coul_msm.cu lal_precision.h lal_preprocessor.h
+	$(CUDA) --cubin -DNV_KERNEL -o $@ lal_lj_coul_msm.cu
+
+$(OBJ_DIR)/lj_coul_msm_cubin.h: $(OBJ_DIR)/lj_coul_msm.cubin $(OBJ_DIR)/lj_coul_msm.cubin
+	$(BIN2C) -c -n lj_coul_msm $(OBJ_DIR)/lj_coul_msm.cubin > $(OBJ_DIR)/lj_coul_msm_cubin.h
+
+$(OBJ_DIR)/lal_lj_coul_msm.o: $(ALL_H) lal_lj_coul_msm.h lal_lj_coul_msm.cpp $(OBJ_DIR)/lj_coul_msm_cubin.h $(OBJ_DIR)/lal_base_charge.o
+	$(CUDR) -o $@ -c lal_lj_coul_msm.cpp -I$(OBJ_DIR)
+
+$(OBJ_DIR)/lal_lj_coul_msm_ext.o: $(ALL_H) lal_lj_coul_msm.h lal_lj_coul_msm_ext.cpp lal_base_charge.h
+	$(CUDR) -o $@ -c lal_lj_coul_msm_ext.cpp -I$(OBJ_DIR)
+
+$(OBJ_DIR)/lj_gromacs.cubin: lal_lj_gromacs.cu lal_precision.h lal_preprocessor.h
+	$(CUDA) --cubin -DNV_KERNEL -o $@ lal_lj_gromacs.cu
+
+$(OBJ_DIR)/lj_gromacs_cubin.h: $(OBJ_DIR)/lj_gromacs.cubin $(OBJ_DIR)/lj_gromacs.cubin
+	$(BIN2C) -c -n lj_gromacs $(OBJ_DIR)/lj_gromacs.cubin > $(OBJ_DIR)/lj_gromacs_cubin.h
+
+$(OBJ_DIR)/lal_lj_gromacs.o: $(ALL_H) lal_lj_gromacs.h lal_lj_gromacs.cpp $(OBJ_DIR)/lj_gromacs_cubin.h $(OBJ_DIR)/lal_base_atomic.o
+	$(CUDR) -o $@ -c lal_lj_gromacs.cpp -I$(OBJ_DIR)
+
+$(OBJ_DIR)/lal_lj_gromacs_ext.o: $(ALL_H) lal_lj_gromacs.h lal_lj_gromacs_ext.cpp lal_base_atomic.h
+	$(CUDR) -o $@ -c lal_lj_gromacs_ext.cpp -I$(OBJ_DIR)
+
+$(OBJ_DIR)/dpd.cubin: lal_dpd.cu lal_precision.h lal_preprocessor.h
+	$(CUDA) --cubin -DNV_KERNEL -o $@ lal_dpd.cu
+
+$(OBJ_DIR)/dpd_cubin.h: $(OBJ_DIR)/dpd.cubin $(OBJ_DIR)/dpd.cubin
+	$(BIN2C) -c -n dpd $(OBJ_DIR)/dpd.cubin > $(OBJ_DIR)/dpd_cubin.h
+
+$(OBJ_DIR)/ufm.cubin: lal_ufm.cu lal_precision.h lal_preprocessor.h
+	$(CUDA) --cubin -DNV_KERNEL -o $@ lal_ufm.cu
+
+$(OBJ_DIR)/ufm_cubin.h: $(OBJ_DIR)/ufm.cubin $(OBJ_DIR)/ufm.cubin
+	$(BIN2C) -c -n ufm $(OBJ_DIR)/ufm.cubin > $(OBJ_DIR)/ufm_cubin.h
+
+$(OBJ_DIR)/lal_ufm.o: $(ALL_H) lal_ufm.h lal_ufm.cpp $(OBJ_DIR)/ufm_cubin.h $(OBJ_DIR)/lal_base_atomic.o
+	$(CUDR) -o $@ -c lal_ufm.cpp -I$(OBJ_DIR)
+
+$(OBJ_DIR)/lal_ufm_ext.o: $(ALL_H) lal_ufm.h lal_ufm_ext.cpp lal_base_atomic.h
+	$(CUDR) -o $@ -c lal_ufm_ext.cpp -I$(OBJ_DIR)
+
+$(OBJ_DIR)/lal_dpd.o: $(ALL_H) lal_dpd.h lal_dpd.cpp $(OBJ_DIR)/dpd_cubin.h $(OBJ_DIR)/lal_base_dpd.o
+	$(CUDR) -o $@ -c lal_dpd.cpp -I$(OBJ_DIR)
+
+$(OBJ_DIR)/lal_dpd_ext.o: $(ALL_H) lal_dpd.h lal_dpd_ext.cpp lal_base_dpd.h
+	$(CUDR) -o $@ -c lal_dpd_ext.cpp -I$(OBJ_DIR)
+
+$(OBJ_DIR)/tersoff.cubin: lal_tersoff.cu lal_precision.h lal_tersoff_extra.h lal_preprocessor.h
+	$(CUDA) --cubin -DNV_KERNEL -o $@ lal_tersoff.cu
+
+$(OBJ_DIR)/tersoff_cubin.h: $(OBJ_DIR)/tersoff.cubin $(OBJ_DIR)/tersoff.cubin
+	$(BIN2C) -c -n tersoff $(OBJ_DIR)/tersoff.cubin > $(OBJ_DIR)/tersoff_cubin.h
+
+$(OBJ_DIR)/lal_tersoff.o: $(ALL_H) lal_tersoff.h lal_tersoff.cpp $(OBJ_DIR)/tersoff_cubin.h $(OBJ_DIR)/lal_base_three.o
+	$(CUDR) -o $@ -c lal_tersoff.cpp -I$(OBJ_DIR)
+
+$(OBJ_DIR)/lal_tersoff_ext.o: $(ALL_H) lal_tersoff.h lal_tersoff_ext.cpp lal_base_three.h
+	$(CUDR) -o $@ -c lal_tersoff_ext.cpp -I$(OBJ_DIR)
+
+$(OBJ_DIR)/tersoff_zbl.cubin: lal_tersoff_zbl.cu lal_precision.h lal_tersoff_zbl_extra.h lal_preprocessor.h
+	$(CUDA) --cubin -DNV_KERNEL -o $@ lal_tersoff_zbl.cu
+
+$(OBJ_DIR)/tersoff_zbl_cubin.h: $(OBJ_DIR)/tersoff_zbl.cubin $(OBJ_DIR)/tersoff_zbl.cubin
+	$(BIN2C) -c -n tersoff_zbl $(OBJ_DIR)/tersoff_zbl.cubin > $(OBJ_DIR)/tersoff_zbl_cubin.h
+
+$(OBJ_DIR)/lal_tersoff_zbl.o: $(ALL_H) lal_tersoff_zbl.h lal_tersoff_zbl.cpp $(OBJ_DIR)/tersoff_zbl_cubin.h $(OBJ_DIR)/lal_base_three.o
+	$(CUDR) -o $@ -c lal_tersoff_zbl.cpp -I$(OBJ_DIR)
+
+$(OBJ_DIR)/lal_tersoff_zbl_ext.o: $(ALL_H) lal_tersoff_zbl.h lal_tersoff_zbl_ext.cpp lal_base_three.h
+	$(CUDR) -o $@ -c lal_tersoff_zbl_ext.cpp -I$(OBJ_DIR)
+
+$(OBJ_DIR)/tersoff_mod.cubin: lal_tersoff_mod.cu lal_precision.h lal_tersoff_mod_extra.h lal_preprocessor.h
+	$(CUDA) --cubin -DNV_KERNEL -o $@ lal_tersoff_mod.cu
+
+$(OBJ_DIR)/tersoff_mod_cubin.h: $(OBJ_DIR)/tersoff_mod.cubin $(OBJ_DIR)/tersoff_mod.cubin
+	$(BIN2C) -c -n tersoff_mod $(OBJ_DIR)/tersoff_mod.cubin > $(OBJ_DIR)/tersoff_mod_cubin.h
+
+$(OBJ_DIR)/lal_tersoff_mod.o: $(ALL_H) lal_tersoff_mod.h lal_tersoff_mod.cpp $(OBJ_DIR)/tersoff_mod_cubin.h $(OBJ_DIR)/lal_base_three.o
+	$(CUDR) -o $@ -c lal_tersoff_mod.cpp -I$(OBJ_DIR)
+
+$(OBJ_DIR)/lal_tersoff_mod_ext.o: $(ALL_H) lal_tersoff_mod.h lal_tersoff_mod_ext.cpp lal_base_three.h
+	$(CUDR) -o $@ -c lal_tersoff_mod_ext.cpp -I$(OBJ_DIR)
+
+$(OBJ_DIR)/coul.cubin: lal_coul.cu lal_precision.h lal_preprocessor.h
+	$(CUDA) --cubin -DNV_KERNEL -o $@ lal_coul.cu
+
+$(OBJ_DIR)/coul_cubin.h: $(OBJ_DIR)/coul.cubin $(OBJ_DIR)/coul.cubin
+	$(BIN2C) -c -n coul $(OBJ_DIR)/coul.cubin > $(OBJ_DIR)/coul_cubin.h
+
+$(OBJ_DIR)/lal_coul.o: $(ALL_H) lal_coul.h lal_coul.cpp $(OBJ_DIR)/coul_cubin.h $(OBJ_DIR)/lal_base_charge.o
+	$(CUDR) -o $@ -c lal_coul.cpp -I$(OBJ_DIR)
+
+$(OBJ_DIR)/lal_coul_ext.o: $(ALL_H) lal_coul.h lal_coul_ext.cpp lal_base_charge.h
+	$(CUDR) -o $@ -c lal_coul_ext.cpp -I$(OBJ_DIR)
+
+$(OBJ_DIR)/coul_debye.cubin: lal_coul_debye.cu lal_precision.h lal_preprocessor.h
+	$(CUDA) --cubin -DNV_KERNEL -o $@ lal_coul_debye.cu
+
+$(OBJ_DIR)/coul_debye_cubin.h: $(OBJ_DIR)/coul_debye.cubin $(OBJ_DIR)/coul_debye.cubin
+	$(BIN2C) -c -n coul_debye $(OBJ_DIR)/coul_debye.cubin > $(OBJ_DIR)/coul_debye_cubin.h
+
+$(OBJ_DIR)/lal_coul_debye.o: $(ALL_H) lal_coul_debye.h lal_coul_debye.cpp $(OBJ_DIR)/coul_debye_cubin.h $(OBJ_DIR)/lal_base_charge.o
+	$(CUDR) -o $@ -c lal_coul_debye.cpp -I$(OBJ_DIR)
+
+$(OBJ_DIR)/lal_coul_debye_ext.o: $(ALL_H) lal_coul_debye.h lal_coul_debye_ext.cpp lal_base_charge.h
+	$(CUDR) -o $@ -c lal_coul_debye_ext.cpp -I$(OBJ_DIR)
+
+$(OBJ_DIR)/zbl.cubin: lal_zbl.cu lal_precision.h lal_preprocessor.h
+	$(CUDA) --cubin -DNV_KERNEL -o $@ lal_zbl.cu
+
+$(OBJ_DIR)/zbl_cubin.h: $(OBJ_DIR)/zbl.cubin $(OBJ_DIR)/zbl.cubin
+	$(BIN2C) -c -n zbl $(OBJ_DIR)/zbl.cubin > $(OBJ_DIR)/zbl_cubin.h
+
+$(OBJ_DIR)/lal_zbl.o: $(ALL_H) lal_zbl.h lal_zbl.cpp $(OBJ_DIR)/zbl_cubin.h $(OBJ_DIR)/lal_base_atomic.o
+	$(CUDR) -o $@ -c lal_zbl.cpp -I$(OBJ_DIR)
+
+$(OBJ_DIR)/lal_zbl_ext.o: $(ALL_H) lal_zbl.h lal_zbl_ext.cpp lal_base_atomic.h
+	$(CUDR) -o $@ -c lal_zbl_ext.cpp -I$(OBJ_DIR)
+
+$(OBJ_DIR)/lj_cubic.cubin: lal_lj_cubic.cu lal_precision.h lal_preprocessor.h
+	$(CUDA) --cubin -DNV_KERNEL -o $@ lal_lj_cubic.cu
+
+$(OBJ_DIR)/lj_cubic_cubin.h: $(OBJ_DIR)/lj_cubic.cubin $(OBJ_DIR)/lj_cubic.cubin
+	$(BIN2C) -c -n lj_cubic $(OBJ_DIR)/lj_cubic.cubin > $(OBJ_DIR)/lj_cubic_cubin.h
+
+$(OBJ_DIR)/lal_lj_cubic.o: $(ALL_H) lal_lj_cubic.h lal_lj_cubic.cpp $(OBJ_DIR)/lj_cubic_cubin.h $(OBJ_DIR)/lal_base_atomic.o
+	$(CUDR) -o $@ -c lal_lj_cubic.cpp -I$(OBJ_DIR)
+
+$(OBJ_DIR)/lal_lj_cubic_ext.o: $(ALL_H) lal_lj_cubic.h lal_lj_cubic_ext.cpp lal_base_atomic.h
+	$(CUDR) -o $@ -c lal_lj_cubic_ext.cpp -I$(OBJ_DIR)
+
 $(BIN_DIR)/nvc_get_devices: ./geryon/ucl_get_devices.cpp $(NVD_H)
 	$(CUDR) -o $@ ./geryon/ucl_get_devices.cpp -DUCL_CUDADR $(CUDA_LIB) -lcuda 
 
 $(GPU_LIB): $(OBJS) $(CUDPP)
 	$(AR) -crusv $(GPU_LIB) $(OBJS) $(CUDPP)
+	@cp $(EXTRAMAKE) Makefile.lammps
 
 clean:
-	rm -f $(EXECS) $(GPU_LIB) $(OBJS) $(CUDPP) $(CBNS) *.linkinfo
+	-rm -f $(EXECS) $(GPU_LIB) $(OBJS) $(CUDPP) $(CBNS) *.linkinfo
 
 veryclean: clean
-	rm -rf *~ *.linkinfo
+	-rm -rf *~ *.linkinfo
 
 cleanlib:
-	rm -f $(EXECS) $(GPU_LIB) $(OBJS) $(CBNS) *.linkinfo
+	-rm -f $(EXECS) $(GPU_LIB) $(OBJS) $(CBNS) *.linkinfo

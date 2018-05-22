@@ -1,4 +1,4 @@
-/* ----------------------------------------------------------------------
+/* -*- c++ -*- ----------------------------------------------------------
    LAMMPS - Large-scale Atomic/Molecular Massively Parallel Simulator
    http://lammps.sandia.gov, Sandia National Laboratories
    Steve Plimpton, sjplimp@sandia.gov
@@ -30,7 +30,10 @@ class ComputeEventDisplace : public Compute {
   ~ComputeEventDisplace();
   void init();
   double compute_scalar();
+
+  int all_events();
   void reset_extra_compute_fix(const char *);
+
 
  private:
   int triclinic;

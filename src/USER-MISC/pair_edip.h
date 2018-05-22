@@ -1,4 +1,4 @@
-/* ----------------------------------------------------------------------
+/* -*- c++ -*- ----------------------------------------------------------
    LAMMPS - Large-scale Atomic/Molecular Massively Parallel Simulator
    http://lammps.sandia.gov, Sandia National Laboratories
    Steve Plimpton, sjplimp@sandia.gov
@@ -64,7 +64,7 @@ class PairEDIP : public Pair {
   double *tauFunctionGrid;
   double *tauFunctionDerivedGrid;
 
-  // this should be removed for multi species parametrizations
+  // this should be removed for multi species parameterization
   // since these parameters should be addressed through indexes
   // see also the PairEDIP::setup()
 
@@ -103,7 +103,7 @@ class PairEDIP : public Pair {
   void initGrids(void);
 
   void read_file(char *);
-  void setup();
+  void setup_params();
 };
 
 }

@@ -1,4 +1,4 @@
-/* ----------------------------------------------------------------------
+/* -*- c++ -*- ----------------------------------------------------------
    LAMMPS - Large-scale Atomic/Molecular Massively Parallel Simulator
    http://lammps.sandia.gov, Sandia National Laboratories
    Steve Plimpton, sjplimp@sandia.gov
@@ -16,11 +16,15 @@
 
 #include "pointers.h"
 #include "atom_vec_body.h"
+#include "my_pool_chunk.h"
 
 namespace LAMMPS_NS {
 
 class Body : protected Pointers {
  public:
+  MyPoolChunk<int> *icp;
+  MyPoolChunk<double> *dcp;
+
   char *style;
   int size_forward;           // max extra values packed for comm
   int size_border;            // max extra values packed for border comm
@@ -31,16 +35,19 @@ class Body : protected Pointers {
 
   // methods implemented by child classes
 
-  virtual int pack_comm_body(class AtomVecBody::Bonus *, double *) {return 0;}
-  virtual int unpack_comm_body(class AtomVecBody::Bonus *, double *) {return 0;}
-  virtual int pack_border_body(class AtomVecBody::Bonus *, double *) {return 0;}
-  virtual int unpack_border_body(class AtomVecBody::Bonus *, 
+  virtual int pack_comm_body(struct AtomVecBody::Bonus *, double *) {return 0;}
+  virtual int unpack_comm_body(struct AtomVecBody::Bonus *, double *) {return 0;}
+  virtual int pack_border_body(struct AtomVecBody::Bonus *, double *) {return 0;}
+  virtual int unpack_border_body(struct AtomVecBody::Bonus *,
                                  double *) {return 0;}
 
-  virtual void data_body(int, int, int, char **, char **) = 0;
+  virtual void data_body(int, int, int, int*, double *) = 0;
   virtual int noutrow(int) = 0;
   virtual int noutcol() = 0;
   virtual void output(int, int, double *) = 0;
+  virtual int image(int, double, double, int *&, double **&) = 0;
+
+  virtual double radius_body(int, int, int *, double *) {return 0.0;}
 };
 
 }

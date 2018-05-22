@@ -11,9 +11,9 @@
    See the README file in the top-level LAMMPS directory.
 ------------------------------------------------------------------------- */
 
-#include "math.h"
-#include "stdio.h"
-#include "string.h"
+#include <math.h>
+#include <stdio.h>
+#include <string.h>
 #include "fix_nve_tri.h"
 #include "math_extra.h"
 #include "atom.h"
@@ -50,8 +50,6 @@ int FixNVETri::setmask()
 
 void FixNVETri::init()
 {
-  int i,itype;
-
   // error checks
 
   avec = (AtomVecTri *) atom->style_match("tri");
@@ -67,7 +65,7 @@ void FixNVETri::init()
   int *mask = atom->mask;
   int nlocal = atom->nlocal;
 
-  for (i = 0; i < nlocal; i++)
+  for (int i = 0; i < nlocal; i++)
     if (mask[i] & groupbit) {
       if (tri[i] < 0) error->one(FLERR,"Fix nve/tri requires tri particles");
     }

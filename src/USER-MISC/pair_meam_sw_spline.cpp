@@ -23,10 +23,10 @@
  * 01-Aug-12 - RER: First code version.
 ------------------------------------------------------------------------- */
 
-#include "math.h"
-#include "stdio.h"
-#include "stdlib.h"
-#include "string.h"
+#include <math.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
 #include "pair_meam_sw_spline.h"
 #include "atom.h"
 #include "force.h"
@@ -47,6 +47,7 @@ PairMEAMSWSpline::PairMEAMSWSpline(LAMMPS *lmp) : Pair(lmp)
   single_enable = 0;
   restartinfo = 0;
   one_coeff = 1;
+  manybody_flag = 1;
 
   nelements = 0;
   elements = NULL;
@@ -462,7 +463,7 @@ void PairMEAMSWSpline::coeff(int narg, char **arg)
 void PairMEAMSWSpline::read_file(const char* filename)
 {
         if(comm->me == 0) {
-                FILE *fp = fopen(filename, "r");
+                FILE *fp = force->open_potential(filename);
                 if(fp == NULL) {
                         char str[1024];
                         sprintf(str,"Cannot open spline MEAM potential file %s", filename);
@@ -530,15 +531,12 @@ void PairMEAMSWSpline::init_style()
                 error->all(FLERR,"Pair style meam/sw/spline requires newton pair on");
 
         // Need both full and half neighbor list.
-        int irequest_full = neighbor->request(this);
+        int irequest_full = neighbor->request(this,instance_me);
         neighbor->requests[irequest_full]->id = 1;
         neighbor->requests[irequest_full]->half = 0;
         neighbor->requests[irequest_full]->full = 1;
-        int irequest_half = neighbor->request(this);
+        int irequest_half = neighbor->request(this,instance_me);
         neighbor->requests[irequest_half]->id = 2;
-        neighbor->requests[irequest_half]->half = 0;
-        neighbor->requests[irequest_half]->half_from_full = 1;
-        neighbor->requests[irequest_half]->otherlist = irequest_full;
 }
 
 /* ----------------------------------------------------------------------
@@ -561,18 +559,19 @@ double PairMEAMSWSpline::init_one(int i, int j)
 
 /* ---------------------------------------------------------------------- */
 
-int PairMEAMSWSpline::pack_comm(int n, int *list, double *buf, int pbc_flag, int *pbc)
+int PairMEAMSWSpline::pack_forward_comm(int n, int *list, double *buf,
+                                        int pbc_flag, int *pbc)
 {
         int* list_iter = list;
         int* list_iter_end = list + n;
         while(list_iter != list_iter_end)
                 *buf++ = Uprime_values[*list_iter++];
-        return 1;
+        return n;
 }
 
 /* ---------------------------------------------------------------------- */
 
-void PairMEAMSWSpline::unpack_comm(int n, int first, double *buf)
+void PairMEAMSWSpline::unpack_forward_comm(int n, int first, double *buf)
 {
         memcpy(&Uprime_values[first], buf, n * sizeof(buf[0]));
 }
@@ -733,16 +732,16 @@ void PairMEAMSWSpline::SplineFunction::writeGnuplot(const char* filename, const 
 }
 
 /* ----------------------------------------------------------------------
- * Spline-based Modified Embedded Atom Method plus 
+ * Spline-based Modified Embedded Atom Method plus
  * Stillinger-Weber (MEAM+SW) potential routine.
  *
  * Copyright (2012) Lawrence Livermore National Security, LLC.
  * Produced at the Lawrence Livermore National Laboratory.
  * Written by Robert E. Rudd (<robert.rudd@llnl.gov>).
- * Based on the spline-based MEAM routine written by 
+ * Based on the spline-based MEAM routine written by
  * Alexander Stukowski (<alex@stukowski.com>).
  * LLNL-CODE-588032 All rights reserved.
- * 
+ *
  * The spline-based MEAM+SW format was first devised and used to develop
  * potentials for bcc transition metals by Jeremy Nicklas, Michael Fellinger,
  * and Hyoungki Park at The Ohio State University.
@@ -798,7 +797,7 @@ void PairMEAMSWSpline::SplineFunction::writeGnuplot(const char* filename, const 
  * the Program is not restricted, and the output from the Program is covered
  * only if its contents constitute a work based on the Program (independent of
  * having been made by running the Program).  Whether that is true depends on
- * what the Program does.  
+ * what the Program does.
  *
  * 1.  You may copy and distribute verbatim copies of the Program's source
  * code as you receive it, in any medium, provided that you conspicuously and
@@ -914,10 +913,10 @@ void PairMEAMSWSpline::SplineFunction::writeGnuplot(const char* filename, const 
  * for enforcing compliance by third parties to this License.
  *
  * 7.  If, as a consequence of a court judgment or allegation of patent
- * infringement or for any other reason (not limited to patent 
- * issues), conditions are imposed on you (whether by court 
- * order, agreement or otherwise) that contradict the conditions 
- * of this License, they do not excuse you from the conditions 
+ * infringement or for any other reason (not limited to patent
+ * issues), conditions are imposed on you (whether by court
+ * order, agreement or otherwise) that contradict the conditions
+ * of this License, they do not excuse you from the conditions
  * of this License.  If you cannot distribute so as to satisfy
  * simultaneously your obligations under this License and any other pertinent
  * obligations, then as a consequence you may not distribute the Program at
@@ -994,5 +993,5 @@ void PairMEAMSWSpline::SplineFunction::writeGnuplot(const char* filename, const 
  * PROGRAMS), EVEN IF SUCH HOLDER OR OTHER PARTY HAS BEEN ADVISED OF THE
  * POSSIBILITY OF SUCH DAMAGES.
  *
- * END OF TERMS AND CONDITIONS 
+ * END OF TERMS AND CONDITIONS
 ------------------------------------------------------------------------- */

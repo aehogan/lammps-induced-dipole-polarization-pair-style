@@ -80,14 +80,14 @@ velocity all zero linear
 
 # only output atoms near vacancy
 
-compute coord all coord/atom $r
+compute coord all coord/atom cutoff $r
 
 #dump events all custom 1 dump.prd id type x y z
 #dump_modify events thresh c_coord != 4
 
 compute  patom all pe/atom
 compute  pe all reduce sum c_patom
-compute  satom all stress/atom
+compute  satom all stress/atom NULL
 compute  str all reduce sum c_satom[1] c_satom[2] c_satom[3]
 variable press equal (c_str[1]+c_str[2]+c_str[3])/(3*vol)
 
@@ -102,13 +102,9 @@ fix 		1 all nvt temp ${thi} ${thi} 0.1
 # tad nsteps nevent tlo thi delta_conf tmax compute
 #     [min etol ftol niter neval]
 #     [neb etol_neb ftol_neb n1steps n2steps nevery]
-#     [min_style min_style]
 #     [neb_style min_style]
 #     [neb_log logfile]
  
 tad 2000 50 ${tlo} ${thi} 0.05 1.0 event &
     min ${etol} ${ftol} ${maxiter} ${maxeval} &
-    neb 0.0 0.01 200 200 20 &
-    min_style cg &
-    neb_style fire &
-    neb_log log.neb
+    neb 0.0 0.01 200 200 20 neb_style fire neb_log log.neb

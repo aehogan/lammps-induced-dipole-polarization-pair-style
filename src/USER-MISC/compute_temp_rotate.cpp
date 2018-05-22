@@ -15,16 +15,14 @@
    Contributing author: Laurent Joly (U Lyon, France), ljoly.ulyon@gmail.com
 ------------------------------------------------------------------------- */
 
-#include "mpi.h"
-#include "stdlib.h"
-#include "string.h"
+#include <mpi.h>
+#include <stdlib.h>
+#include <string.h>
 #include "compute_temp_rotate.h"
 #include "atom.h"
 #include "update.h"
 #include "force.h"
 #include "group.h"
-#include "modify.h"
-#include "fix.h"
 #include "domain.h"
 #include "lattice.h"
 #include "error.h"
@@ -63,21 +61,25 @@ ComputeTempRotate::~ComputeTempRotate()
 
 void ComputeTempRotate::init()
 {
-  fix_dof = 0;
-  for (int i = 0; i < modify->nfix; i++)
-    fix_dof += modify->fix[i]->dof(igroup);
-  dof_compute();
-
   masstotal = group->mass(igroup);
+}
+
+/* ---------------------------------------------------------------------- */
+
+void ComputeTempRotate::setup()
+{
+  dynamic = 0;
+  if (dynamic_user || group->dynamic[igroup]) dynamic = 1;
+  dof_compute();
 }
 
 /* ---------------------------------------------------------------------- */
 
 void ComputeTempRotate::dof_compute()
 {
-  double natoms = group->count(igroup);
-  int nper = domain->dimension;
-  dof = nper * natoms;
+  adjust_dof_fix();
+  natoms_temp = group->count(igroup);
+  dof = domain->dimension * natoms_temp;
   dof -= extra_dof + fix_dof;
   if (dof > 0) tfactor = force->mvv2e / (dof * force->boltz);
   else tfactor = 0.0;
@@ -106,11 +108,11 @@ double ComputeTempRotate::compute_scalar()
   double *mass = atom->mass;
   double *rmass = atom->rmass;
   int *type = atom->type;
-  tagint *image = atom->image;
+  imageint *image = atom->image;
   int *mask = atom->mask;
   int nlocal = atom->nlocal;
 
-  if (nlocal > maxbias) {
+  if (atom->nmax > maxbias) {
     memory->destroy(vbiasall);
     maxbias = atom->nmax;
     memory->create(vbiasall,maxbias,3,"temp/rotate:vbiasall");
@@ -140,6 +142,8 @@ double ComputeTempRotate::compute_scalar()
 
   MPI_Allreduce(&t,&scalar,1,MPI_DOUBLE,MPI_SUM,world);
   if (dynamic) dof_compute();
+  if (dof < 0.0 && natoms_temp > 0.0)
+    error->all(FLERR,"Temperature compute degrees of freedom < 0");
   scalar *= tfactor;
   return scalar;
 }
@@ -167,11 +171,11 @@ void ComputeTempRotate::compute_vector()
   double *mass = atom->mass;
   double *rmass = atom->rmass;
   int *type = atom->type;
-  tagint *image = atom->image;
+  imageint *image = atom->image;
   int *mask = atom->mask;
   int nlocal = atom->nlocal;
 
-  if (nlocal > maxbias) {
+  if (atom->nmax > maxbias) {
     memory->destroy(vbiasall);
     maxbias = atom->nmax;
     memory->create(vbiasall,maxbias,3,"temp/rotate:vbiasall");
@@ -218,6 +222,17 @@ void ComputeTempRotate::remove_bias(int i, double *v)
 }
 
 /* ----------------------------------------------------------------------
+   remove velocity bias from atom I to leave thermal velocity
+------------------------------------------------------------------------- */
+
+void ComputeTempRotate::remove_bias_thr(int i, double *v, double *)
+{
+  v[0] -= vbiasall[i][0];
+  v[1] -= vbiasall[i][1];
+  v[2] -= vbiasall[i][2];
+}
+
+/* ----------------------------------------------------------------------
    remove velocity bias from all atoms to leave thermal velocity
 ------------------------------------------------------------------------- */
 
@@ -241,6 +256,18 @@ void ComputeTempRotate::remove_bias_all()
 ------------------------------------------------------------------------- */
 
 void ComputeTempRotate::restore_bias(int i, double *v)
+{
+  v[0] += vbiasall[i][0];
+  v[1] += vbiasall[i][1];
+  v[2] += vbiasall[i][2];
+}
+
+/* ----------------------------------------------------------------------
+   add back in velocity bias to atom I removed by remove_bias_thr()
+   assume remove_bias_thr() was previously called
+------------------------------------------------------------------------- */
+
+void ComputeTempRotate::restore_bias_thr(int i, double *v, double *)
 {
   v[0] += vbiasall[i][0];
   v[1] += vbiasall[i][1];

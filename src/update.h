@@ -1,4 +1,4 @@
-/* ----------------------------------------------------------------------
+/* -*- c++ -*- ----------------------------------------------------------
    LAMMPS - Large-scale Atomic/Molecular Massively Parallel Simulator
    http://lammps.sandia.gov, Sandia National Laboratories
    Steve Plimpton, sjplimp@sandia.gov
@@ -15,6 +15,8 @@
 #define LMP_UPDATE_H
 
 #include "pointers.h"
+#include <map>
+#include <string>
 
 namespace LAMMPS_NS {
 
@@ -25,6 +27,8 @@ class Update : protected Pointers {
   bigint ntimestep;               // current step (dynamics or min iterations)
   int nsteps;                     // # of steps to run (dynamics or min iter)
   int whichflag;                  // 0 for unset, 1 for dynamics, 2 for min
+  double atime;                   // simulation time at atime_step
+  bigint atimestep;               // last timestep atime was updated
   bigint firststep,laststep;      // 1st & last step of this run
   bigint beginstep,endstep;       // 1st and last step of multiple runs
   int first_update;               // 0 before initial update, 1 after
@@ -44,19 +48,31 @@ class Update : protected Pointers {
   class Min *minimize;
   char *minimize_style;
 
+  typedef Integrate *(*IntegrateCreator)(LAMMPS *,int,char**);
+  typedef Min *(*MinimizeCreator)(LAMMPS *);
+
+  typedef std::map<std::string,IntegrateCreator> IntegrateCreatorMap;
+  typedef std::map<std::string,MinimizeCreator> MinimizeCreatorMap;
+
+  IntegrateCreatorMap *integrate_map;
+  MinimizeCreatorMap *minimize_map;
+
   Update(class LAMMPS *);
   ~Update();
   void init();
   void set_units(const char *);
-  void create_integrate(int, char **, char *);
+  void create_integrate(int, char **, int);
   void create_minimize(int, char **);
   void reset_timestep(int, char **);
   void reset_timestep(bigint);
+  void update_time();
   bigint memory_usage();
 
  private:
-  void new_integrate(char *, int, char **, char *, int &);
+  void new_integrate(char *, int, char **, int, int &);
 
+  template <typename T> static Integrate *integrate_creator(LAMMPS *, int, char **);
+  template <typename T> static Min *minimize_creator(LAMMPS *);
 };
 
 }
@@ -64,14 +80,6 @@ class Update : protected Pointers {
 #endif
 
 /* ERROR/WARNING messages:
-
-E: USER-CUDA mode requires CUDA variant of run style
-
-CUDA mode is enabled, so the run style must include a cuda suffix.
-
-E: USER-CUDA mode requires CUDA variant of min style
-
-CUDA mode is enabled, so the min style must include a cuda suffix.
 
 E: Illegal ... command
 
@@ -86,10 +94,6 @@ Self-explanatory.
 E: Timestep must be >= 0
 
 Specified timestep is invalid.
-
-E: Too big a timestep
-
-Specified timestep is too large.
 
 E: Cannot reset timestep with a time-dependent fix defined
 

@@ -11,15 +11,14 @@
    See the README file in the top-level LAMMPS directory.
 ------------------------------------------------------------------------- */
 
-#include "mpi.h"
-#include "stdlib.h"
-#include "string.h"
+#include <mpi.h>
+#include <stdlib.h>
+#include <string.h>
 #include "compute_temp_profile.h"
 #include "atom.h"
 #include "update.h"
 #include "force.h"
 #include "group.h"
-#include "modify.h"
 #include "fix.h"
 #include "domain.h"
 #include "memory.h"
@@ -32,7 +31,8 @@ enum{TENSOR,BIN};
 /* ---------------------------------------------------------------------- */
 
 ComputeTempProfile::ComputeTempProfile(LAMMPS *lmp, int narg, char **arg) :
-  Compute(lmp, narg, arg)
+  Compute(lmp, narg, arg),
+  bin(NULL), vbin(NULL), binave(NULL), tbin(NULL), tbinall(NULL)
 {
   if (narg < 7) error->all(FLERR,"Illegal compute temp/profile command");
 
@@ -41,9 +41,9 @@ ComputeTempProfile::ComputeTempProfile(LAMMPS *lmp, int narg, char **arg) :
   tempflag = 1;
   tempbias = 1;
 
-  xflag = atoi(arg[3]);
-  yflag = atoi(arg[4]);
-  zflag = atoi(arg[5]);
+  xflag = force->inumeric(FLERR,arg[3]);
+  yflag = force->inumeric(FLERR,arg[4]);
+  zflag = force->inumeric(FLERR,arg[5]);
   if (zflag && domain->dimension == 2)
     error->all(FLERR,"Compute temp/profile cannot use vz for 2d systemx");
 
@@ -52,58 +52,58 @@ ComputeTempProfile::ComputeTempProfile(LAMMPS *lmp, int narg, char **arg) :
   if (xflag) ivx = ncount++;
   if (yflag) ivy = ncount++;
   if (zflag) ivz = ncount++;
+  ncount += 2;
 
   nbinx = nbiny = nbinz = 1;
-  int lastarg;
 
   int iarg = 6;
   if (strcmp(arg[iarg],"x") == 0) {
     if (iarg+2 > narg) error->all(FLERR,"Illegal compute temp/profile command");
-    nbinx = atoi(arg[iarg+1]);
+    nbinx = force->inumeric(FLERR,arg[iarg+1]);
     iarg += 2;
   } else if (strcmp(arg[iarg],"y") == 0) {
     if (iarg+2 > narg) error->all(FLERR,"Illegal compute temp/profile command");
-    nbiny = atoi(arg[iarg+1]);
+    nbiny = force->inumeric(FLERR,arg[iarg+1]);
     iarg += 2;
   } else if (strcmp(arg[iarg],"z") == 0) {
     if (iarg+2 > narg) error->all(FLERR,"Illegal compute temp/profile command");
     if (domain->dimension == 2)
       error->all(FLERR,"Compute temp/profile cannot bin z for 2d systems");
-    nbinz = atoi(arg[iarg+1]);
+    nbinz = force->inumeric(FLERR,arg[iarg+1]);
     iarg += 2;
   } else if (strcmp(arg[iarg],"xy") == 0) {
     if (iarg+3 > narg) error->all(FLERR,"Illegal compute temp/profile command");
-    nbinx = atoi(arg[iarg+1]);
-    nbiny = atoi(arg[iarg+2]);
+    nbinx = force->inumeric(FLERR,arg[iarg+1]);
+    nbiny = force->inumeric(FLERR,arg[iarg+2]);
     iarg += 3;
   } else if (strcmp(arg[iarg],"yz") == 0) {
     if (iarg+3 > narg) error->all(FLERR,"Illegal compute temp/profile command");
     if (domain->dimension == 2)
       error->all(FLERR,"Compute temp/profile cannot bin z for 2d systems");
-    nbiny = atoi(arg[iarg+1]);
-    nbinz = atoi(arg[iarg+2]);
+    nbiny = force->inumeric(FLERR,arg[iarg+1]);
+    nbinz = force->inumeric(FLERR,arg[iarg+2]);
     iarg += 3;
   } else if (strcmp(arg[iarg],"xz") == 0) {
     if (iarg+3 > narg) error->all(FLERR,"Illegal compute temp/profile command");
     if (domain->dimension == 2)
       error->all(FLERR,"Compute temp/profile cannot bin z for 2d systems");
-    nbinx = atoi(arg[iarg+1]);
-    nbinz = atoi(arg[iarg+2]);
+    nbinx = force->inumeric(FLERR,arg[iarg+1]);
+    nbinz = force->inumeric(FLERR,arg[iarg+2]);
     iarg += 3;
   } else if (strcmp(arg[iarg],"xyz") == 0) {
     if (iarg+4 > narg) error->all(FLERR,"Illegal compute temp/profile command");
     if (domain->dimension == 2)
       error->all(FLERR,"Compute temp/profile cannot bin z for 2d systems");
-    nbinx = atoi(arg[iarg+1]);
-    nbiny = atoi(arg[iarg+2]);
-    nbinz = atoi(arg[iarg+3]);
+    nbinx = force->inumeric(FLERR,arg[iarg+1]);
+    nbiny = force->inumeric(FLERR,arg[iarg+2]);
+    nbinz = force->inumeric(FLERR,arg[iarg+3]);
     iarg += 4;
   } else error->all(FLERR,"Illegal compute temp/profile command");
 
   // optional keywords
 
   outflag = TENSOR;
-  
+
   while (iarg < narg) {
     if (strcmp(arg[iarg],"out") == 0) {
       if (iarg+2 > narg)
@@ -120,8 +120,8 @@ ComputeTempProfile::ComputeTempProfile(LAMMPS *lmp, int narg, char **arg) :
   nbins = nbinx*nbiny*nbinz;
   if (nbins <= 0) error->all(FLERR,"Illegal compute temp/profile command");
 
-  memory->create(vbin,nbins,ncount+1,"temp/profile:vbin");
-  memory->create(binave,nbins,ncount+1,"temp/profile:binave");
+  memory->create(vbin,nbins,ncount,"temp/profile:vbin");
+  memory->create(binave,nbins,ncount,"temp/profile:binave");
 
   if (outflag == TENSOR) {
     vector_flag = 1;
@@ -139,10 +139,6 @@ ComputeTempProfile::ComputeTempProfile(LAMMPS *lmp, int narg, char **arg) :
   }
 
   maxatom = 0;
-  bin = NULL;
-
-  maxbias = 0;
-  vbiasall = NULL;
 }
 
 /* ---------------------------------------------------------------------- */
@@ -152,7 +148,6 @@ ComputeTempProfile::~ComputeTempProfile()
   memory->destroy(vbin);
   memory->destroy(binave);
   memory->destroy(bin);
-  memory->destroy(vbiasall);
   if (outflag == TENSOR) delete [] vector;
   else {
     memory->destroy(tbin);
@@ -165,9 +160,6 @@ ComputeTempProfile::~ComputeTempProfile()
 
 void ComputeTempProfile::init()
 {
-  fix_dof = 0;
-  for (int i = 0; i < modify->nfix; i++)
-    fix_dof += modify->fix[i]->dof(igroup);
   dof_compute();
 
   // ptrs to domain data
@@ -191,12 +183,24 @@ void ComputeTempProfile::init()
 
 /* ---------------------------------------------------------------------- */
 
+void ComputeTempProfile::setup()
+{
+  dynamic = 0;
+  if (dynamic_user || group->dynamic[igroup]) dynamic = 1;
+  dof_compute();
+}
+
+/* ---------------------------------------------------------------------- */
+
 void ComputeTempProfile::dof_compute()
 {
-  double natoms = group->count(igroup);
-  int nper = domain->dimension;
-  dof = nper * natoms;
-  dof -= extra_dof + fix_dof;
+  adjust_dof_fix();
+  natoms_temp = group->count(igroup);
+  dof = domain->dimension * natoms_temp;
+
+  // subtract additional d*Nbins DOF, as in Evans and Morriss paper
+
+  dof -= extra_dof + fix_dof + domain->dimension*nbins;
   if (dof > 0) tfactor = force->mvv2e / (dof * force->boltz);
   else tfactor = 0.0;
 }
@@ -240,6 +244,8 @@ double ComputeTempProfile::compute_scalar()
 
   MPI_Allreduce(&t,&scalar,1,MPI_DOUBLE,MPI_SUM,world);
   if (dynamic) dof_compute();
+  if (dof < 0.0 && natoms_temp > 0.0)
+    error->all(FLERR,"Temperature compute degrees of freedom < 0");
   scalar *= tfactor;
   return scalar;
 }
@@ -331,7 +337,7 @@ void ComputeTempProfile::compute_array()
 
   int nper = domain->dimension;
   for (i = 0; i < nbins; i++) {
-    array[i][0] = binave[i][ncount];
+    array[i][0] = binave[i][ncount-1];
     if (array[i][0] > 0.0) {
       dof = nper*array[i][0] - extra_dof;
       if (dof > 0) tfactor = force->mvv2e / (dof * force->boltz);
@@ -348,18 +354,18 @@ void ComputeTempProfile::compute_array()
 void ComputeTempProfile::remove_bias(int i, double *v)
 {
   int ibin = bin[i];
-  if (xflag) {
-    vbias[0] = binave[ibin][ivx];
-    v[0] -= vbias[0];
-  }
-  if (yflag) {
-    vbias[1] = binave[ibin][ivy];
-    v[1] -= vbias[1];
-  }
-  if (zflag) {
-    vbias[2] = binave[ibin][ivz];
-    v[2] -= vbias[2];
-  }
+  if (xflag) v[0] -= binave[ibin][ivx];
+  if (yflag) v[1] -= binave[ibin][ivy];
+  if (zflag) v[2] -= binave[ibin][ivz];
+}
+
+/* ----------------------------------------------------------------------
+   remove velocity bias from atom I to leave thermal velocity
+------------------------------------------------------------------------- */
+
+void ComputeTempProfile::remove_bias_thr(int i, double *v, double *)
+{
+  remove_bias(i,v);
 }
 
 /* ----------------------------------------------------------------------
@@ -372,28 +378,13 @@ void ComputeTempProfile::remove_bias_all()
   int *mask = atom->mask;
   int nlocal = atom->nlocal;
 
-  if (nlocal > maxbias) {
-    memory->destroy(vbiasall);
-    maxbias = atom->nmax;
-    memory->create(vbiasall,maxbias,3,"temp/profile:vbiasall");
-  }
-
   int ibin;
   for (int i = 0; i < nlocal; i++)
     if (mask[i] & groupbit) {
       ibin = bin[i];
-      if (xflag) {
-        vbiasall[i][0] = binave[ibin][ivx];
-        v[i][0] -= vbiasall[i][0];
-      }
-      if (yflag) {
-        vbiasall[i][1] = binave[ibin][ivy];
-        v[i][1] -= vbiasall[i][1];
-      }
-      if (zflag) {
-        vbiasall[i][2] = binave[ibin][ivz];
-        v[i][2] -= vbiasall[i][2];
-      }
+      if (xflag) v[i][0] -= binave[ibin][ivx];
+      if (yflag) v[i][1] -= binave[ibin][ivy];
+      if (zflag) v[i][2] -= binave[ibin][ivz];
     }
 }
 
@@ -404,9 +395,20 @@ void ComputeTempProfile::remove_bias_all()
 
 void ComputeTempProfile::restore_bias(int i, double *v)
 {
-  if (xflag) v[0] += vbias[0];
-  if (yflag) v[1] += vbias[1];
-  if (zflag) v[2] += vbias[2];
+  int ibin = bin[i];
+  if (xflag) v[0] += binave[ibin][ivx];
+  if (yflag) v[1] += binave[ibin][ivy];
+  if (zflag) v[2] += binave[ibin][ivz];
+}
+
+/* ----------------------------------------------------------------------
+   add back in velocity bias to atom I removed by remove_bias_thr()
+   assume remove_bias_thr() was previously called
+------------------------------------------------------------------------- */
+
+void ComputeTempProfile::restore_bias_thr(int i, double *v, double *)
+{
+  restore_bias(i,v);
 }
 
 /* ----------------------------------------------------------------------
@@ -420,25 +422,18 @@ void ComputeTempProfile::restore_bias_all()
   int *mask = atom->mask;
   int nlocal = atom->nlocal;
 
-  if (xflag) {
-    for (int i = 0; i < nlocal; i++)
-      if (mask[i] & groupbit)
-        v[i][0] += vbiasall[i][0];
-  }
-  if (yflag) {
-    for (int i = 0; i < nlocal; i++)
-      if (mask[i] & groupbit)
-        v[i][1] += vbiasall[i][1];
-  }
-  if (zflag) {
-    for (int i = 0; i < nlocal; i++)
-      if (mask[i] & groupbit)
-        v[i][2] += vbiasall[i][2];
-  }
+  int ibin;
+  for (int i = 0; i < nlocal; i++)
+    if (mask[i] & groupbit) {
+      ibin = bin[i];
+      if (xflag) v[i][0] += binave[ibin][ivx];
+      if (yflag) v[i][1] += binave[ibin][ivy];
+      if (zflag) v[i][2] += binave[ibin][ivz];
+    }
 }
 
 /* ----------------------------------------------------------------------
-   compute average velocity in each bin
+   compute average COM velocity in each bin
 ------------------------------------------------------------------------- */
 
 void ComputeTempProfile::bin_average()
@@ -448,37 +443,58 @@ void ComputeTempProfile::bin_average()
   if (box_change) bin_setup();
   bin_assign();
 
-  // clear bins, including particle count
+  // clear bins, including particle mass and count
 
   for (i = 0; i < nbins; i++)
-    for (j = 0; j <= ncount; j++)
+    for (j = 0; j < ncount; j++)
       vbin[i][j] = 0.0;
 
-  // sum each particle's velocity to appropriate bin
+  // sum each particle's mass-weighted velocity, mass, count to appropriate bin
 
   double **v = atom->v;
+  double *mass = atom->mass;
+  double *rmass = atom->rmass;
   int *mask = atom->mask;
+  int *type = atom->type;
   int nlocal = atom->nlocal;
 
-  for (i = 0; i < nlocal; i++)
-    if (mask[i] & groupbit) {
-      ibin = bin[i];
-      if (xflag) vbin[ibin][ivx] += v[i][0];
-      if (yflag) vbin[ibin][ivy] += v[i][1];
-      if (zflag) vbin[ibin][ivz] += v[i][2];
-      vbin[ibin][ncount] += 1.0;
-    }
+  int nc2 = ncount-2;
+  int nc1 = ncount-1;
+
+  if (rmass) {
+    for (i = 0; i < nlocal; i++)
+      if (mask[i] & groupbit) {
+        ibin = bin[i];
+        if (xflag) vbin[ibin][ivx] += rmass[i]*v[i][0];
+        if (yflag) vbin[ibin][ivy] += rmass[i]*v[i][1];
+        if (zflag) vbin[ibin][ivz] += rmass[i]*v[i][2];
+        vbin[ibin][nc2] += rmass[i];
+        vbin[ibin][nc1] += 1.0;
+      }
+  } else {
+    double onemass;
+    for (i = 0; i < nlocal; i++)
+      if (mask[i] & groupbit) {
+        ibin = bin[i];
+        onemass = mass[type[i]];
+        if (xflag) vbin[ibin][ivx] += onemass*v[i][0];
+        if (yflag) vbin[ibin][ivy] += onemass*v[i][1];
+        if (zflag) vbin[ibin][ivz] += onemass*v[i][2];
+        vbin[ibin][nc2] += onemass;
+        vbin[ibin][nc1] += 1.0;
+      }
+  }
 
   // sum bins across processors
 
-  MPI_Allreduce(vbin[0],binave[0],nbins*(ncount+1),MPI_DOUBLE,MPI_SUM,world);
+  MPI_Allreduce(vbin[0],binave[0],nbins*ncount,MPI_DOUBLE,MPI_SUM,world);
 
-  // compute ave velocity in each bin, checking for no particles
+  // compute ave COM velocity in each bin, checking for no particles
 
   for (i = 0; i < nbins; i++)
-    if (binave[i][ncount] > 0.0)
-      for (j = 0; j < ncount; j++)
-        binave[i][j] /= binave[i][ncount];
+    if (binave[i][nc1] > 0.0)
+      for (j = 0; j < nc2; j++)
+        binave[i][j] /= binave[i][nc2];
 }
 
 /* ----------------------------------------------------------------------
@@ -500,7 +516,7 @@ void ComputeTempProfile::bin_assign()
 {
   // reallocate bin array if necessary
 
-  if (atom->nlocal > maxatom) {
+  if (atom->nmax > maxatom) {
     maxatom = atom->nmax;
     memory->destroy(bin);
     memory->create(bin,maxatom,"temp/profile:bin");
@@ -563,8 +579,7 @@ void ComputeTempProfile::bin_assign()
 
 double ComputeTempProfile::memory_usage()
 {
-  double bytes = maxbias * sizeof(double);
-  bytes += maxatom * sizeof(int);
-  bytes += nbins*(ncount+1) * sizeof(double);
+  double bytes = maxatom * sizeof(int);
+  bytes += nbins*ncount * sizeof(double);
   return bytes;
 }

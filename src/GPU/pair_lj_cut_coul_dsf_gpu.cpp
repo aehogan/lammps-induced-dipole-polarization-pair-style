@@ -15,9 +15,9 @@
    Contributing author: Mike Brown (SNL)
 ------------------------------------------------------------------------- */
 
-#include "math.h"
-#include "stdio.h"
-#include "stdlib.h"
+#include <math.h>
+#include <stdio.h>
+#include <stdlib.h>
 #include "pair_lj_cut_coul_dsf_gpu.h"
 #include "atom.h"
 #include "atom_vec.h"
@@ -32,10 +32,19 @@
 #include "universe.h"
 #include "update.h"
 #include "domain.h"
-#include "string.h"
+#include <string.h>
 #include "gpu_extra.h"
 
 #define MY_PIS 1.77245385090551602729
+#define EWALD_F   1.12837917
+#define EWALD_P   0.3275911
+#define A1        0.254829592
+#define A2       -0.284496736
+#define A3        1.421413741
+#define A4       -1.453152027
+#define A5        1.061405429
+
+using namespace LAMMPS_NS;
 
 // External functions from cuda library for atom decomposition
 
@@ -45,14 +54,14 @@ int ljd_gpu_init(const int ntypes, double **cutsq, double **host_lj1,
                  const int nall, const int max_nbors, const int maxspecial,
                  const double cell_size, int &gpu_mode, FILE *screen,
                  double **host_cut_ljsq, const double host_cut_coulsq,
-                 double *host_special_coul, const double qqrd2e, 
-                 const double e_shift, const double f_shift, 
+                 double *host_special_coul, const double qqrd2e,
+                 const double e_shift, const double f_shift,
                  const double alpha);
 void ljd_gpu_clear();
 int ** ljd_gpu_compute_n(const int ago, const int inum,
                          const int nall, double **host_x, int *host_type,
-                         double *sublo, double *subhi, int *tag, int **nspecial,
-                         int **special, const bool eflag, const bool vflag,
+                         double *sublo, double *subhi, tagint *tag, int **nspecial,
+                         tagint **special, const bool eflag, const bool vflag,
                          const bool eatom, const bool vatom, int &host_start,
                          int **ilist, int **jnum, const double cpu_time,
                          bool &success, double *host_q, double *boxlo,
@@ -66,21 +75,12 @@ void ljd_gpu_compute(const int ago, const int inum,
                      double *boxlo, double *prd);
 double ljd_gpu_bytes();
 
-using namespace LAMMPS_NS;
-
-#define EWALD_F   1.12837917
-#define EWALD_P   0.3275911
-#define A1        0.254829592
-#define A2       -0.284496736
-#define A3        1.421413741
-#define A4       -1.453152027
-#define A5        1.061405429
-
 /* ---------------------------------------------------------------------- */
 
 PairLJCutCoulDSFGPU::PairLJCutCoulDSFGPU(LAMMPS *lmp) : PairLJCutCoulDSF(lmp), gpu_mode(GPU_FORCE)
 {
   respa_enable = 0;
+  reinitflag = 0;
   cpu_time = 0.0;
   GPU_EXTRA::gpu_ready(lmp->modify, lmp->error);
 }
@@ -165,10 +165,10 @@ void PairLJCutCoulDSFGPU::init_style()
   double cell_size = sqrt(maxcut) + neighbor->skin;
 
   cut_coulsq = cut_coul * cut_coul;
-  double erfcc = erfc(alpha*cut_coul); 
+  double erfcc = erfc(alpha*cut_coul);
   double erfcd = exp(-alpha*alpha*cut_coul*cut_coul);
-  f_shift = -(erfcc/cut_coulsq + 2.0/MY_PIS*alpha*erfcd/cut_coul); 
-  e_shift = erfcc/cut_coul - f_shift*cut_coul; 
+  f_shift = -(erfcc/cut_coulsq + 2.0/MY_PIS*alpha*erfcd/cut_coul);
+  e_shift = erfcc/cut_coul - f_shift*cut_coul;
 
   int maxspecial=0;
   if (atom->molecular)
@@ -182,7 +182,7 @@ void PairLJCutCoulDSFGPU::init_style()
   GPU_EXTRA::check_flag(success,error,world);
 
   if (gpu_mode == GPU_FORCE) {
-    int irequest = neighbor->request(this);
+    int irequest = neighbor->request(this,instance_me);
     neighbor->requests[irequest]->half = 0;
     neighbor->requests[irequest]->full = 1;
   }
@@ -205,7 +205,7 @@ void PairLJCutCoulDSFGPU::cpu_compute(int start, int inum, int eflag, int vflag,
   int i,j,ii,jj,jnum,itype,jtype;
   double qtmp,xtmp,ytmp,ztmp,delx,dely,delz,evdwl,ecoul,fpair;
   double r,rsq,r2inv,r6inv,forcecoul,forcelj,factor_coul,factor_lj;
-  double prefactor,erfcc,erfcd,e_self,t;
+  double prefactor,erfcc,erfcd,t;
   int *jlist;
 
   evdwl = ecoul = 0.0;
@@ -232,7 +232,7 @@ void PairLJCutCoulDSFGPU::cpu_compute(int start, int inum, int eflag, int vflag,
     jnum = numneigh[i];
 
     if (evflag) {
-      e_self = -(e_shift/2.0 + alpha/MY_PIS) * qtmp*qtmp*qqrd2e;
+      double e_self = -(e_shift/2.0 + alpha/MY_PIS) * qtmp*qtmp*qqrd2e;
       ev_tally(i,i,nlocal,0,0.0,e_self,0.0,0.0,0.0,0.0);
     }
 
@@ -258,12 +258,13 @@ void PairLJCutCoulDSFGPU::cpu_compute(int start, int inum, int eflag, int vflag,
 
         if (rsq < cut_coulsq) {
           r = sqrt(rsq);
-          prefactor = factor_coul * qqrd2e*qtmp*q[j]/r;
+          prefactor = qqrd2e*qtmp*q[j]/r;
           erfcd = exp(-alpha*alpha*r*r);
           t = 1.0 / (1.0 + EWALD_P*alpha*r);
           erfcc = t * (A1+t*(A2+t*(A3+t*(A4+t*A5)))) * erfcd;
-          forcecoul = prefactor * (erfcc/r + 2.0*alpha/MY_PIS * erfcd + 
+          forcecoul = prefactor * (erfcc/r + 2.0*alpha/MY_PIS * erfcd +
             r*f_shift) * r;
+          if (factor_coul < 1.0) forcecoul -= (1.0-factor_coul)*prefactor;
         }
 
         fpair = (forcecoul + factor_lj*forcelj) * r2inv;
@@ -277,9 +278,10 @@ void PairLJCutCoulDSFGPU::cpu_compute(int start, int inum, int eflag, int vflag,
                     offset[itype][jtype];
             evdwl *= factor_lj;
           } else evdwl = 0.0;
-          
+
           if (rsq < cut_coulsq) {
             ecoul = prefactor * (erfcc - r*e_shift - rsq*f_shift);
+            if (factor_coul < 1.0) ecoul -= (1.0-factor_coul)*prefactor;
           } else ecoul = 0.0;
         }
 

@@ -12,8 +12,8 @@
    Contributing author: Axel Kohlmeyer (Temple U)
 ------------------------------------------------------------------------- */
 
-#include "math.h"
-#include "string.h"
+#include <math.h>
+#include <string.h>
 
 #include "pair_cdeam_omp.h"
 #include "atom.h"
@@ -86,6 +86,7 @@ void PairCDEAMOMP::compute(int eflag, int vflag)
 
     loop_setup_thr(ifrom, ito, tid, inum, nthreads);
     ThrData *thr = fix->get_thr(tid);
+    thr->timer(Timer::START);
     ev_setup_thr(eflag, vflag, nall, eatom, vatom, thr);
 
     if (force->newton_pair)
@@ -128,12 +129,15 @@ void PairCDEAMOMP::compute(int eflag, int vflag)
       break;
 
     default:
+      {
 #if defined(_OPENMP)
 #pragma omp master
 #endif
-    error->all(FLERR,"unsupported eam/cd pair style variant");
+        error->all(FLERR,"unsupported eam/cd pair style variant");
+      }
     }
 
+    thr->timer(Timer::PAIR);
     reduce_thr(this, eflag, vflag, thr);
   } // end of omp parallel region
 }
@@ -148,15 +152,15 @@ void PairCDEAMOMP::eval(int iifrom, int iito, ThrData * const thr)
 
   evdwl = 0.0;
 
-  const double * const * const x = atom->x;
-  double * const * const f = thr->get_f();
+  const dbl3_t * _noalias const x = (dbl3_t *) atom->x[0];
+  dbl3_t * _noalias const f = (dbl3_t *) thr->get_f()[0];
   double * const rho_t = thr->get_rho();
   double * const rhoB_t = thr->get_rhoB();
   double * const D_values_t = thr->get_D_values();
   const int tid = thr->get_tid();
   const int nthreads = comm->nthreads;
 
-  const int * const type = atom->type;
+  const int * _noalias const type = atom->type;
   const int nlocal = atom->nlocal;
   const int nall = nlocal + atom->nghost;
 
@@ -174,9 +178,9 @@ void PairCDEAMOMP::eval(int iifrom, int iito, ThrData * const thr)
 
   for (ii = iifrom; ii < iito; ii++) {
     i = ilist[ii];
-    xtmp = x[i][0];
-    ytmp = x[i][1];
-    ztmp = x[i][2];
+    xtmp = x[i].x;
+    ytmp = x[i].y;
+    ztmp = x[i].z;
     itype = type[i];
     jlist = firstneigh[i];
     jnum = numneigh[i];
@@ -185,9 +189,9 @@ void PairCDEAMOMP::eval(int iifrom, int iito, ThrData * const thr)
       j = jlist[jj];
       j &= NEIGHMASK;
 
-      delx = xtmp - x[j][0];
-      dely = ytmp - x[j][1];
-      delz = ztmp - x[j][2];
+      delx = xtmp - x[j].x;
+      dely = ytmp - x[j].y;
+      delz = ztmp - x[j].z;
       rsq = delx*delx + dely*dely + delz*delz;
 
       if(rsq < cutforcesq) {
@@ -227,6 +231,7 @@ void PairCDEAMOMP::eval(int iifrom, int iito, ThrData * const thr)
 
   if (NEWTON_PAIR) {
     // reduce per thread density
+    thr->timer(Timer::PAIR);
     data_reduce_thr(rho, nall, nthreads, 1, tid);
     data_reduce_thr(rhoB, nall, nthreads, 1, tid);
     if (CDEAMVERSION==1)
@@ -246,6 +251,7 @@ void PairCDEAMOMP::eval(int iifrom, int iito, ThrData * const thr)
 
   } else {
     // reduce per thread density
+    thr->timer(Timer::PAIR);
     data_reduce_thr(rho, nlocal, nthreads, 1, tid);
     data_reduce_thr(rhoB, nlocal, nthreads, 1, tid);
     if (CDEAMVERSION==1)
@@ -299,9 +305,9 @@ void PairCDEAMOMP::eval(int iifrom, int iito, ThrData * const thr)
     // Compute intermediate value D_i for each atom.
     for (ii = iifrom; ii < iito; ii++) {
       i = ilist[ii];
-      xtmp = x[i][0];
-      ytmp = x[i][1];
-      ztmp = x[i][2];
+      xtmp = x[i].x;
+      ytmp = x[i].y;
+      ztmp = x[i].z;
       itype = type[i];
       jlist = firstneigh[i];
       jnum = numneigh[i];
@@ -320,9 +326,9 @@ void PairCDEAMOMP::eval(int iifrom, int iito, ThrData * const thr)
         // This code line is required for ternary alloys.
         if(jtype != speciesA && jtype != speciesB) continue;
 
-        delx = xtmp - x[j][0];
-        dely = ytmp - x[j][1];
-        delz = ztmp - x[j][2];
+        delx = xtmp - x[j].x;
+        dely = ytmp - x[j].y;
+        delz = ztmp - x[j].z;
         rsq = delx*delx + dely*dely + delz*delz;
 
         if(rsq < cutforcesq) {
@@ -346,6 +352,7 @@ void PairCDEAMOMP::eval(int iifrom, int iito, ThrData * const thr)
     }
 
     if (NEWTON_PAIR) {
+    thr->timer(Timer::PAIR);
       data_reduce_thr(D_values, nall, nthreads, 1, tid);
 
       // wait until reduction is complete
@@ -361,6 +368,7 @@ void PairCDEAMOMP::eval(int iifrom, int iito, ThrData * const thr)
       sync_threads();
 
   } else {
+    thr->timer(Timer::PAIR);
       data_reduce_thr(D_values, nlocal, nthreads, 1, tid);
 
     // wait until reduction is complete
@@ -382,9 +390,9 @@ void PairCDEAMOMP::eval(int iifrom, int iito, ThrData * const thr)
   // Compute force acting on each atom.
   for (ii = iifrom; ii < iito; ii++) {
     i = ilist[ii];
-    xtmp = x[i][0];
-    ytmp = x[i][1];
-    ztmp = x[i][2];
+    xtmp = x[i].x;
+    ytmp = x[i].y;
+    ztmp = x[i].z;
     itype = type[i];
     fxtmp = fytmp = fztmp = 0.0;
 
@@ -410,16 +418,18 @@ void PairCDEAMOMP::eval(int iifrom, int iito, ThrData * const thr)
         D_i = D_values[i] * h_prime_i / (2.0 * rho[i] * rho[i]);
       } else if(CDEAMVERSION == 2) {
         D_i = D_values[i];
-      } else ASSERT(false);
+      } else {
+        ASSERT(false);
+      }
     }
 
     for(jj = 0; jj < jnum; jj++) {
       j = jlist[jj];
       j &= NEIGHMASK;
 
-      delx = xtmp - x[j][0];
-      dely = ytmp - x[j][1];
-      delz = ztmp - x[j][2];
+      delx = xtmp - x[j].x;
+      dely = ytmp - x[j].y;
+      delz = ztmp - x[j].z;
       rsq = delx*delx + dely*dely + delz*delz;
 
       if(rsq < cutforcesq) {
@@ -456,8 +466,9 @@ void PairCDEAMOMP::eval(int iifrom, int iito, ThrData * const thr)
             D_j = D_values[j] * h_prime_j / (2.0 * rho[j] * rho[j]);
           } else if(CDEAMVERSION == 2) {
             D_j = D_values[j];
-          } else ASSERT(false);
-
+          } else {
+            ASSERT(false);
+          }
           double t2 = -rhoB[j];
           if(itype == speciesB) t2 += rho[j];
           fpair += D_j * rhoip * t2;
@@ -491,8 +502,9 @@ void PairCDEAMOMP::eval(int iifrom, int iito, ThrData * const thr)
             double x_ij = 0.5 * (x_i + x_j);
             // Calculate h(x_ij) polynomial function.
             h = evalH(x_ij);
-          } else ASSERT(false);
-
+          } else {
+            ASSERT(false);
+          }
           fpair += h * phip;
           phi *= h;
         }
@@ -504,9 +516,9 @@ void PairCDEAMOMP::eval(int iifrom, int iito, ThrData * const thr)
         fytmp += dely*fpair;
         fztmp += delz*fpair;
         if(NEWTON_PAIR || j < nlocal) {
-          f[j][0] -= delx*fpair;
-          f[j][1] -= dely*fpair;
-          f[j][2] -= delz*fpair;
+          f[j].x -= delx*fpair;
+          f[j].y -= dely*fpair;
+          f[j].z -= delz*fpair;
         }
 
         if(EFLAG) evdwl = phi;
@@ -514,9 +526,9 @@ void PairCDEAMOMP::eval(int iifrom, int iito, ThrData * const thr)
                                 fpair,delx,dely,delz,thr);
       }
     }
-    f[i][0] += fxtmp;
-    f[i][1] += fytmp;
-    f[i][2] += fztmp;
+    f[i].x += fxtmp;
+    f[i].y += fytmp;
+    f[i].z += fztmp;
   }
 }
 

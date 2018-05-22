@@ -1,4 +1,4 @@
-/* ----------------------------------------------------------------------
+/* -*- c++ -*- ----------------------------------------------------------
    LAMMPS - Large-scale Atomic/Molecular Massively Parallel Simulator
    http://lammps.sandia.gov, Sandia National Laboratories
    Steve Plimpton, sjplimp@sandia.gov
@@ -28,17 +28,23 @@ namespace LAMMPS_NS {
 class BodyNparticle : public Body {
  public:
   BodyNparticle(class LAMMPS *, int, char **);
-  ~BodyNparticle() {}
-  int nsub(class AtomVecBody::Bonus *);
-  double *coords(class AtomVecBody::Bonus *);
+  ~BodyNparticle();
+  int nsub(struct AtomVecBody::Bonus *);
+  double *coords(struct AtomVecBody::Bonus *);
 
-  int pack_border_body(class AtomVecBody::Bonus *, double *);
-  int unpack_border_body(class AtomVecBody::Bonus *, double *);
-  void data_body(int, int, int, char **, char **);
+  int pack_border_body(struct AtomVecBody::Bonus *, double *);
+  int unpack_border_body(struct AtomVecBody::Bonus *, double *);
+  void data_body(int, int, int, int *, double *);
+  double radius_body(int, int, int *, double *);
 
   int noutrow(int);
   int noutcol();
   void output(int, int, double *);
+  int image(int, double, double, int *&, double **&);
+
+ private:
+  int *imflag;
+  double **imdata;
 };
 
 }
@@ -48,10 +54,24 @@ class BodyNparticle : public Body {
 
 /* ERROR/WARNING messages:
 
-E: Illegal ... command
+E: Invalid body nparticle command
 
-Self-explanatory.  Check the input script syntax and compare to the
-documentation for the command.  You can use -echo screen as a
-command-line option when running LAMMPS to see the offending line.
+Arguments in atom-style command are not correct.
+
+E: Incorrect # of integer values in Bodies section of data file
+
+See doc page for body style.
+
+E: Incorrect integer value in Bodies section of data file
+
+See doc page for body style.
+
+E: Incorrect # of floating-point values in Bodies section of data file
+
+See doc page for body style.
+
+E: Insufficient Jacobi rotations for body nparticle
+
+Eigensolve for rigid body was not sufficiently accurate.
 
 */

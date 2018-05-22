@@ -1,4 +1,4 @@
-/* ----------------------------------------------------------------------
+/* -*- c++ -*- ----------------------------------------------------------
    LAMMPS - Large-scale Atomic/Molecular Massively Parallel Simulator
    http://lammps.sandia.gov, Sandia National Laboratories
    Steve Plimpton, sjplimp@sandia.gov
@@ -26,7 +26,7 @@ class RanMars : protected Pointers {
   double gaussian();
 
  private:
-  int seed,save;
+  int save;
   double second;
   double *u;
   int i97,j97;

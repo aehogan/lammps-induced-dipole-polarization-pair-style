@@ -1,4 +1,4 @@
-/* ----------------------------------------------------------------------
+/* -*- c++ -*- ----------------------------------------------------------
    LAMMPS - Large-scale Atomic/Molecular Massively Parallel Simulator
    http://lammps.sandia.gov, Sandia National Laboratories
    Steve Plimpton, sjplimp@sandia.gov
@@ -20,6 +20,7 @@ namespace LAMMPS_NS {
 
 class Compute : protected Pointers {
  public:
+  static int instance_total;     // # of Compute classes ever instantiated
 
   char *id,*style;
   int igroup,groupbit;
@@ -38,6 +39,8 @@ class Compute : protected Pointers {
   int size_vector;          // length of global vector
   int size_array_rows;      // rows in global array
   int size_array_cols;      // columns in global array
+  int size_vector_variable;      // 1 if vec length is unknown in advance
+  int size_array_rows_variable;  // 1 if array rows is unknown in advance
 
   int peratom_flag;         // 0/1 if compute_peratom() function exists
   int size_peratom_cols;    // 0 = vector, N = columns in peratom array
@@ -58,6 +61,8 @@ class Compute : protected Pointers {
   int pressatomflag;  // 1 if Compute calculates per-atom virial
   int peflag;         // 1 if Compute calculates PE (uses Force energies)
   int peatomflag;     // 1 if Compute calculates per-atom PE
+  int create_attribute;    // 1 if compute stores attributes that need
+                           // setting when a new atom is created
 
   int tempbias;       // 0/1 if Compute temp includes self/extra bias
 
@@ -75,13 +80,16 @@ class Compute : protected Pointers {
 
   double dof;         // degrees-of-freedom for temperature
 
-  int comm_forward;   // size of forward communication (0 if none)
-  int comm_reverse;   // size of reverse communication (0 if none)
+  int comm_forward;         // size of forward communication (0 if none)
+  int comm_reverse;         // size of reverse communication (0 if none)
+  int dynamic_group_allow;  // 1 if can be used with dynamic group, else 0
 
-  unsigned int datamask;
-  unsigned int datamask_ext;
+  // KOKKOS host/device flag and data masks
 
-  int cudable;        // 1 if compute is CUDA-enabled
+  ExecutionSpace execution_space;
+  unsigned int datamask_read,datamask_modify;
+
+  int copymode;
 
   Compute(class LAMMPS *, int, char **);
   virtual ~Compute();
@@ -90,24 +98,36 @@ class Compute : protected Pointers {
 
   virtual void init() = 0;
   virtual void init_list(int, class NeighList *) {}
+  virtual void setup() {}
   virtual double compute_scalar() {return 0.0;}
   virtual void compute_vector() {}
   virtual void compute_array() {}
   virtual void compute_peratom() {}
   virtual void compute_local() {}
+  virtual void set_arrays(int) {}
 
-  virtual int pack_comm(int, int *, double *, int, int *) {return 0;}
-  virtual void unpack_comm(int, int, double *) {}
+  virtual int pack_forward_comm(int, int *, double *, int, int *) {return 0;}
+  virtual void unpack_forward_comm(int, int, double *) {}
   virtual int pack_reverse_comm(int, int, double *) {return 0;}
   virtual void unpack_reverse_comm(int, int *, double *) {}
 
+  virtual void dof_remove_pre() {}
   virtual int dof_remove(int) {return 0;}
   virtual void remove_bias(int, double *) {}
+  virtual void remove_bias_thr(int, double *, double *) {}
   virtual void remove_bias_all() {}
+  virtual void reapply_bias_all() {}
   virtual void restore_bias(int, double *) {}
+  virtual void restore_bias_thr(int, double *, double *) {}
   virtual void restore_bias_all() {}
 
   virtual void reset_extra_compute_fix(const char *);
+
+  virtual void lock_enable() {}
+  virtual void lock_disable() {}
+  virtual int lock_length() {return 0;}
+  virtual void lock(class Fix *, bigint, bigint) {}
+  virtual void unlock(class Fix *) {}
 
   void addstep(bigint);
   int matchstep(bigint);
@@ -115,25 +135,42 @@ class Compute : protected Pointers {
 
   virtual double memory_usage() {return 0.0;}
 
-  virtual int unsigned data_mask() {return datamask;}
-  virtual int unsigned data_mask_ext() {return datamask_ext;}
+  virtual void pair_setup_callback(int, int) {}
+  virtual void pair_tally_callback(int, int, int, int,
+                                   double, double, double,
+                                   double, double, double) {}
 
  protected:
-  int extra_dof;               // extra DOF for temperature computes
+  int instance_me;             // which Compute class instantiation I am
+
+  double natoms_temp;          // # of atoms used for temperature calculation
+  double extra_dof;            // extra DOF for temperature computes
+  int fix_dof;                 // DOF due to fixes
   int dynamic;                 // recount atoms for temperature computes
-  int thermoflag;              // 1 if include fix PE for PE computes
+  int dynamic_user;            // user request for temp compute to be dynamic
 
   double vbias[3];             // stored velocity bias for one atom
   double **vbiasall;           // stored velocity bias for all atoms
   int maxbias;                 // size of vbiasall array
 
-  int *molmap;                 // convert molecule ID to local index
-
-  int molecules_in_group(int &, int &);
-
-  inline int sbmask(int j) {
+  inline int sbmask(int j) const {
     return j >> SBBITS & 3;
   }
+
+  // union data struct for packing 32-bit and 64-bit ints into double bufs
+  // see atom_vec.h for documentation
+
+  union ubuf {
+    double d;
+    int64_t i;
+    ubuf(double arg) : d(arg) {}
+    ubuf(int64_t arg) : i(arg) {}
+    ubuf(int arg) : i(arg) {}
+  };
+
+  // private methods
+
+  void adjust_dof_fix();
 };
 
 }
@@ -160,17 +197,5 @@ E: Compute does not allow an extra compute or fix to be reset
 
 This is an internal LAMMPS error.  Please report it to the
 developers.
-
-W: Atom with molecule ID = 0 included in compute molecule group
-
-The group used in a compute command that operates on moleclues
-includes atoms with no molecule ID.  This is probably not what you
-want.
-
-W: One or more compute molecules has atoms not in group
-
-The group used in a compute command that operates on moleclues does
-not include all the atoms in some molecules.  This is probably not
-what you want.
 
 */

@@ -1,4 +1,4 @@
-/* ----------------------------------------------------------------------
+/* -*- c++ -*- ----------------------------------------------------------
    LAMMPS - Large-scale Atomic/Molecular Massively Parallel Simulator
    http://lammps.sandia.gov, Sandia National Laboratories
    Steve Plimpton, sjplimp@sandia.gov
@@ -52,5 +52,9 @@ E: Too many iterations
 
 You must use a number of iterations that fit in a 32-bit integer
 for minimization.
+
+E: Cannot yet use minimize with Kokkos
+
+This feature is not yet supported.
 
 */

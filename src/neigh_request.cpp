@@ -25,42 +25,72 @@ NeighRequest::NeighRequest(LAMMPS *lmp) : Pointers(lmp)
 
   id = 0;
 
-  // default is pair request
+  // class user of list: default is pair request
+  // only one is set to 1
 
   pair = 1;
-  fix = compute = command = 0;
+  fix = compute = command = neigh = 0;
 
-  // default is half neighbor list
+  // kind of list: default is half neighbor list
+  // only one is set to 1
 
   half = 1;
   full = 0;
-  gran = granhistory = 0;
-  respainner = respamiddle = respaouter = 0;
-  half_from_full = 0;
 
-  // default is every reneighboring
+  // attribute flags, mutiple can be set to 1
+  // default is every reneighboring, not occasional
   // default is use newton_pair setting in force
-  // default is encode special bond flags
-  // default is no auxiliary floating point values
   // default is no neighbors of ghosts
-  // default is no CUDA neighbor list build
-  // default is no multi-threaded neighbor list build
+  // default is use cutoffs, not size of particles
+  // default is no associated neighbor history info in FixNeighHistory
+  // default is no one-sided sphere/surface interactions (when size = 1)
+  // default is neighbors of atoms, not bonds
+  // default is no multilevel rRESPA neighbors
+  // default is no OpenMP multi-threaded neighbor list build
+  // default is no Intel-specific neighbor list build
+  // default is no Kokkos neighbor list build
+  // default is no Shardlow Splitting Algorithm (SSA) neighbor list build
+  // default is no list-specific cutoff
+  // default is no storage of auxiliary floating point values
 
   occasional = 0;
   newton = 0;
-  special = 1;
-  dnum = 0;
   ghost = 0;
-  cudable = 0;
+  size = 0;
+  history = 0;
+  granonesided = 0;
+  respainner = respamiddle = respaouter = 0;
+  bond = 0;
   omp = 0;
+  intel = 0;
+  kokkos_host = kokkos_device = 0;
+  ssa = 0;
+  cut = 0;
+  cutoff = 0.0;
 
-  // default is no copy or skip
+  // skip info, default is no skipping
 
-  copy = 0;
   skip = 0;
   iskip = NULL;
   ijskip = NULL;
-  otherlist = -1;
+
+  // only set when command = 1;
+
+  command_style = NULL;
+
+  // info set by Neighbor class when morphing original requests
+
+  skiplist = -1;
+  off2on = 0;
+  copy = 0;
+  copylist = -1;
+  halffull = 0;
+  halffulllist = -1;
+  unique = 0;
+
+  // internal settings
+
+  index_bin = index_stencil = index_pair = -1;
 }
 
 /* ---------------------------------------------------------------------- */
@@ -73,114 +103,139 @@ NeighRequest::~NeighRequest()
 
 /* ----------------------------------------------------------------------
    compare this request to other request
-   return 1 if every variable is same, 0 if different in any way
+   identical means requestor identity and all params it sets are the same
+   do not check other params that Neighbor can change after requests are made
+   return 1 if identical, 0 if not
 ------------------------------------------------------------------------- */
 
 int NeighRequest::identical(NeighRequest *other)
 {
   int same = 1;
 
+  // check for match of requestor_instance and instance counter
+  // prevents an old fix from being unfix/refix in same memory location
+  //   stored in requestor, and thus appearing old, when really new
+  // only needed for classes with persistent neigh lists: Pair, Fix, Compute
+
   if (requestor != other->requestor) same = 0;
+  if (requestor_instance != other->requestor_instance) same = 0;
   if (id != other->id) same = 0;
+
+  // only compare settings made by requestors
+  // not settings made later by Neighbor class
 
   if (pair != other->pair) same = 0;
   if (fix != other->fix) same = 0;
   if (compute != other->compute) same = 0;
   if (command != other->command) same = 0;
+  if (neigh != other->neigh) same = 0;
 
   if (half != other->half) same = 0;
   if (full != other->full) same = 0;
-  if (gran != other->gran) same = 0;
-  if (granhistory != other->granhistory) same = 0;
-  if (respainner != other->respainner) same = 0;
-  if (respamiddle != other->respamiddle) same = 0;
-  if (respaouter != other->respaouter) same = 0;
-  if (half_from_full != other->half_from_full) same = 0;
 
-  if (newton != other->newton) same = 0;
   if (occasional != other->occasional) same = 0;
-  if (special != other->special) same = 0;
-  if (dnum != other->dnum) same = 0;
+  if (newton != other->newton) same = 0;
   if (ghost != other->ghost) same = 0;
-  if (cudable != other->cudable) same = 0;
-  if (omp != other->omp) same = 0;
-
-  if (copy != other->copy) same = 0;
-  if (same_skip(other) == 0) same = 0;
-  if (otherlist != other->otherlist) same = 0;
-
-  return same;
-}
-
-/* ----------------------------------------------------------------------
-   compare kind of this request to other request
-   return 1 if same, 0 if different
-------------------------------------------------------------------------- */
-
-int NeighRequest::same_kind(NeighRequest *other)
-{
-  int same = 1;
-
-  if (half != other->half) same = 0;
-  if (full != other->full) same = 0;
-  if (gran != other->gran) same = 0;
-  if (granhistory != other->granhistory) same = 0;
+  if (size != other->size) same = 0;
+  if (history != other->history) same = 0;
+  if (granonesided != other->granonesided) same = 0;
   if (respainner != other->respainner) same = 0;
   if (respamiddle != other->respamiddle) same = 0;
   if (respaouter != other->respaouter) same = 0;
-  if (half_from_full != other->half_from_full) same = 0;
-  if (newton != other->newton) same = 0;
-  if (ghost != other->ghost) same = 0;
-  if (cudable != other->cudable) same = 0;
+  if (bond != other->bond) same = 0;
   if (omp != other->omp) same = 0;
+  if (intel != other->intel) same = 0;
+  if (kokkos_host != other->kokkos_host) same = 0;
+  if (kokkos_device != other->kokkos_device) same = 0;
+  if (ssa != other->ssa) same = 0;
+  if (copy != other->copy) same = 0;
+  if (cutoff != other->cutoff) same = 0;
+
+  if (skip != other->skip) same = 0;
+  if (same && skip && other->skip) same = same_skip(other);
 
   return same;
 }
 
 /* ----------------------------------------------------------------------
-   compare skip attributes of this request to other request
-   return 1 if same, 0 if different
+   compare same info for two requests that have skip = 1
+   return 1 if identical, 0 if not
 ------------------------------------------------------------------------- */
 
 int NeighRequest::same_skip(NeighRequest *other)
 {
   int i,j;
 
+  int ntypes = atom->ntypes;
   int same = 1;
 
-  if (skip != other->skip) same = 0;
-  if (skip && other->skip) {
-    int ntypes = atom->ntypes;
-    for (i = 1; i <= ntypes; i++)
-      if (iskip[i] != other->iskip[i]) same = 0;
-    for (i = 1; i <= ntypes; i++)
-      for (j = 1; j <= ntypes; j++)
-        if (ijskip[i][j] != other->ijskip[i][j]) same = 0;
-  }
+  for (i = 1; i <= ntypes; i++)
+    if (iskip[i] != other->iskip[i]) same = 0;
+  for (i = 1; i <= ntypes; i++)
+    for (j = 1; j <= ntypes; j++)
+      if (ijskip[i][j] != other->ijskip[i][j]) same = 0;
 
   return same;
 }
 
 /* ----------------------------------------------------------------------
-   set kind and other values of this request to that of other request
+   set params in this request to those of other request
+   copy same fields that are checked in identical()
+   purpose is to allow comparison of new requests to old requests
+   skipflag = 1 to copy skip vector/array
 ------------------------------------------------------------------------- */
 
-void NeighRequest::copy_request(NeighRequest *other)
+void NeighRequest::copy_request(NeighRequest *other, int skipflag)
 {
-  half = 0;
+  requestor = other->requestor;
+  requestor_instance = other->requestor_instance;
+  id = other->id;
 
-  if (other->half) half = 1;
-  if (other->full) full = 1;
-  if (other->gran) gran = 1;
-  if (other->granhistory) granhistory = 1;
-  if (other->respainner) respainner = 1;
-  if (other->respamiddle) respamiddle = 1;
-  if (other->respaouter) respaouter = 1;
-  if (other->half_from_full) half_from_full = 1;
+  pair = other->pair;
+  fix = other->fix;
+  compute = other->compute;
+  command = other->command;
 
+  half = other->half;
+  full = other->full;
+
+  occasional = other->occasional;
   newton = other->newton;
-  dnum = other->dnum;
   ghost = other->ghost;
-  cudable = other->cudable;
+  size = other->size;
+  history = other->history;
+  granonesided = other->granonesided;
+  respainner =  other->respainner;
+  respamiddle = other->respamiddle;
+  respaouter = other->respaouter;
+  bond = other->bond;
   omp = other->omp;
+  intel = other->intel;
+  kokkos_host = other->kokkos_host;
+  kokkos_device = other->kokkos_device;
+  ssa = other->ssa;
+  cut = other->cut;
+  cutoff = other->cutoff;
+
+  iskip = NULL;
+  ijskip = NULL;
+
+  if (!skipflag) return;
+
+  int i,j;
+  int ntypes = atom->ntypes;
+
+  if (other->iskip) {
+    iskip = new int[ntypes+1];
+    for (i = 1; i <= ntypes; i++)
+      iskip[i] = other->iskip[i];
+  }
+
+  if (other->ijskip) {
+    memory->create(ijskip,ntypes+1,ntypes+1,"neigh_request:ijskip");
+    for (i = 1; i <= ntypes; i++)
+      for (j = 1; j <= ntypes; j++)
+        ijskip[i][j] = other->ijskip[i][j];
+  }
 }
+

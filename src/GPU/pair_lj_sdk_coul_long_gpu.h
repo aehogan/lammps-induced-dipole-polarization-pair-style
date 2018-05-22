@@ -14,7 +14,6 @@
 #ifdef PAIR_CLASS
 
 PairStyle(lj/sdk/coul/long/gpu,PairLJSDKCoulLongGPU)
-PairStyle(cg/cmm/coul/long/gpu,PairLJSDKCoulLongGPU)
 
 #else
 
@@ -40,7 +39,6 @@ class PairLJSDKCoulLongGPU : public PairLJSDKCoulLong {
  private:
   int gpu_mode;
   double cpu_time;
-  int *gpulist;
 };
 
 }

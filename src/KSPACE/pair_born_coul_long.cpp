@@ -15,10 +15,10 @@
    Contributing author: Ahmed Ismail (SNL)
 ------------------------------------------------------------------------- */
 
-#include "math.h"
-#include "stdio.h"
-#include "stdlib.h"
-#include "string.h"
+#include <math.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
 #include "pair_born_coul_long.h"
 #include "atom.h"
 #include "comm.h"
@@ -47,6 +47,7 @@ PairBornCoulLong::PairBornCoulLong(LAMMPS *lmp) : Pair(lmp)
 {
   ewaldflag = pppmflag = 1;
   ftable = NULL;
+  writedata = 1;
 }
 
 /* ---------------------------------------------------------------------- */
@@ -240,16 +241,16 @@ void PairBornCoulLong::settings(int narg, char **arg)
 {
   if (narg < 1 || narg > 2) error->all(FLERR,"Illegal pair_style command");
 
-  cut_lj_global = force->numeric(arg[0]);
+  cut_lj_global = force->numeric(FLERR,arg[0]);
   if (narg == 1) cut_coul = cut_lj_global;
-  else cut_coul = force->numeric(arg[1]);
+  else cut_coul = force->numeric(FLERR,arg[1]);
 
   // reset cutoffs that have been explicitly set
 
   if (allocated) {
     int i,j;
     for (i = 1; i <= atom->ntypes; i++)
-      for (j = i+1; j <= atom->ntypes; j++)
+      for (j = i; j <= atom->ntypes; j++)
         if (setflag[i][j]) cut_lj[i][j] = cut_lj_global;
   }
 }
@@ -264,18 +265,18 @@ void PairBornCoulLong::coeff(int narg, char **arg)
   if (!allocated) allocate();
 
   int ilo,ihi,jlo,jhi;
-  force->bounds(arg[0],atom->ntypes,ilo,ihi);
-  force->bounds(arg[1],atom->ntypes,jlo,jhi);
+  force->bounds(FLERR,arg[0],atom->ntypes,ilo,ihi);
+  force->bounds(FLERR,arg[1],atom->ntypes,jlo,jhi);
 
-  double a_one = force->numeric(arg[2]);
-  double rho_one = force->numeric(arg[3]);
-  double sigma_one = force->numeric(arg[4]);
+  double a_one = force->numeric(FLERR,arg[2]);
+  double rho_one = force->numeric(FLERR,arg[3]);
+  double sigma_one = force->numeric(FLERR,arg[4]);
   if (rho_one <= 0) error->all(FLERR,"Incorrect args for pair coefficients");
-  double c_one = force->numeric(arg[5]);
-  double d_one = force->numeric(arg[6]);
+  double c_one = force->numeric(FLERR,arg[5]);
+  double d_one = force->numeric(FLERR,arg[6]);
 
   double cut_lj_one = cut_lj_global;
-  if (narg == 8) cut_lj_one = force->numeric(arg[7]);
+  if (narg == 8) cut_lj_one = force->numeric(FLERR,arg[7]);
 
   int count = 0;
   for (int i = ilo; i <= ihi; i++) {
@@ -310,7 +311,7 @@ double PairBornCoulLong::init_one(int i, int j)
   born2[i][j] = 6.0*c[i][j];
   born3[i][j] = 8.0*d[i][j];
 
-  if (offset_flag) {
+  if (offset_flag && (cut_lj[i][j] > 0.0)) {
     double rexp = exp((sigma[i][j]-cut_lj[i][j])*rhoinv[i][j]);
     offset[i][j] = a[i][j]*rexp - c[i][j]/pow(cut_lj[i][j],6.0) +
       d[i][j]/pow(cut_lj[i][j],8.0);
@@ -379,8 +380,8 @@ void PairBornCoulLong::init_style()
     error->all(FLERR,"Pair style requires a KSpace style");
   g_ewald = force->kspace->g_ewald;
 
-  neighbor->request(this);
-  
+  neighbor->request(this,instance_me);
+
   // setup force tables
 
   if (ncoultablebits) init_tables(cut_coul,NULL);
@@ -481,6 +482,29 @@ void PairBornCoulLong::read_restart_settings(FILE *fp)
   MPI_Bcast(&tail_flag,1,MPI_INT,0,world);
   MPI_Bcast(&ncoultablebits,1,MPI_INT,0,world);
   MPI_Bcast(&tabinner,1,MPI_DOUBLE,0,world);
+}
+
+/* ----------------------------------------------------------------------
+   proc 0 writes to data file
+------------------------------------------------------------------------- */
+
+void PairBornCoulLong::write_data(FILE *fp)
+{
+  for (int i = 1; i <= atom->ntypes; i++)
+    fprintf(fp,"%d %g %g %g %g %g\n",i,
+            a[i][i],rho[i][i],sigma[i][i],c[i][i],d[i][i]);
+}
+
+/* ----------------------------------------------------------------------
+   proc 0 writes all pairs to data file
+------------------------------------------------------------------------- */
+
+void PairBornCoulLong::write_data_all(FILE *fp)
+{
+  for (int i = 1; i <= atom->ntypes; i++)
+    for (int j = i; j <= atom->ntypes; j++)
+      fprintf(fp,"%d %d %g %g %g %g %g %g\n",i,j,
+              a[i][j],rho[i][j],sigma[i][j],c[i][j],d[i][j],cut_lj[i][j]);
 }
 
 /* ---------------------------------------------------------------------- */

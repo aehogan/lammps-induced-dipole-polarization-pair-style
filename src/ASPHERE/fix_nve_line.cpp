@@ -11,9 +11,9 @@
    See the README file in the top-level LAMMPS directory.
 ------------------------------------------------------------------------- */
 
-#include "math.h"
-#include "stdio.h"
-#include "string.h"
+#include <math.h>
+#include <stdio.h>
+#include <string.h>
 #include "fix_nve_line.h"
 #include "atom.h"
 #include "atom_vec_line.h"
@@ -56,8 +56,6 @@ int FixNVELine::setmask()
 
 void FixNVELine::init()
 {
-  int i,itype;
-
   // error checks
 
   avec = (AtomVecLine *) atom->style_match("line");
@@ -73,7 +71,7 @@ void FixNVELine::init()
   int *mask = atom->mask;
   int nlocal = atom->nlocal;
 
-  for (i = 0; i < nlocal; i++)
+  for (int i = 0; i < nlocal; i++)
     if (mask[i] & groupbit) {
       if (line[i] < 0) error->one(FLERR,"Fix nve/line requires line particles");
     }
@@ -85,7 +83,7 @@ void FixNVELine::init()
 
 void FixNVELine::initial_integrate(int vflag)
 {
-  double dtfm,dtirotate,delx,dely,length,theta;
+  double dtfm,dtirotate,length,theta;
 
   AtomVecLine::Bonus *bonus = avec->bonus;
   int *line = atom->line;

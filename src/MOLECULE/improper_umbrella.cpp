@@ -15,9 +15,9 @@
    Contributing author: Tod A Pascal (Caltech)
 ------------------------------------------------------------------------- */
 
-#include "mpi.h"
-#include "math.h"
-#include "stdlib.h"
+#include <mpi.h>
+#include <math.h>
+#include <stdlib.h>
 #include "improper_umbrella.h"
 #include "atom.h"
 #include "comm.h"
@@ -37,7 +37,10 @@ using namespace MathConst;
 
 /* ---------------------------------------------------------------------- */
 
-ImproperUmbrella::ImproperUmbrella(LAMMPS *lmp) : Improper(lmp) {}
+ImproperUmbrella::ImproperUmbrella(LAMMPS *lmp) : Improper(lmp)
+{
+  writedata = 1;
+}
 
 /* ---------------------------------------------------------------------- */
 
@@ -128,8 +131,9 @@ void ImproperUmbrella::compute(int eflag, int vflag)
       MPI_Comm_rank(world,&me);
       if (screen) {
         char str[128];
-        sprintf(str,
-                "Improper problem: %d " BIGINT_FORMAT " %d %d %d %d",
+        sprintf(str,"Improper problem: %d " BIGINT_FORMAT " "
+                TAGINT_FORMAT " " TAGINT_FORMAT " "
+                TAGINT_FORMAT " " TAGINT_FORMAT,
                 me,update->ntimestep,
                 atom->tag[i1],atom->tag[i2],atom->tag[i3],atom->tag[i4]);
         error->warning(FLERR,str,0);
@@ -144,8 +148,8 @@ void ImproperUmbrella::compute(int eflag, int vflag)
       }
     }
 
-    if (c > 1.0) s = 1.0;
-    if (c < -1.0) s = -1.0;
+    if (c > 1.0) c = 1.0;
+    if (c < -1.0) c = -1.0;
 
     s = sqrt(1.0 - c*c);
     if (s < SMALL) s = SMALL;
@@ -227,9 +231,25 @@ void ImproperUmbrella::compute(int eflag, int vflag)
       f[i4][2] += f4[2]*a;
     }
 
-    if (evflag)
+    if (evflag) {
+
+      // get correct 4-body geometry for virial tally
+
+      vb1x = x[i1][0] - x[i2][0];
+      vb1y = x[i1][1] - x[i2][1];
+      vb1z = x[i1][2] - x[i2][2];
+
+      vb2x = x[i3][0] - x[i2][0];
+      vb2y = x[i3][1] - x[i2][1];
+      vb2z = x[i3][2] - x[i2][2];
+
+      vb3x = x[i4][0] - x[i3][0];
+      vb3y = x[i4][1] - x[i3][1];
+      vb3z = x[i4][2] - x[i3][2];
+
       ev_tally(i1,i2,i3,i4,nlocal,newton_bond,eimproper,f1,f3,f4,
                vb1x,vb1y,vb1z,vb2x,vb2y,vb2z,vb3x,vb3y,vb3z);
+    }
   }
 }
 
@@ -258,10 +278,10 @@ void ImproperUmbrella::coeff(int narg, char **arg)
   if (!allocated) allocate();
 
   int ilo,ihi;
-  force->bounds(arg[0],atom->nimpropertypes,ilo,ihi);
+  force->bounds(FLERR,arg[0],atom->nimpropertypes,ilo,ihi);
 
-  double k_one = atof(arg[1]);
-  double w_one = atof(arg[2]);
+  double k_one = force->numeric(FLERR,arg[1]);
+  double w_one = force->numeric(FLERR,arg[2]);
 
   // convert w0 from degrees to radians
 
@@ -307,4 +327,14 @@ void ImproperUmbrella::read_restart(FILE *fp)
   MPI_Bcast(&C[1],atom->nimpropertypes,MPI_DOUBLE,0,world);
 
   for (int i = 1; i <= atom->nimpropertypes; i++) setflag[i] = 1;
+}
+
+/* ----------------------------------------------------------------------
+   proc 0 writes to data file
+------------------------------------------------------------------------- */
+
+void ImproperUmbrella::write_data(FILE *fp)
+{
+  for (int i = 1; i <= atom->nimpropertypes; i++)
+    fprintf(fp,"%d %g %g\n",i,kw[i],w0[i]/MY_PI*180.0);
 }

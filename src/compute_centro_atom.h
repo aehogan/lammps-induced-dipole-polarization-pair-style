@@ -1,4 +1,4 @@
-/* ----------------------------------------------------------------------
+/* -*- c++ -*- ----------------------------------------------------------
    LAMMPS - Large-scale Atomic/Molecular Massively Parallel Simulator
    http://lammps.sandia.gov, Sandia National Laboratories
    Steve Plimpton, sjplimp@sandia.gov
@@ -39,6 +39,7 @@ class ComputeCentroAtom : public Compute {
   int *nearest;
   class NeighList *list;
   double *centro;
+  int axes_flag;
 
   void select(int, int, double *);
   void select2(int, int, double *, int *);
@@ -64,6 +65,6 @@ uses a pairwise neighbor list.
 
 W: More than one compute centro/atom
 
-It is not efficient to use compute centro/atom  more than once.
+It is not efficient to use compute centro/atom more than once.
 
 */

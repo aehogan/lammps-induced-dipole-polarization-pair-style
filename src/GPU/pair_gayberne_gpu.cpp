@@ -15,9 +15,9 @@
    Contributing author: Mike Brown (SNL)
 ------------------------------------------------------------------------- */
 
-#include "math.h"
-#include "stdio.h"
-#include "stdlib.h"
+#include <math.h>
+#include <stdio.h>
+#include <stdlib.h>
 #include "pair_gayberne_gpu.h"
 #include "math_extra.h"
 #include "atom.h"
@@ -34,8 +34,10 @@
 #include "universe.h"
 #include "domain.h"
 #include "update.h"
-#include "string.h"
+#include <string.h>
 #include "gpu_extra.h"
+
+using namespace LAMMPS_NS;
 
 // External functions from cuda library for atom decomposition
 
@@ -50,7 +52,7 @@ int gb_gpu_init(const int ntypes, const double gamma, const double upsilon,
 void gb_gpu_clear();
 int ** gb_gpu_compute_n(const int ago, const int inum, const int nall,
                         double **host_x, int *host_type, double *sublo,
-                        double *subhi, int *tag, int **nspecial, int **special,
+                        double *subhi, tagint *tag, int **nspecial, tagint **special,
                         const bool eflag, const bool vflag,
                         const bool eatom, const bool vatom, int &host_start,
                         int **ilist, int **jnum, const double cpu_time,
@@ -62,8 +64,6 @@ int * gb_gpu_compute(const int ago, const int inum, const int nall,
                      const double cpu_time, bool &success, double **host_quat);
 double gb_gpu_bytes();
 
-using namespace LAMMPS_NS;
-
 enum{SPHERE_SPHERE,SPHERE_ELLIPSE,ELLIPSE_SPHERE,ELLIPSE_ELLIPSE};
 
 /* ---------------------------------------------------------------------- */
@@ -71,10 +71,8 @@ enum{SPHERE_SPHERE,SPHERE_ELLIPSE,ELLIPSE_SPHERE,ELLIPSE_ELLIPSE};
 PairGayBerneGPU::PairGayBerneGPU(LAMMPS *lmp) : PairGayBerne(lmp),
                                                 gpu_mode(GPU_FORCE)
 {
-  avec = (AtomVecEllipsoid *) atom->style_match("ellipsoid");
-  if (!avec)
-    error->all(FLERR,"Pair gayberne/gpu requires atom style ellipsoid");
   quat_nmax = 0;
+  reinitflag = 0;
   quat = NULL;
   GPU_EXTRA::gpu_ready(lmp->modify, lmp->error);
 }
@@ -152,6 +150,9 @@ void PairGayBerneGPU::compute(int eflag, int vflag)
 
 void PairGayBerneGPU::init_style()
 {
+  avec = (AtomVecEllipsoid *) atom->style_match("ellipsoid");
+  if (!avec)
+    error->all(FLERR,"Pair gayberne/gpu requires atom style ellipsoid");
   if (force->newton_pair)
     error->all(FLERR,"Cannot use newton pair with gayberne/gpu pair style");
   if (!atom->ellipsoid_flag)
@@ -202,7 +203,7 @@ void PairGayBerneGPU::init_style()
   GPU_EXTRA::check_flag(success,error,world);
 
   if (gpu_mode == GPU_FORCE) {
-    int irequest = neighbor->request(this);
+    int irequest = neighbor->request(this,instance_me);
     neighbor->requests[irequest]->half = 0;
     neighbor->requests[irequest]->full = 1;
   }

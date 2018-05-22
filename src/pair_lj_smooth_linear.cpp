@@ -15,9 +15,9 @@
    Contributing author: Jonathan Zimmerman (Sandia)
 ------------------------------------------------------------------------- */
 
-#include "math.h"
-#include "stdio.h"
-#include "stdlib.h"
+#include <math.h>
+#include <stdio.h>
+#include <stdlib.h>
 #include "pair_lj_smooth_linear.h"
 #include "atom.h"
 #include "comm.h"
@@ -69,7 +69,6 @@ void PairLJSmoothLinear::compute(int eflag, int vflag)
   double **f = atom->f;
   int *type = atom->type;
   int nlocal = atom->nlocal;
-  int nall = nlocal + atom->nghost;
   double *special_lj = force->special_lj;
   int newton_pair = force->newton_pair;
 
@@ -169,14 +168,14 @@ void PairLJSmoothLinear::settings(int narg, char **arg)
 {
   if (narg != 1) error->all(FLERR,"Illegal pair_style command");
 
-  cut_global = atof(arg[0]);
+  cut_global = force->numeric(FLERR,arg[0]);
 
   // reset cutoffs that have been explicitly set
 
   if (allocated) {
     int i,j;
     for (i = 1; i <= atom->ntypes; i++)
-      for (j = i+1; j <= atom->ntypes; j++)
+      for (j = i; j <= atom->ntypes; j++)
         if (setflag[i][j])
           cut[i][j] = cut_global;
   }
@@ -193,15 +192,15 @@ void PairLJSmoothLinear::coeff(int narg, char **arg)
   if (!allocated) allocate();
 
   int ilo,ihi,jlo,jhi;
-  force->bounds(arg[0],atom->ntypes,ilo,ihi);
-  force->bounds(arg[1],atom->ntypes,jlo,jhi);
+  force->bounds(FLERR,arg[0],atom->ntypes,ilo,ihi);
+  force->bounds(FLERR,arg[1],atom->ntypes,jlo,jhi);
 
-  double epsilon_one = atof(arg[2]);
-  double sigma_one = atof(arg[3]);
+  double epsilon_one = force->numeric(FLERR,arg[2]);
+  double sigma_one = force->numeric(FLERR,arg[3]);
 
   double cut_one = cut_global;
   if (narg == 5) {
-    cut_one = atof(arg[4]);
+    cut_one = force->numeric(FLERR,arg[4]);
   }
 
   int count = 0;
@@ -245,6 +244,7 @@ double PairLJSmoothLinear::init_one(int i, int j)
   lj2[j][i] = lj2[i][j];
   lj3[j][i] = lj3[i][j];
   lj4[j][i] = lj4[i][j];
+  cut[j][i] = cut[i][j];
   ljcut[j][i] = ljcut[i][j];
   dljcut[j][i] = dljcut[i][j];
 

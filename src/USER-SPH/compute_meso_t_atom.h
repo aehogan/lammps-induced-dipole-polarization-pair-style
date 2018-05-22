@@ -1,4 +1,4 @@
-/* ----------------------------------------------------------------------
+/* -*- c++ -*- ----------------------------------------------------------
    LAMMPS - Large-scale Atomic/Molecular Massively Parallel Simulator
    http://lammps.sandia.gov, Sandia National Laboratories
    Steve Plimpton, sjplimp@sandia.gov
@@ -13,7 +13,7 @@
 
 #ifdef COMPUTE_CLASS
 
-ComputeStyle(meso_t/atom,ComputeMesoTAtom)
+ComputeStyle(meso/t/atom,ComputeMesoTAtom)
 
 #else
 

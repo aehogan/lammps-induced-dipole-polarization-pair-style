@@ -24,23 +24,17 @@
   <http://www.gnu.org/licenses/>.
   ----------------------------------------------------------------------*/
 
-#include "pair_reax_c.h"
-#if defined(PURE_REAX)
-#include "control.h"
-#include "tool_box.h"
-#elif defined(LAMMPS_REAX)
+#include "pair_reaxc.h"
 #include "reaxc_control.h"
 #include "reaxc_tool_box.h"
-#endif
-
 
 char Read_Control_File( char *control_file, control_params* control,
                         output_controls *out_control )
 {
   FILE *fp;
   char *s, **tmp;
-  int   c,i,ival;
-  real  val;
+  int   i,ival;
+  double  val;
 
   /* open control file */
   if ( (fp = fopen( control_file, "r" ) ) == NULL ) {
@@ -54,6 +48,7 @@ char Read_Control_File( char *control_file, control_params* control,
   control->nsteps          = 0;
   control->dt              = 0.25;
   control->nprocs          = 1;
+  control->nthreads        = 1;
   control->procs_by_dim[0] = 1;
   control->procs_by_dim[1] = 1;
   control->procs_by_dim[2] = 1;
@@ -121,8 +116,7 @@ char Read_Control_File( char *control_file, control_params* control,
   /* read control parameters file */
   while (!feof(fp)) {
     fgets( s, MAX_LINE, fp );
-    c = Tokenize( s, &tmp );
-    //fprintf( stderr, "%s\n", s );
+    Tokenize( s, &tmp );
 
     if( strcmp(tmp[0], "simulation_name") == 0 ) {
       strcpy( control->sim_name, tmp[1] );
@@ -152,13 +146,6 @@ char Read_Control_File( char *control_file, control_params* control,
       control->nprocs = control->procs_by_dim[0]*control->procs_by_dim[1]*
         control->procs_by_dim[2];
     }
-    //else if( strcmp(tmp[0], "restart") == 0 ) {
-    //  ival = atoi(tmp[1]);
-    //  control->restart = ival;
-    //}
-    //else if( strcmp(tmp[0], "restart_from") == 0 ) {
-    //  strcpy( control->restart_from, tmp[1] );
-    //}
     else if( strcmp(tmp[0], "random_vel") == 0 ) {
       ival = atoi(tmp[1]);
       control->random_vel = ival;
@@ -393,13 +380,7 @@ char Read_Control_File( char *control_file, control_params* control,
   free( tmp );
   free( s );
 
-  // fprintf( stderr,"%d %d %10.5f %d %10.5f %10.5f\n",
-  //   control->ensemble, control->nsteps, control->dt,
-  //   control->tabulate, control->T, control->P );
-
-#if defined(DEBUG_FOCUS)
-  fprintf( stderr, "control file read\n" );
-#endif
+  fclose(fp);
 
   return SUCCESS;
 }

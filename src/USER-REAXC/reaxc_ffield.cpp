@@ -24,43 +24,31 @@
   <http://www.gnu.org/licenses/>.
   ----------------------------------------------------------------------*/
 
-#include "pair_reax_c.h"
+#include "pair_reaxc.h"
 #include "error.h"
-#if defined(PURE_REAX)
-#include "ffield.h"
-#include "tool_box.h"
-#elif defined(LAMMPS_REAX)
 #include "reaxc_ffield.h"
 #include "reaxc_tool_box.h"
-#endif
 
-
-char Read_Force_Field( char *ffield_file, reax_interaction *reax,
+char Read_Force_Field( FILE *fp, reax_interaction *reax,
                        control_params *control )
 {
-  FILE    *fp;
   char    *s;
   char   **tmp;
   char ****tor_flag;
   int      c, i, j, k, l, m, n, o, p, cnt;
   int lgflag = control->lgflag;
   int errorflag = 1;
-  real     val;
+  double     val;
   MPI_Comm comm;
+  int me;
 
   comm = MPI_COMM_WORLD;
-
-  /* open force field file */
-  if ( (fp = fopen( ffield_file, "r" ) ) == NULL ) {
-    fprintf( stderr, "error opening the force filed file! terminating...\n" );
-    MPI_Abort( comm, FILE_NOT_FOUND );
-  }
+  MPI_Comm_rank(comm, &me);
 
   s = (char*) malloc(sizeof(char)*MAX_LINE);
   tmp = (char**) malloc(sizeof(char*)*MAX_TOKENS);
   for (i=0; i < MAX_TOKENS; i++)
     tmp[i] = (char*) malloc(sizeof(char)*MAX_TOKEN_LEN);
-
 
   /* reading first header comment */
   fgets( s, MAX_LINE, fp );
@@ -72,20 +60,23 @@ char Read_Force_Field( char *ffield_file, reax_interaction *reax,
   /* reading the number of global parameters */
   n = atoi(tmp[0]);
   if (n < 1) {
-    fprintf( stderr, "WARNING: number of globals in ffield file is 0!\n" );
+    if (me == 0)
+      fprintf( stderr, "WARNING: number of globals in ffield file is 0!\n" );
     fclose(fp);
+    free(s);
+    free(tmp);
     return 1;
   }
 
   reax->gp.n_global = n;
-  reax->gp.l = (real*) malloc(sizeof(real)*n);
+  reax->gp.l = (double*) malloc(sizeof(double)*n);
 
   /* see reax_types.h for mapping between l[i] and the lambdas used in ff */
   for (i=0; i < n; i++) {
     fgets(s,MAX_LINE,fp);
     c = Tokenize(s,&tmp);
 
-    val = (real) atof(tmp[0]);
+    val = (double) atof(tmp[0]);
     reax->gp.l[i] = val;
   }
 
@@ -158,15 +149,8 @@ char Read_Force_Field( char *ffield_file, reax_interaction *reax,
     }
   }
 
-  // vdWaals type: 1: Shielded Morse, no inner-wall
-  //               2: inner wall, no shielding
-  //               3: inner wall+shielding
   reax->gp.vdw_type = 0;
 
-  /* reading single atom parameters */
-  /* there are 4 or 5 lines of each single atom parameters in ff files,
-     depending on using lgvdw or not. These parameters later determine
-     some of the pair and triplet parameters using combination rules. */
 
   for( i = 0; i < reax->num_atom_types; i++ ) {
     /* line one */
@@ -218,7 +202,8 @@ char Read_Force_Field( char *ffield_file, reax_interaction *reax,
 
     /* Sanity check */
     if (c < 3) {
-      fprintf(stderr, "Inconsistent ffield file (reaxc_ffield.cpp) \n");
+      if (me == 0)
+        fprintf(stderr, "Inconsistent ffield file (reaxc_ffield.cpp) \n");
       MPI_Abort( comm, FILE_NOT_FOUND );
     }
 
@@ -238,7 +223,8 @@ char Read_Force_Field( char *ffield_file, reax_interaction *reax,
 
       /* Sanity check */
       if (c > 3) {
-        fprintf(stderr, "Inconsistent ffield file (reaxc_ffield.cpp) \n");
+        if (me == 0)
+          fprintf(stderr, "Inconsistent ffield file (reaxc_ffield.cpp) \n");
         MPI_Abort( comm, FILE_NOT_FOUND );
       }
 
@@ -249,62 +235,51 @@ char Read_Force_Field( char *ffield_file, reax_interaction *reax,
     if( reax->sbp[i].rcore2>0.01 && reax->sbp[i].acore2>0.01 ){ // Inner-wall
       if( reax->sbp[i].gamma_w>0.5 ){ // Shielding vdWaals
         if( reax->gp.vdw_type != 0 && reax->gp.vdw_type != 3 ) {
-          if (errorflag)
-            fprintf( stderr, "Warning: inconsistent vdWaals-parameters\n"        \
-                   "Force field parameters for element %s\n"                \
-                   "indicate inner wall+shielding, but earlier\n"        \
-                   "atoms indicate different vdWaals-method.\n"                \
-                   "This may cause division-by-zero errors.\n"                \
+          if (errorflag && (me == 0))
+            fprintf( stderr, "Warning: inconsistent vdWaals-parameters\n" \
+                   "Force field parameters for element %s\n"              \
+                   "indicate inner wall+shielding, but earlier\n"         \
+                   "atoms indicate different vdWaals-method.\n"           \
+                   "This may cause division-by-zero errors.\n"            \
                    "Keeping vdWaals-setting for earlier atoms.\n",
                    reax->sbp[i].name );
           errorflag = 0;
-        }
-        else{
+        } else{
           reax->gp.vdw_type = 3;
-#if defined(DEBUG)
-          fprintf( stderr, "vdWaals type for element %s: Shielding+inner-wall",
-                   reax->sbp[i].name );
-#endif
         }
       }
       else {  // No shielding vdWaals parameters present
-        if( reax->gp.vdw_type != 0 && reax->gp.vdw_type != 2 )
-          fprintf( stderr, "Warning: inconsistent vdWaals-parameters\n"        \
-                   "Force field parameters for element %s\n"                \
+        if( reax->gp.vdw_type != 0 && reax->gp.vdw_type != 2 ) {
+          if (me == 0)
+            fprintf( stderr, "Warning: inconsistent vdWaals-parameters\n" \
+                   "Force field parameters for element %s\n"              \
                    "indicate inner wall without shielding, but earlier\n" \
-                   "atoms indicate different vdWaals-method.\n"                \
-                   "This may cause division-by-zero errors.\n"                \
+                   "atoms indicate different vdWaals-method.\n"           \
+                   "This may cause division-by-zero errors.\n"            \
                    "Keeping vdWaals-setting for earlier atoms.\n",
                    reax->sbp[i].name );
-        else{
+        } else {
           reax->gp.vdw_type = 2;
-#if defined(DEBUG)
-          fprintf( stderr,"vdWaals type for element%s: No Shielding,inner-wall",
-                   reax->sbp[i].name );
-#endif
         }
       }
     }
     else{ // No Inner wall parameters present
       if( reax->sbp[i].gamma_w>0.5 ){ // Shielding vdWaals
-        if( reax->gp.vdw_type != 0 && reax->gp.vdw_type != 1 )
-          fprintf( stderr, "Warning: inconsistent vdWaals-parameters\n"        \
-                   "Force field parameters for element %s\n"                \
+        if( reax->gp.vdw_type != 0 && reax->gp.vdw_type != 1 ) {
+          if (me == 0)
+            fprintf( stderr, "Warning: inconsistent vdWaals-parameters\n"  \
+                   "Force field parameters for element %s\n"               \
                    "indicate  shielding without inner wall, but earlier\n" \
-                   "atoms indicate different vdWaals-method.\n"                \
-                   "This may cause division-by-zero errors.\n"                \
+                   "atoms indicate different vdWaals-method.\n"            \
+                   "This may cause division-by-zero errors.\n"             \
                    "Keeping vdWaals-setting for earlier atoms.\n",
                    reax->sbp[i].name );
-        else{
+        } else {
           reax->gp.vdw_type = 1;
-#if defined(DEBUG)
-          fprintf( stderr,"vdWaals type for element%s: Shielding,no inner-wall",
-                   reax->sbp[i].name );
-#endif
         }
-      }
-      else{
-        fprintf( stderr, "Error: inconsistent vdWaals-parameters\n"\
+      } else {
+        if (me == 0)
+          fprintf( stderr, "Error: inconsistent vdWaals-parameters\n"  \
                  "No shielding or inner-wall set for element %s\n",
                  reax->sbp[i].name );
         MPI_Abort( comm, INVALID_INPUT );
@@ -312,19 +287,15 @@ char Read_Force_Field( char *ffield_file, reax_interaction *reax,
     }
   }
 
-#if defined(DEBUG)
-  fprintf( stderr, "vdWaals type: %d\n", reax->gp.vdw_type );
-#endif
-
   /* Equate vval3 to valf for first-row elements (25/10/2004) */
   for( i = 0; i < reax->num_atom_types; i++ )
     if( reax->sbp[i].mass < 21 &&
-        reax->sbp[i].valency_val != reax->sbp[i].valency_boc ){
-      fprintf( stderr, "Warning: changed valency_val to valency_boc for %s\n",
+        reax->sbp[i].valency_val != reax->sbp[i].valency_boc ) {
+      if (me == 0)
+        fprintf(stderr,"Warning: changed valency_val to valency_boc for %s\n",
                reax->sbp[i].name );
       reax->sbp[i].valency_val = reax->sbp[i].valency_boc;
     }
-
 
   /* next line is number of two body combination and some comments */
   fgets(s,MAX_LINE,fp);
@@ -384,8 +355,6 @@ char Read_Force_Field( char *ffield_file, reax_interaction *reax,
       val = atof(tmp[7]);
     }
   }
-
-  /* calculating combination rules and filling up remaining fields. */
 
   for (i=0; i < reax->num_atom_types; i++)
     for (j=i; j < reax->num_atom_types; j++) {
@@ -481,15 +450,11 @@ char Read_Force_Field( char *ffield_file, reax_interaction *reax,
       reax->tbp[i][j].lgcij = reax->tbp[j][i].lgcij =
         sqrt( reax->sbp[i].lgcij * reax->sbp[j].lgcij );
 
-      reax->tbp[i][j].lgre = reax->tbp[j][i].lgre = 2.0 *
+      reax->tbp[i][j].lgre = reax->tbp[j][i].lgre = 2.0 * reax->gp.l[35] *
         sqrt( reax->sbp[i].lgre*reax->sbp[j].lgre );
 
     }
 
-
-  /* next line is number of two body offdiagonal combinations and comments */
-  /* these are two body offdiagonal terms that are different from the
-     combination rules defined above */
   fgets(s,MAX_LINE,fp);
   c=Tokenize(s,&tmp);
   l = atoi(tmp[0]);
@@ -546,16 +511,11 @@ char Read_Force_Field( char *ffield_file, reax_interaction *reax,
     }
   }
 
-
-  /* 3-body parameters -
-     supports multi-well potentials (upto MAX_3BODY_PARAM in mytypes.h) */
-  /* clear entries first */
   for( i = 0; i < reax->num_atom_types; ++i )
     for( j = 0; j < reax->num_atom_types; ++j )
       for( k = 0; k < reax->num_atom_types; ++k )
         reax->thbp[i][j][k].cnt = 0;
 
-  /* next line is number of 3-body params and some comments */
   fgets( s, MAX_LINE, fp );
   c = Tokenize( s, &tmp );
   l = atoi( tmp[0] );
@@ -604,15 +564,6 @@ char Read_Force_Field( char *ffield_file, reax_interaction *reax,
     }
   }
 
-
-  /* 4-body parameters are entered in compact form. i.e. 0-X-Y-0
-     correspond to any type of pair of atoms in 1 and 4
-     position. However, explicit X-Y-Z-W takes precedence over the
-     default description.
-     supports multi-well potentials (upto MAX_4BODY_PARAM in mytypes.h)
-     IMPORTANT: for now, directions on how to read multi-entries from ffield
-     is not clear */
-
   /* clear all entries first */
   for( i = 0; i < reax->num_atom_types; ++i )
     for( j = 0; j < reax->num_atom_types; ++j )
@@ -639,16 +590,11 @@ char Read_Force_Field( char *ffield_file, reax_interaction *reax,
     if (j >= 0 && n >= 0) { // this means the entry is not in compact form
       if (j < reax->num_atom_types && k < reax->num_atom_types &&
           m < reax->num_atom_types && n < reax->num_atom_types) {
-        /* these flags ensure that this entry take precedence
-           over the compact form entries */
         tor_flag[j][k][m][n] = 1;
         tor_flag[n][m][k][j] = 1;
 
         reax->fbp[j][k][m][n].cnt = 1;
         reax->fbp[n][m][k][j].cnt = 1;
-        /* cnt = reax->fbp[j][k][m][n].cnt;
-           reax->fbp[j][k][m][n].cnt++;
-           reax->fbp[n][m][k][j].cnt++; */
 
         val = atof(tmp[4]);
         reax->fbp[j][k][m][n].prm[0].V1 = val;
@@ -677,9 +623,6 @@ char Read_Force_Field( char *ffield_file, reax_interaction *reax,
           for( o = 0; o < reax->num_atom_types; o++ ) {
             reax->fbp[p][k][m][o].cnt = 1;
             reax->fbp[o][m][k][p].cnt = 1;
-            /* cnt = reax->fbp[p][k][m][o].cnt;
-               reax->fbp[p][k][m][o].cnt++;
-               reax->fbp[o][m][k][p].cnt++; */
 
             if (tor_flag[p][k][m][o] == 0) {
               reax->fbp[p][k][m][o].prm[0].V1 = atof(tmp[4]);
@@ -707,6 +650,11 @@ char Read_Force_Field( char *ffield_file, reax_interaction *reax,
   c = Tokenize( s, &tmp );
   l = atoi( tmp[0] );
 
+  for( i = 0; i < reax->num_atom_types; ++i )
+    for( j = 0; j < reax->num_atom_types; ++j )
+      for( k = 0; k < reax->num_atom_types; ++k )
+        reax->hbp[i][j][k].r0_hb = -1.0;
+
   for( i = 0; i < l; i++ ) {
     fgets( s, MAX_LINE, fp );
     c = Tokenize( s, &tmp );
@@ -731,7 +679,6 @@ char Read_Force_Field( char *ffield_file, reax_interaction *reax,
     }
   }
 
-
   /* deallocate helper storage */
   for( i = 0; i < MAX_TOKENS; i++ )
     free( tmp[i] );
@@ -754,10 +701,6 @@ char Read_Force_Field( char *ffield_file, reax_interaction *reax,
   // close file
 
   fclose(fp);
-
-#if defined(DEBUG_FOCUS)
-  fprintf( stderr, "force field read\n" );
-#endif
 
   return SUCCESS;
 }

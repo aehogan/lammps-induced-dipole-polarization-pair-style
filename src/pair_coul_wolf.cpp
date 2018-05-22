@@ -15,10 +15,10 @@
    Contributing author: Yongfeng Zhang (INL), yongfeng.zhang@inl.gov
 ------------------------------------------------------------------------- */
 
-#include "math.h"
-#include "stdio.h"
-#include "stdlib.h"
-#include "string.h"
+#include <math.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
 #include "pair_coul_wolf.h"
 #include "atom.h"
 #include "comm.h"
@@ -34,12 +34,17 @@ using namespace MathConst;
 
 /* ---------------------------------------------------------------------- */
 
-PairCoulWolf::PairCoulWolf(LAMMPS *lmp) : Pair(lmp) {}
+PairCoulWolf::PairCoulWolf(LAMMPS *lmp) : Pair(lmp)
+{
+  single_enable = 0;        // NOTE: single() method below is not yet correct
+}
 
 /* ---------------------------------------------------------------------- */
 
 PairCoulWolf::~PairCoulWolf()
 {
+  if (copymode) return;
+
   if (allocated) {
     memory->destroy(setflag);
     memory->destroy(cutsq);
@@ -50,11 +55,11 @@ PairCoulWolf::~PairCoulWolf()
 
 void PairCoulWolf::compute(int eflag, int vflag)
 {
-  int i,j,ii,jj,inum,jnum,itype,jtype;
+  int i,j,ii,jj,inum,jnum;
   double qtmp,xtmp,ytmp,ztmp,delx,dely,delz,ecoul,fpair;
   double rsq,forcecoul,factor_coul;
   double prefactor;
-  double r,rexp;
+  double r;
   int *ilist,*jlist,*numneigh,**firstneigh;
   double erfcc,erfcd,v_sh,dvdrr,e_self,e_shift,f_shift,qisq;
 
@@ -65,9 +70,7 @@ void PairCoulWolf::compute(int eflag, int vflag)
   double **x = atom->x;
   double **f = atom->f;
   double *q = atom->q;
-  int *type = atom->type;
   int nlocal = atom->nlocal;
-  int nall = nlocal + atom->nghost;
   double *special_coul = force->special_coul;
   int newton_pair = force->newton_pair;
   double qqrd2e = force->qqrd2e;
@@ -92,7 +95,6 @@ void PairCoulWolf::compute(int eflag, int vflag)
     xtmp = x[i][0];
     ytmp = x[i][1];
     ztmp = x[i][2];
-    itype = type[i];
     jlist = firstneigh[i];
     jnum = numneigh[i];
 
@@ -109,7 +111,6 @@ void PairCoulWolf::compute(int eflag, int vflag)
       dely = ytmp - x[j][1];
       delz = ztmp - x[j][2];
       rsq = delx*delx + dely*dely + delz*delz;
-      jtype = type[j];
 
       if (rsq < cut_coulsq) {
         r = sqrt(rsq);
@@ -132,11 +133,9 @@ void PairCoulWolf::compute(int eflag, int vflag)
         }
 
         if (eflag) {
-          if (rsq < cut_coulsq) {
-            ecoul = v_sh;
-            if (factor_coul < 1.0) ecoul -= (1.0-factor_coul)*prefactor;
-          } else ecoul = 0.0;
-        }
+          ecoul = v_sh;
+          if (factor_coul < 1.0) ecoul -= (1.0-factor_coul)*prefactor;
+        } else ecoul = 0.0;
 
         if (evflag) ev_tally(i,j,nlocal,newton_pair,
                              0.0,ecoul,fpair,delx,dely,delz);
@@ -174,8 +173,8 @@ void PairCoulWolf::settings(int narg, char **arg)
 {
   if (narg != 2) error->all(FLERR,"Illegal pair_style command");
 
-  alf = force->numeric(arg[0]);
-  cut_coul = force->numeric(arg[1]);
+  alf = force->numeric(FLERR,arg[0]);
+  cut_coul = force->numeric(FLERR,arg[1]);
 }
 
 /* ----------------------------------------------------------------------
@@ -188,8 +187,8 @@ void PairCoulWolf::coeff(int narg, char **arg)
   if (!allocated) allocate();
 
   int ilo,ihi,jlo,jhi;
-  force->bounds(arg[0],atom->ntypes,ilo,ihi);
-  force->bounds(arg[1],atom->ntypes,jlo,jhi);
+  force->bounds(FLERR,arg[0],atom->ntypes,ilo,ihi);
+  force->bounds(FLERR,arg[1],atom->ntypes,jlo,jhi);
 
   int count = 0;
   for (int i = ilo; i <= ihi; i++) {
@@ -211,7 +210,7 @@ void PairCoulWolf::init_style()
   if (!atom->q_flag)
     error->all(FLERR,"Pair coul/wolf requires atom attribute q");
 
-  int irequest = neighbor->request(this);
+  neighbor->request(this,instance_me);
 
   cut_coulsq = cut_coul*cut_coul;
 }
@@ -295,8 +294,8 @@ double PairCoulWolf::single(int i, int j, int itype, int jtype, double rsq,
                             double factor_coul, double factor_lj,
                             double &fforce)
 {
-  double r6inv,r,prefactor,rexp;
-  double forcecoul,forceborn,phicoul;
+  double r,prefactor;
+  double forcecoul,phicoul;
   double e_shift,f_shift,dvdrr,erfcc,erfcd;
 
   e_shift = erfc(alf*cut_coul) / cut_coul;

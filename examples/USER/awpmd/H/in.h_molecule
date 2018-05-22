@@ -22,7 +22,7 @@ timestep        0.001
 
 fix             1 all nve/awpmd
 
-communicate	    single vel yes
+comm_modify	vel yes
 
 compute         energies all pair awpmd/cut
 variable        eke equal c_energies[1]
@@ -30,7 +30,7 @@ variable        epauli equal c_energies[2]
 variable        estatics equal c_energies[3]
 variable        errestrain equal c_energies[4]
 
-compute         peratom all stress/atom
+compute         peratom all stress/atom NULL
 compute         p all reduce sum c_peratom[1] c_peratom[2] c_peratom[3]
 variable        press equal -(c_p[1]+c_p[2]+c_p[3])/(3*vol)
 

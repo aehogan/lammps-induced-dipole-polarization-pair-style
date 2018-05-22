@@ -15,11 +15,15 @@
    Contributing author: Aidan Thompson (SNL)
 ------------------------------------------------------------------------- */
 
+// lmptype.h must be first b/c this file uses MAXBIGINT and includes mpi.h
+// due to OpenMPI bug which sets INT64_MAX via its mpi.h
+//   before lmptype.h can set flags to insure it is done correctly
+
 #include "lmptype.h"
-#include "mpi.h"
-#include "math.h"
-#include "stdlib.h"
-#include "string.h"
+#include <mpi.h>
+#include <math.h>
+#include <stdlib.h>
+#include <string.h>
 #include "tad.h"
 #include "universe.h"
 #include "update.h"
@@ -36,11 +40,9 @@
 #include "compute.h"
 #include "fix.h"
 #include "fix_event_tad.h"
-#include "fix_store_state.h"
+#include "fix_store.h"
 #include "force.h"
 #include "pair.h"
-#include "random_park.h"
-#include "random_mars.h"
 #include "output.h"
 #include "dump.h"
 #include "finish.h"
@@ -71,7 +73,6 @@ TAD::~TAD()
 
 void TAD::command(int narg, char **arg)
 {
-
   fix_event_list = NULL;
   n_event_list = 0;
   nmax_event_list = 0;
@@ -92,15 +93,22 @@ void TAD::command(int narg, char **arg)
 
   if (narg < 7) error->universe_all(FLERR,"Illegal tad command");
 
-  nsteps = atoi(arg[0]);
-  t_event = atoi(arg[1]);
-  templo = atof(arg[2]);
-  temphi = atof(arg[3]);
-  delta_conf = atof(arg[4]);
-  tmax = atof(arg[5]);
+  nsteps = force->inumeric(FLERR,arg[0]);
+  t_event = force->inumeric(FLERR,arg[1]);
+  templo = force->numeric(FLERR,arg[2]);
+  temphi = force->numeric(FLERR,arg[3]);
+  delta_conf = force->numeric(FLERR,arg[4]);
+  tmax = force->numeric(FLERR,arg[5]);
 
   char *id_compute = new char[strlen(arg[6])+1];
   strcpy(id_compute,arg[6]);
+
+  // quench minimizer is set by min_style command
+  // NEB minimizer is set by options, default = quickmin
+
+  int n = strlen(update->minimize_style) + 1;
+  min_style = new char[n];
+  strcpy(min_style,update->minimize_style);
 
   options(narg-7,&arg[7]);
 
@@ -142,25 +150,18 @@ void TAD::command(int narg, char **arg)
   fix_event = (FixEventTAD *) modify->fix[modify->nfix-1];
   delete [] args;
 
-  // create FixStoreState object to store revert state
+  // create FixStore object to store revert state
 
-  narg2 = 13;
+  narg2 = 6;
   args = new char*[narg2];
   args[0] = (char *) "tad_revert";
   args[1] = (char *) "all";
-  args[2] = (char *) "store/state";
-  args[3] = (char *) "0";
-  args[4] = (char *) "x";
-  args[5] = (char *) "y";
-  args[6] = (char *) "z";
-  args[7] = (char *) "ix";
-  args[8] = (char *) "iy";
-  args[9] = (char *) "iz";
-  args[10] = (char *) "vx";
-  args[11] = (char *) "vy";
-  args[12] = (char *) "vz";
+  args[2] = (char *) "STORE";
+  args[3] = (char *) "peratom";
+  args[4] = (char *) "0";
+  args[5] = (char *) "7";
   modify->add_fix(narg2,args);
-  fix_revert = (FixStoreState *) modify->fix[modify->nfix-1];
+  fix_revert = (FixStore *) modify->fix[modify->nfix-1];
   delete [] args;
 
   // create Finish for timing output
@@ -197,7 +198,7 @@ void TAD::command(int narg, char **arg)
   update->beginstep = update->firststep = update->ntimestep;
   update->endstep = update->laststep = update->firststep + nsteps;
   update->restrict_output = 1;
-  if (update->laststep < 0 || update->laststep > MAXBIGINT)
+  if (update->laststep < 0)
     error->all(FLERR,"Too many timesteps");
 
   lmp->init();
@@ -228,12 +229,10 @@ void TAD::command(int narg, char **arg)
   if (me_universe == 0) {
     if (universe->uscreen)
       fprintf(universe->uscreen,
-              "Step CPU N M Status Barrier Margin t_lo delt_lo\n"
-              );
+              "Step CPU N M Status Barrier Margin t_lo delt_lo\n");
     if (universe->ulogfile)
       fprintf(universe->ulogfile,
-              "Step CPU N M Status Barrier Margin t_lo delt_lo\n"
-              );
+              "Step CPU N M Status Barrier Margin t_lo delt_lo\n");
   }
 
   ulogfile_lammps = universe->ulogfile;
@@ -248,25 +247,24 @@ void TAD::command(int narg, char **arg)
   // need this line if quench() does only setup_minimal()
   // update->minimize->setup();
 
-  // This should work with if uncommented, but does not
+  // this should work with if statement uncommented, but does not
   // if (universe->iworld == 0) {
 
-  fix_event->store_state();
+  fix_event->store_state_quench();
   quench();
 
   timer->init();
-  timer->barrier_start(TIME_LOOP);
-  time_start = timer->array[TIME_LOOP];
+  timer->barrier_start();
+  time_start = timer->get_wall(Timer::TOTAL);
   fix_event->store_event_tad(update->ntimestep);
   log_event(0);
-  fix_event->restore_state();
+  fix_event->restore_state_quench();
 
   // do full init/setup
 
   update->whichflag = 1;
   lmp->init();
-  update->integrate->setup();
-  //   }
+  update->integrate->setup(1);
 
   // main loop: look for events until out of time
   // (1) dynamics, store state, quench, check event, restore state
@@ -276,8 +274,9 @@ void TAD::command(int narg, char **arg)
   nbuild = ndanger = 0;
   time_neb = time_dynamics = time_quench = time_comm = time_output = 0.0;
 
-  timer->barrier_start(TIME_LOOP);
-  time_start = timer->array[TIME_LOOP];
+  timer->init();
+  timer->barrier_start();
+  time_start = timer->get_wall(Timer::TOTAL);
 
   int confident_flag, event_flag;
 
@@ -294,13 +293,8 @@ void TAD::command(int narg, char **arg)
         while (update->ntimestep < update->endstep) {
 
           dynamics();
-
-
-          fix_event->store_state();
-
-
+          fix_event->store_state_quench();
           quench();
-
 
           event_flag = check_event();
           MPI_Bcast(&event_flag,1,MPI_INT,0,universe->uworld);
@@ -309,11 +303,11 @@ void TAD::command(int narg, char **arg)
 
           // restore hot state
 
-          fix_event->restore_state();
+          fix_event->restore_state_quench();
 
           // store hot state in revert
 
-          fix_revert->end_of_step();
+          store_state();
         }
         if (!event_flag) break;
 
@@ -324,7 +318,7 @@ void TAD::command(int narg, char **arg)
         confident_flag = check_confidence();
         MPI_Bcast(&confident_flag,1,MPI_INT,0,universe->uworld);
         if (confident_flag) break;
-        if (universe->iworld == 0) revert();
+        if (universe->iworld == 0) revert_state();
       }
       if (!confident_flag) break;
 
@@ -348,15 +342,15 @@ void TAD::command(int narg, char **arg)
 
       update->whichflag = 1;
       lmp->init();
-      update->integrate->setup();
+      update->integrate->setup(1);
 
     // write restart file of hot coords
 
       if (restart_flag) {
-        timer->barrier_start(TIME_LOOP);
+        timer->barrier_start();
         output->write_restart(update->ntimestep);
-        timer->barrier_stop(TIME_LOOP);
-        time_output += timer->array[TIME_LOOP];
+        timer->barrier_stop();
+        time_output += timer->get_wall(Timer::TOTAL);
       }
     }
 
@@ -387,14 +381,14 @@ void TAD::command(int narg, char **arg)
 
   // set total timers and counters so Finish() will process them
 
-  timer->array[TIME_LOOP] = time_start;
-  timer->barrier_stop(TIME_LOOP);
+  timer->set_wall(Timer::TOTAL, time_start);
+  timer->barrier_stop();
 
-  timer->array[TIME_PAIR] = time_neb;
-  timer->array[TIME_BOND] = time_dynamics;
-  timer->array[TIME_KSPACE] = time_quench;
-  timer->array[TIME_COMM] = time_comm;
-  timer->array[TIME_OUTPUT] = time_output;
+  timer->set_wall(Timer::NEB, time_neb);
+  timer->set_wall(Timer::DYNAMICS, time_dynamics);
+  timer->set_wall(Timer::QUENCH, time_quench);
+  timer->set_wall(Timer::REPCOMM, time_comm);
+  timer->set_wall(Timer::REPOUT, time_output);
 
   neighbor->ncalls = nbuild;
   neighbor->ndanger = ndanger;
@@ -404,15 +398,22 @@ void TAD::command(int narg, char **arg)
       fprintf(universe->uscreen,
               "Loop time of %g on %d procs for %d steps with " BIGINT_FORMAT
               " atoms\n",
-              timer->array[TIME_LOOP],nprocs_universe,nsteps,atom->natoms);
+              timer->get_wall(Timer::TOTAL),nprocs_universe,
+              nsteps,atom->natoms);
     if (universe->ulogfile)
       fprintf(universe->ulogfile,
               "Loop time of %g on %d procs for %d steps with " BIGINT_FORMAT
               " atoms\n",
-              timer->array[TIME_LOOP],nprocs_universe,nsteps,atom->natoms);
+              timer->get_wall(Timer::TOTAL),nprocs_universe,
+              nsteps,atom->natoms);
   }
 
-  if (me_universe == 0) fclose(ulogfile_neb);
+  if ((me_universe == 0) && ulogfile_neb) fclose(ulogfile_neb);
+
+  if (me == 0) {
+    if (screen) fprintf(screen,"\nTAD done\n");
+    if (logfile) fprintf(logfile,"\nTAD done\n");
+  }
 
   finish->end(3);
 
@@ -447,15 +448,15 @@ void TAD::dynamics()
   update->nsteps = t_event;
 
   lmp->init();
-  update->integrate->setup();
+  update->integrate->setup(1);
   // this may be needed if don't do full init
   //modify->addstep_compute_all(update->ntimestep);
   int ncalls = neighbor->ncalls;
 
-  timer->barrier_start(TIME_LOOP);
+  timer->barrier_start();
   update->integrate->run(t_event);
-  timer->barrier_stop(TIME_LOOP);
-  time_dynamics += timer->array[TIME_LOOP];
+  timer->barrier_stop();
+  time_dynamics += timer->get_wall(Timer::TOTAL);
 
   nbuild += neighbor->ncalls - ncalls;
   ndanger += neighbor->ndanger;
@@ -479,7 +480,7 @@ void TAD::quench()
   update->whichflag = 2;
   update->nsteps = maxiter;
   update->endstep = update->laststep = update->firststep + maxiter;
-  if (update->laststep < 0 || update->laststep > MAXBIGINT)
+  if (update->laststep < 0)
     error->all(FLERR,"Too many iterations");
 
   // full init works
@@ -494,10 +495,10 @@ void TAD::quench()
 
   int ncalls = neighbor->ncalls;
 
-  timer->barrier_start(TIME_LOOP);
+  timer->barrier_start();
   update->minimize->run(maxiter);
-  timer->barrier_stop(TIME_LOOP);
-  time_quench += timer->array[TIME_LOOP];
+  timer->barrier_stop();
+  time_quench += timer->get_wall(Timer::TOTAL);
 
   if (neighbor->ncalls == ncalls) quench_reneighbor = 0;
   else quench_reneighbor = 1;
@@ -536,14 +537,14 @@ int TAD::check_event()
 
 void TAD::log_event(int ievent)
 {
-  timer->array[TIME_LOOP] = time_start;
+  timer->set_wall(Timer::TOTAL, time_start);
   if (universe->me == 0) {
     double tfrac = 0.0;
     if (universe->uscreen)
       fprintf(universe->uscreen,
               BIGINT_FORMAT " %.3f %d %d %s %.3f %.3f %.3f %.3f\n",
               fix_event->event_timestep,
-              timer->elapsed(TIME_LOOP),
+              timer->elapsed(Timer::TOTAL),
               fix_event->event_number,ievent,
               "E ",
               fix_event->ebarrier,tfrac,
@@ -552,7 +553,7 @@ void TAD::log_event(int ievent)
       fprintf(universe->ulogfile,
               BIGINT_FORMAT " %.3f %d %d %s %.3f %.3f %.3f %.3f\n",
               fix_event->event_timestep,
-              timer->elapsed(TIME_LOOP),
+              timer->elapsed(Timer::TOTAL),
               fix_event->event_number,ievent,
               "E ",
               fix_event->ebarrier,tfrac,
@@ -564,12 +565,12 @@ void TAD::log_event(int ievent)
   // addstep_compute_all insures eng/virial are calculated if needed
 
   if (output->ndump && universe->iworld == 0) {
-    timer->barrier_start(TIME_LOOP);
+    timer->barrier_start();
     modify->addstep_compute_all(update->ntimestep);
     update->integrate->setup_minimal(1);
     output->write_dump(update->ntimestep);
-    timer->barrier_stop(TIME_LOOP);
-    time_output += timer->array[TIME_LOOP];
+    timer->barrier_stop();
+    time_output += timer->get_wall(Timer::TOTAL);
   }
 
 }
@@ -595,20 +596,20 @@ void TAD::options(int narg, char **arg)
   n2steps_neb = 100;
   nevery_neb = 10;
 
-  min_style = new char[3];
-  strcpy(min_style,"cg");
-  min_style_neb = new char[9];
+  int n = strlen("quickmin") + 1;
+  min_style_neb = new char[n];
   strcpy(min_style_neb,"quickmin");
+  dt_neb = update->dt;
   neb_logfilename = NULL;
 
   int iarg = 0;
   while (iarg < narg) {
     if (strcmp(arg[iarg],"min") == 0) {
       if (iarg+5 > narg) error->all(FLERR,"Illegal tad command");
-      etol = atof(arg[iarg+1]);
-      ftol = atof(arg[iarg+2]);
-      maxiter = atoi(arg[iarg+3]);
-      maxeval = atoi(arg[iarg+4]);
+      etol = force->numeric(FLERR,arg[iarg+1]);
+      ftol = force->numeric(FLERR,arg[iarg+2]);
+      maxiter = force->inumeric(FLERR,arg[iarg+3]);
+      maxeval = force->inumeric(FLERR,arg[iarg+4]);
       if (maxiter < 0 || maxeval < 0 ||
           etol < 0.0 || ftol < 0.0 )
         error->all(FLERR,"Illegal tad command");
@@ -616,30 +617,28 @@ void TAD::options(int narg, char **arg)
 
     } else if (strcmp(arg[iarg],"neb") == 0) {
       if (iarg+6 > narg) error->all(FLERR,"Illegal tad command");
-      etol_neb = atof(arg[iarg+1]);
-      ftol_neb = atof(arg[iarg+2]);
-      n1steps_neb = atoi(arg[iarg+3]);
-      n2steps_neb = atoi(arg[iarg+4]);
-      nevery_neb = atoi(arg[iarg+5]);
+      etol_neb = force->numeric(FLERR,arg[iarg+1]);
+      ftol_neb = force->numeric(FLERR,arg[iarg+2]);
+      n1steps_neb = force->inumeric(FLERR,arg[iarg+3]);
+      n2steps_neb = force->inumeric(FLERR,arg[iarg+4]);
+      nevery_neb = force->inumeric(FLERR,arg[iarg+5]);
       if (etol_neb < 0.0 || ftol_neb < 0.0 ||
           n1steps_neb < 0 || n2steps_neb < 0 ||
           nevery_neb < 0) error->all(FLERR,"Illegal tad command");
       iarg += 6;
 
-    } else if (strcmp(arg[iarg],"min_style") == 0) {
-      if (iarg+2 > narg) error->all(FLERR,"Illegal tad command");
-      int n = strlen(arg[iarg+1]) + 1;
-      delete [] min_style;
-      min_style = new char[n];
-      strcpy(min_style,arg[iarg+1]);
-      iarg += 2;
-
     } else if (strcmp(arg[iarg],"neb_style") == 0) {
       if (iarg+2 > narg) error->all(FLERR,"Illegal tad command");
-      int n = strlen(arg[iarg+1]) + 1;
       delete [] min_style_neb;
+      int n = strlen(arg[iarg+1]) + 1;
       min_style_neb = new char[n];
       strcpy(min_style_neb,arg[iarg+1]);
+      iarg += 2;
+
+    } else if (strcmp(arg[iarg],"neb_step") == 0) {
+      if (iarg+2 > narg) error->all(FLERR,"Illegal tad command");
+      dt_neb = force->numeric(FLERR,arg[iarg+1]);
+      if (dt_neb <= 0.0) error->all(FLERR,"Illegal tad command");
       iarg += 2;
 
     } else if (strcmp(arg[iarg],"neb_log") == 0) {
@@ -741,7 +740,7 @@ void TAD::perform_neb(int ievent)
   memory->destroy(buf_init);
   memory->destroy(buf_final);
 
-  // run NEB
+  // run NEB with NEB timestep
 
   int beginstep_hold = update->beginstep;
   int endstep_hold = update->endstep;
@@ -753,18 +752,22 @@ void TAD::perform_neb(int ievent)
     universe->uscreen = uscreen_neb;
   }
 
-  // Had to bypass timer interface
-  // because timer->array is reset
-  // inside neb->run()
+  // had to bypass timer interface
+  // because timer->array is reset inside neb->run()
 
-//    timer->barrier_start(TIME_LOOP);
-//    neb->run();
-//    timer->barrier_stop(TIME_LOOP);
-//    time_neb += timer->array[TIME_LOOP];
+  //    timer->barrier_start();
+  //    neb->run();
+  //    timer->barrier_stop();
+  //    time_neb += timer->get_wall(Timer::TOTAL);
 
   MPI_Barrier(world);
   double time_tmp = MPI_Wtime();
+
+  double dt_hold = update->dt;
+  update->dt = dt_neb;
   neb->run();
+  update->dt = dt_hold;
+
   MPI_Barrier(world);
   time_neb += MPI_Wtime() - time_tmp;
 
@@ -823,33 +826,56 @@ int TAD::check_confidence()
 }
 
 /* ----------------------------------------------------------------------
-   reflect back in to starting state
+   store state in fix_revert
 ------------------------------------------------------------------------- */
 
-void TAD::revert()
+void TAD::store_state()
 {
   double **x = atom->x;
   double **v = atom->v;
-  tagint *image = atom->image;
+  imageint *image = atom->image;
   int nlocal = atom->nlocal;
 
-  double **array_atom = fix_revert->array_atom;
+  double **astore = fix_revert->astore;
 
   for (int i = 0; i < nlocal; i++) {
-    x[i][0] = array_atom[i][0];
-    x[i][1] = array_atom[i][1];
-    x[i][2] = array_atom[i][2];
-    image[i] = ((tagint) (int(array_atom[i][3]) + IMGMAX) & IMGMASK) |
-      (((tagint) (int(array_atom[i][4]) + IMGMAX) & IMGMASK) << IMGBITS) |
-      (((tagint) (int(array_atom[i][5]) + IMGMAX) & IMGMASK) << IMG2BITS);
-    v[i][0] = -array_atom[i][6];
-    v[i][1] = -array_atom[i][7];
-    v[i][2] = -array_atom[i][8];
+    astore[i][0] = x[i][0];
+    astore[i][1] = x[i][1];
+    astore[i][2] = x[i][2];
+    astore[i][3] = v[i][0];
+    astore[i][4] = v[i][1];
+    astore[i][5] = v[i][2];
+    *((imageint *) &astore[i][6]) = image[i];
   }
 }
 
 /* ----------------------------------------------------------------------
-   Initialize list of possible events
+   restore state archived in fix_revert
+   flip sign of velocities to reflect back to starting state
+------------------------------------------------------------------------- */
+
+void TAD::revert_state()
+{
+  double **x = atom->x;
+  double **v = atom->v;
+  imageint *image = atom->image;
+  int nlocal = atom->nlocal;
+
+  double **astore = fix_revert->astore;
+
+  for (int i = 0; i < nlocal; i++) {
+    x[i][0] = astore[i][0];
+    x[i][1] = astore[i][1];
+    x[i][2] = astore[i][2];
+    v[i][0] = -astore[i][3];
+    v[i][1] = -astore[i][4];
+    v[i][2] = -astore[i][5];
+    image[i] = *((imageint *) &astore[i][6]);
+  }
+}
+
+/* ----------------------------------------------------------------------
+   initialize list of possible events
 ------------------------------------------------------------------------- */
 
 void TAD::initialize_event_list() {
@@ -865,7 +891,7 @@ void TAD::initialize_event_list() {
 }
 
 /* ----------------------------------------------------------------------
-   Delete list of possible events
+   delete list of possible events
 ------------------------------------------------------------------------- */
 
 void TAD::delete_event_list() {
@@ -914,8 +940,8 @@ void TAD::add_event()
 
   // store hot state for new event
 
-  fix_event->restore_state();
-  fix_event_list[ievent]->store_state();
+  fix_event->restore_state_quench();
+  fix_event_list[ievent]->store_state_quench();
 
   // string clean-up
 
@@ -953,7 +979,7 @@ void TAD::compute_tlo(int ievent)
 
   // first-replica output about each event
 
-  timer->array[TIME_LOOP] = time_start;
+  timer->set_wall(Timer::TOTAL, time_start);
   if (universe->me == 0) {
     double tfrac = 0.0;
     if (ievent > 0) tfrac = delthi/deltstop;
@@ -962,7 +988,7 @@ void TAD::compute_tlo(int ievent)
       fprintf(universe->uscreen,
               BIGINT_FORMAT " %.3f %d %d %s %.3f %.3f %.3f %.3f\n",
               fix_event_list[ievent]->event_timestep,
-              timer->elapsed(TIME_LOOP),
+              timer->elapsed(Timer::TOTAL),
               fix_event->event_number,
               ievent,statstr,ebarrier,tfrac,
               fix_event->tlo,deltlo);
@@ -971,7 +997,7 @@ void TAD::compute_tlo(int ievent)
       fprintf(universe->ulogfile,
               BIGINT_FORMAT " %.3f %d %d %s %.3f %.3f %.3f %.3f\n",
               fix_event_list[ievent]->event_timestep,
-              timer->elapsed(TIME_LOOP),
+              timer->elapsed(Timer::TOTAL),
               fix_event->event_number,
               ievent,statstr,ebarrier,tfrac,
               fix_event->tlo,deltlo);
@@ -1004,8 +1030,8 @@ void TAD::perform_event(int ievent)
 
   // load and store hot state
 
-  fix_event_list[ievent]->restore_state();
-  fix_event->store_state();
+  fix_event_list[ievent]->restore_state_quench();
+  fix_event->store_state_quench();
 }
 
 /* ----------------------------------------------------------------------

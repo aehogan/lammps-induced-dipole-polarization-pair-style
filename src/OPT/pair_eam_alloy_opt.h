@@ -1,4 +1,4 @@
-/* ----------------------------------------------------------------------
+/* -*- c++ -*- ----------------------------------------------------------
    LAMMPS - Large-scale Atomic/Molecular Massively Parallel Simulator
    http://lammps.sandia.gov, Sandia National Laboratories
    Steve Plimpton, sjplimp@sandia.gov
@@ -28,6 +28,7 @@ namespace LAMMPS_NS {
 class PairEAMAlloyOpt : public PairEAMAlloy, public PairEAMOpt {
  public:
   PairEAMAlloyOpt(class LAMMPS *);
+  virtual ~PairEAMAlloyOpt() {}
 };
 
 }

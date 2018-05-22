@@ -21,7 +21,7 @@ KSpaceStyle(pppm,PPPM)
 #define LMP_PPPM_H
 
 #include "lmptype.h"
-#include "mpi.h"
+#include <mpi.h>
 
 #ifdef FFT_SINGLE
 typedef float FFT_SCALAR;
@@ -53,10 +53,10 @@ class PPPM : public KSpace {
   int me,nprocs;
   int nfactors;
   int *factors;
-  double qsum,qsqsum,q2;
   double cutoff;
   double volume;
   double delxinv,delyinv,delzinv,delvolinv;
+  double h_x,h_y,h_z;
   double shift,shiftone;
   int peratom_allocate_flag;
 
@@ -93,19 +93,18 @@ class PPPM : public KSpace {
 
   class FFT3d *fft1,*fft2;
   class Remap *remap;
-  class CommGrid *cg;
-  class CommGrid *cg_peratom;
+  class GridComm *cg;
+  class GridComm *cg_peratom;
 
   int **part2grid;             // storage for particle -> grid mapping
   int nmax;
 
-  int triclinic;               // domain settings, orthog or triclinic
   double *boxlo;
                                // TIP4P settings
   int typeH,typeO;             // atom types of TIP4P water H and O atoms
   double qdist;                // distance from O site to negative charge
   double alpha;                // geometric factor
-  
+
   void set_grid_global();
   void set_grid_local();
   void adjust_gewald();
@@ -120,24 +119,24 @@ class PPPM : public KSpace {
   int factorable(int);
   double compute_df_kspace();
   double estimate_ik_error(double, double, bigint);
-  double compute_qopt();
-  void compute_gf_denom();
+  virtual double compute_qopt();
+  virtual void compute_gf_denom();
   virtual void compute_gf_ik();
   virtual void compute_gf_ad();
   void compute_sf_precoeff();
-  
+
   virtual void particle_map();
   virtual void make_rho();
   virtual void brick2fft();
-  
+
   virtual void poisson();
   virtual void poisson_ik();
   virtual void poisson_ad();
-  
+
   virtual void fieldforce();
   virtual void fieldforce_ik();
   virtual void fieldforce_ad();
-  
+
   virtual void poisson_peratom();
   virtual void fieldforce_peratom();
   void procs2grid2d(int,int,int,int *, int*);
@@ -155,12 +154,21 @@ class PPPM : public KSpace {
   virtual void pack_reverse(int, FFT_SCALAR *, int, int *);
   virtual void unpack_reverse(int, FFT_SCALAR *, int, int *);
 
+  // triclinic
+
+  int triclinic;               // domain settings, orthog or triclinic
+  void setup_triclinic();
+  void compute_gf_ik_triclinic();
+  void poisson_ik_triclinic();
+  void poisson_groups_triclinic();
+
   // group-group interactions
 
   virtual void allocate_groups();
   virtual void deallocate_groups();
   virtual void make_rho_groups(int, int, int);
   virtual void poisson_groups(int);
+  virtual void slabcorr_groups(int,int,int);
 
 /* ----------------------------------------------------------------------
    denominator for Hockney-Eastwood Green's function
@@ -201,7 +209,11 @@ Self-explanatory.  Check the input script syntax and compare to the
 documentation for the command.  You can use -echo screen as a
 command-line option when running LAMMPS to see the offending line.
 
-E: Cannot (yet) use PPPM with triclinic box
+E: Cannot (yet) use PPPM with triclinic box and kspace_modify diff ad
+
+This feature is not yet supported.
+
+E: Cannot (yet) use PPPM with triclinic box and slab correction
 
 This feature is not yet supported.
 
@@ -209,6 +221,10 @@ E: Cannot use PPPM with 2d simulation
 
 The kspace style pppm cannot be used in 2d simulations.  You can use
 2d PPPM in a 3d simulation; see the kspace_modify command.
+
+E: PPPM can only currently be used with comm_style brick
+
+This is a current restriction in LAMMPS.
 
 E: Kspace style requires atom attribute q
 
@@ -231,8 +247,12 @@ This is a limitation of the PPPM implementation in LAMMPS.
 
 E: KSpace style is incompatible with Pair style
 
-Setting a kspace style requires that a pair style with a long-range
-Coulombic component be selected.
+Setting a kspace style requires that a pair style with matching
+long-range Coulombic or dispersion components be used.
+
+E: Pair style is incompatible with TIP4P KSpace style
+
+The pair style does not have the requires TIP4P settings.
 
 E: Bond and angle potentials must be defined for TIP4P
 
@@ -247,19 +267,33 @@ E: Bad TIP4P bond type for PPPM/TIP4P
 
 Specified bond type is not valid.
 
-E: Cannot use kspace solver on system with no charge
+E: Cannot (yet) use PPPM with triclinic box and TIP4P
 
-No atoms in system have a non-zero charge.
+This feature is not yet supported.
 
-W: System is not charge neutral, net charge = %g
+W: Reducing PPPM order b/c stencil extends beyond nearest neighbor processor
 
-The total charge on all atoms on the system is not 0.0, which
-is not valid for Ewald or PPPM.
+This may lead to a larger grid than desired.  See the kspace_modify overlap
+command to prevent changing of the PPPM order.
 
-W: Reducing PPPM order b/c stencil extends beyond neighbor processor
+E: PPPM order < minimum allowed order
 
-LAMMPS is attempting this in order to allow the simulation
-to run.  It should not effect the PPPM accuracy.
+The default minimum order is 2.  This can be reset by the
+kspace_modify minorder command.
+
+E: PPPM grid stencil extends beyond nearest neighbor processor
+
+This is not allowed if the kspace_modify overlap setting is no.
+
+E: KSpace accuracy must be > 0
+
+The kspace accuracy designated in the input must be greater than zero.
+
+E: Could not compute grid size
+
+The code is unable to compute a grid size consistent with the desired
+accuracy.  This error should not occur for typical problems.  Please
+send an email to the developers.
 
 E: PPPM grid is too large
 
@@ -267,21 +301,15 @@ The global PPPM grid is larger than OFFSET in one or more dimensions.
 OFFSET is currently set to 4096.  You likely need to decrease the
 requested accuracy.
 
-E: PPPM order has been reduced to 0
+E: Could not compute g_ewald
 
-LAMMPS has attempted to reduce the PPPM order to enable the simulation
-to run, but can reduce the order no further.  Try increasing the
-accuracy of PPPM by reducing the tolerance size, thus inducing a
-larger PPPM grid.
+The Newton-Raphson solver failed to converge to a good value for
+g_ewald.  This error should not occur for typical problems.  Please
+send an email to the developers.
 
-E: KSpace accuracy must be > 0
+E: Non-numeric box dimensions - simulation unstable
 
-The kspace accuracy designated in the input must be greater than zero.
-
-E: Cannot compute PPPM G
-
-LAMMPS failed to compute a valid approximation for the PPPM g_ewald
-factor that partitions the computation between real space and k-space.
+The box size has apparently blown up.
 
 E: Out of range atoms - cannot compute PPPM
 
@@ -299,7 +327,11 @@ outside a processor's sub-domain or even the entire simulation box.
 This indicates bad physics, e.g. due to highly overlapping atoms, too
 large a timestep, etc.
 
-E: Cannot (yet) use K-space slab correction with compute group/group
+E: Cannot (yet) use K-space slab correction with compute group/group for triclinic systems
+
+This option is not yet supported.
+
+E: Cannot (yet) use kspace_modify diff ad with compute group/group
 
 This option is not yet supported.
 

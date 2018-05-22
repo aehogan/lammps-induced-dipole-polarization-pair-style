@@ -1,4 +1,4 @@
-/* ----------------------------------------------------------------------
+/* -*- c++ -*- ----------------------------------------------------------
    LAMMPS - Large-scale Atomic/Molecular Massively Parallel Simulator
    http://lammps.sandia.gov, Sandia National Laboratories
    Steve Plimpton, sjplimp@sandia.gov
@@ -33,25 +33,49 @@ class FixBondBreak : public Fix {
   void post_integrate();
   void post_integrate_respa(int,int);
 
-  int pack_comm(int, int *, double *, int, int *);
-  void unpack_comm(int, int, double *);
+  int pack_forward_comm(int, int *, double *, int, int *);
+  void unpack_forward_comm(int, int, double *);
   int pack_reverse_comm(int, int, double *);
   void unpack_reverse_comm(int, int *, double *);
   double compute_vector(int);
   double memory_usage();
 
  private:
-  int me;
+  int me,nprocs;
   int btype,seed;
-  double cutsq,fraction;
+  double cutoff,cutsq,fraction;
+  int angleflag,dihedralflag,improperflag;
+  bigint lastcheck;
 
   int breakcount,breakcounttotal;
   int nmax;
-  int *partner;
+  tagint *partner,*finalpartner;
   double *distsq,*probability;
+
+  int nbreak,maxbreak;
+  tagint **broken;
+
+  tagint *copy;
 
   class RanMars *random;
   int nlevels_respa;
+
+  int commflag;
+  int nbroken;
+  int nangles,ndihedrals,nimpropers;
+
+  void check_ghosts();
+  void update_topology();
+  void break_angles(int, tagint, tagint);
+  void break_dihedrals(int, tagint, tagint);
+  void break_impropers(int, tagint, tagint);
+  void rebuild_special_one(int);
+  int dedup(int, int, tagint *);
+
+  // DEBUG
+
+  void print_bb();
+  void print_copy(const char *, tagint, int, int, int, int *);
 };
 
 }
@@ -73,15 +97,17 @@ Self-explanatory.
 
 E: Cannot use fix bond/break with non-molecular systems
 
-Self-explanatory.
+Only systems with bonds that can be changed can be used.  Atom_style
+template does not qualify.
 
-E: Fix bond/break requires special_bonds = 0,1,1
+E: Cannot yet use fix bond/break with this improper style
 
-This is a restriction of the current fix bond/break implementation.
+This is a current restriction in LAMMPS.
 
-W: Broken bonds will not alter angles, dihedrals, or impropers
+E: Fix bond/break needs ghost atoms from further away
 
-See the doc page for fix bond/break for more info on this
-restriction.
+This is because the fix needs to walk bonds to a certain distance to
+acquire needed info, The comm_modify cutoff command can be used to
+extend the communication range.
 
 */

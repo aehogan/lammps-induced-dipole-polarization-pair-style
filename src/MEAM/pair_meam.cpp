@@ -15,10 +15,10 @@
    Contributing author: Greg Wagner (SNL)
 ------------------------------------------------------------------------- */
 
-#include "math.h"
-#include "stdio.h"
-#include "stdlib.h"
-#include "string.h"
+#include <math.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
 #include "pair_meam.h"
 #include "atom.h"
 #include "force.h"
@@ -35,20 +35,26 @@ using namespace LAMMPS_NS;
 #define MAXLINE 1024
 
 enum{FCC,BCC,HCP,DIM,DIAMOND,B1,C11,L12,B2};
-int nkeywords = 21;
-const char *keywords[] = {"Ec","alpha","rho0","delta","lattce",
-                          "attrac","repuls","nn2","Cmin","Cmax","rc","delr",
-                          "augt1","gsmooth_factor","re","ialloy",
-                          "mixture_ref_t","erose_form","zbl",
-                          "emb_lin_neg","bkgd_dyn"};
+static const int nkeywords = 21;
+static const char *keywords[] = {
+  "Ec","alpha","rho0","delta","lattce",
+  "attrac","repuls","nn2","Cmin","Cmax","rc","delr",
+  "augt1","gsmooth_factor","re","ialloy",
+  "mixture_ref_t","erose_form","zbl",
+  "emb_lin_neg","bkgd_dyn"};
 
 /* ---------------------------------------------------------------------- */
 
 PairMEAM::PairMEAM(LAMMPS *lmp) : Pair(lmp)
 {
+  if (comm->me == 0)
+    error->warning(FLERR,"The pair_style meam command is unsupported. "
+                   "Please use pair_style meam/c instead");
+
   single_enable = 0;
   restartinfo = 0;
   one_coeff = 1;
+  manybody_flag = 1;
 
   nmax = 0;
   rho = rho0 = rho1 = rho2 = rho3 = frhop = NULL;
@@ -56,6 +62,7 @@ PairMEAM::PairMEAM(LAMMPS *lmp) : Pair(lmp)
   arho1 = arho2 = arho3 = arho3b = t_ave = tsq_ave = NULL;
 
   maxneigh = 0;
+  allocated = 0;
   scrfcn = dscrfcn = fcpair = NULL;
 
   nelements = 0;
@@ -117,11 +124,9 @@ PairMEAM::~PairMEAM()
 void PairMEAM::compute(int eflag, int vflag)
 {
   int i,j,ii,n,inum_half,errorflag;
-  double evdwl;
   int *ilist_half,*numneigh_half,**firstneigh_half;
   int *numneigh_full,**firstneigh_full;
 
-  evdwl = 0.0;
   if (eflag || vflag) ev_setup(eflag,vflag);
   else evflag = vflag_fdotr = eflag_global = vflag_global =
          eflag_atom = vflag_atom = 0;
@@ -396,7 +401,7 @@ void PairMEAM::coeff(int narg, char **arg)
     for (int j = i; j <= n; j++)
       if (map[i] >= 0 && map[j] >= 0) {
         setflag[i][j] = 1;
-        if (i == j) atom->set_mass(i,mass[map[i]]);
+        if (i == j) atom->set_mass(FLERR,i,mass[map[i]]);
         count++;
       }
 
@@ -414,15 +419,12 @@ void PairMEAM::init_style()
 
   // need full and half neighbor list
 
-  int irequest_full = neighbor->request(this);
+  int irequest_full = neighbor->request(this,instance_me);
   neighbor->requests[irequest_full]->id = 1;
   neighbor->requests[irequest_full]->half = 0;
   neighbor->requests[irequest_full]->full = 1;
-  int irequest_half = neighbor->request(this);
+  int irequest_half = neighbor->request(this,instance_me);
   neighbor->requests[irequest_half]->id = 2;
-  neighbor->requests[irequest_half]->half = 0;
-  neighbor->requests[irequest_half]->half_from_full = 1;
-  neighbor->requests[irequest_half]->otherlist = irequest_full;
 
   // setup Fortran-style mapping array needed by MEAM package
   // fmap is indexed from 1:ntypes by Fortran and stores a Fortran index
@@ -459,7 +461,7 @@ void PairMEAM::read_files(char *globalfile, char *userfile)
 
   FILE *fp;
   if (comm->me == 0) {
-    fp = fopen(globalfile,"r");
+    fp = force->open_potential(globalfile);
     if (fp == NULL) {
       char str[128];
       sprintf(str,"Cannot open MEAM potential file %s",globalfile);
@@ -519,7 +521,7 @@ void PairMEAM::read_files(char *globalfile, char *userfile)
 
     // strip comment, skip line if blank
 
-    if (ptr = strchr(line,'#')) *ptr = '\0';
+    if ((ptr = strchr(line,'#'))) *ptr = '\0';
     nwords = atom->count_words(line);
     if (nwords == 0) continue;
 
@@ -538,7 +540,7 @@ void PairMEAM::read_files(char *globalfile, char *userfile)
       if (eof) break;
       MPI_Bcast(&n,1,MPI_INT,0,world);
       MPI_Bcast(line,n,MPI_CHAR,0,world);
-      if (ptr = strchr(line,'#')) *ptr = '\0';
+      if ((ptr = strchr(line,'#'))) *ptr = '\0';
       nwords = atom->count_words(line);
     }
 
@@ -550,13 +552,13 @@ void PairMEAM::read_files(char *globalfile, char *userfile)
 
     nwords = 0;
     words[nwords++] = strtok(line,"' \t\n\r\f");
-    while (words[nwords++] = strtok(NULL,"' \t\n\r\f")) continue;
+    while ((words[nwords++] = strtok(NULL,"' \t\n\r\f"))) continue;
 
     // skip if element name isn't in element list
 
     for (i = 0; i < nelements; i++)
       if (strcmp(words[0],elements[i]) == 0) break;
-    if (i == nelements) continue;
+    if (i >= nelements) continue;
 
     // skip if element already appeared
 
@@ -640,7 +642,7 @@ void PairMEAM::read_files(char *globalfile, char *userfile)
   // open user param file on proc 0
 
   if (comm->me == 0) {
-    fp = fopen(userfile,"r");
+    fp = force->open_potential(userfile);
     if (fp == NULL) {
       char str[128];
       sprintf(str,"Cannot open MEAM potential file %s",userfile);
@@ -675,7 +677,7 @@ void PairMEAM::read_files(char *globalfile, char *userfile)
 
     // strip comment, skip line if blank
 
-    if (ptr = strchr(line,'#')) *ptr = '\0';
+    if ((ptr = strchr(line,'#'))) *ptr = '\0';
     nparams = atom->count_words(line);
     if (nparams == 0) continue;
 
@@ -731,7 +733,8 @@ void PairMEAM::read_files(char *globalfile, char *userfile)
 
 /* ---------------------------------------------------------------------- */
 
-int PairMEAM::pack_comm(int n, int *list, double *buf, int pbc_flag, int *pbc)
+int PairMEAM::pack_forward_comm(int n, int *list, double *buf,
+                                int pbc_flag, int *pbc)
 {
   int i,j,k,m;
 
@@ -768,12 +771,13 @@ int PairMEAM::pack_comm(int n, int *list, double *buf, int pbc_flag, int *pbc)
     buf[m++] = tsq_ave[j][1];
     buf[m++] = tsq_ave[j][2];
   }
-  return comm_forward;
+
+  return m;
 }
 
 /* ---------------------------------------------------------------------- */
 
-void PairMEAM::unpack_comm(int n, int first, double *buf)
+void PairMEAM::unpack_forward_comm(int n, int first, double *buf)
 {
   int i,k,m,last;
 
@@ -844,7 +848,7 @@ int PairMEAM::pack_reverse_comm(int n, int first, double *buf)
     buf[m++] = tsq_ave[i][2];
   }
 
-  return comm_reverse;
+  return m;
 }
 
 /* ---------------------------------------------------------------------- */

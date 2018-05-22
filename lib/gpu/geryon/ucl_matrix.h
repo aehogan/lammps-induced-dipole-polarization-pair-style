@@ -34,31 +34,32 @@ class UCL_Matrix {
     ROW_MAJOR = 1,
     VECTOR = 0
   };
-  typedef hosttype data_type; 
+  typedef hosttype data_type;
 
   /// Host Allocation
   UCL_H_Mat<hosttype> host;
-  
+
   /// Device Allocation
   UCL_D_Mat<devtype> device;
 
   UCL_Matrix() { }
   ~UCL_Matrix() { }
-  
+
   /// Construct with specied number of rows and columns
   /** \sa alloc() **/
-  UCL_Matrix(const size_t rows, const size_t cols, UCL_Device &acc, 
-             const enum UCL_MEMOPT kind1=UCL_RW_OPTIMIZED,
+  UCL_Matrix(const size_t rows, const size_t cols, UCL_Device &acc,
+             const enum UCL_MEMOPT kind1=UCL_READ_WRITE,
              const enum UCL_MEMOPT kind2=UCL_READ_WRITE)
     { _ucl_s_obj_help< ucl_same_type<hosttype,devtype>::ans >::
         alloc(host,device,_buffer,rows,cols,acc,kind1,kind2); }
-  
+
   /// Set up host matrix with specied # of rows/cols and reserve memory
-  /** The kind1 parameter controls memory pinning as follows:
-    * - UCL_NOT_PINNED      - Memory is not pinned
-    * - UCL_WRITE_OPTIMIZED - Memory can be pinned (write-combined)
-    * - UCL_RW_OPTIMIZED    - Memory can be pinned 
-    * The kind2 parameter controls memory optimizations as follows:
+  /** The kind1 parameter controls memory access from the host
+    * - UCL_READ_WRITE - Specify that you will read and write from host
+    * - UCL_WRITE_ONLY - Specify that you will only write from host
+    * - UCL_READ_ONLY  - Specify that you will only read from host
+    * - UCL_NOT_PINNED - Memory is not pinned/page-locked on host
+    * The kind2 parameter controls memory optimizations from the device:
     * - UCL_READ_WRITE - Specify that you will read and write in kernels
     * - UCL_WRITE_ONLY - Specify that you will only write in kernels
     * - UCL_READ_ONLY  - Specify that you will only read in kernels
@@ -69,30 +70,31 @@ class UCL_Matrix {
     * \return UCL_SUCCESS if the memory allocation is successful **/
   template <class mat_type>
   inline int alloc(const size_t rows, const size_t cols, mat_type &cq,
-                   const enum UCL_MEMOPT kind1=UCL_RW_OPTIMIZED,
+                   const enum UCL_MEMOPT kind1=UCL_READ_WRITE,
                    const enum UCL_MEMOPT kind2=UCL_READ_WRITE)
     { return _ucl_s_obj_help< ucl_same_type<hosttype,devtype>::ans >::
         alloc(host,device,_buffer,rows,cols,cq,kind1,kind2); }
-  
+
   /// Set up host matrix with specied # of rows/cols and reserve memory
-  /** The kind1 parameter controls memory pinning as follows:
-    * - UCL_NOT_PINNED      - Memory is not pinned
-    * - UCL_WRITE_OPTIMIZED - Memory can be pinned (write-combined)
-    * - UCL_RW_OPTIMIZED    - Memory can be pinned 
-    * The kind2 parameter controls memory optimizations as follows:
+  /** The kind1 parameter controls memory access from the host
+    * - UCL_READ_WRITE - Specify that you will read and write from host
+    * - UCL_WRITE_ONLY - Specify that you will only write from host
+    * - UCL_READ_ONLY  - Specify that you will only read from host
+    * - UCL_NOT_PINNED - Memory is not pinned/page-locked on host
+    * The kind2 parameter controls memory optimizations from the device:
     * - UCL_READ_WRITE - Specify that you will read and write in kernels
     * - UCL_WRITE_ONLY - Specify that you will only write in kernels
     * - UCL_READ_ONLY  - Specify that you will only read in kernels
     * \param device Used to get the default command queue for operations
     * \return UCL_SUCCESS if the memory allocation is successful **/
   inline int alloc(const size_t rows, const size_t cols, UCL_Device &acc,
-                   const enum UCL_MEMOPT kind1=UCL_RW_OPTIMIZED,
+                   const enum UCL_MEMOPT kind1=UCL_READ_WRITE,
                    const enum UCL_MEMOPT kind2=UCL_READ_WRITE)
     { return _ucl_s_obj_help< ucl_same_type<hosttype,devtype>::ans >::
         alloc(host,device,_buffer,rows,cols,acc,kind1,kind2); }
-  
+
   /// Free memory and set size to 0
-  inline void clear() 
+  inline void clear()
     { host.clear(); device.clear(); }
 
   /// Resize the allocation to contain cols elements
@@ -104,17 +106,28 @@ class UCL_Matrix {
     return _ucl_s_obj_help< ucl_same_type<hosttype,devtype>::ans >::
       dev_resize(device,host,_buffer,rows,cols);
   }
-    
+
   /// Resize (only if bigger) the allocation to contain cols elements
   inline int resize_ib(const int new_rows, const int new_cols)
-    { if (new_rows>rows() || new_cols>cols()) return resize(new_rows,new_cols); 
+    { if (new_rows>rows() || new_cols>cols()) return resize(new_rows,new_cols);
       else return UCL_SUCCESS; }
 
-  /// Set each element to zero
-  inline void zero() { host.zero(); device.zero(); }
-  
-  /// Set first n elements to zero
-  inline void zero(const int n) { host.zero(n); device.zero(n); }
+  /// Set each element to zero (asynchronously on device)
+  inline void zero() { zero(cq()); }
+  /// Set first n elements to zero (asynchronously on device)
+  inline void zero(const int n) { zero(n,cq()); }
+  /// Set each element to zero (asynchronously on device)
+  inline void zero(command_queue &cq) {
+    host.zero();
+    if (device.kind()!=UCL_VIEW) device.zero(cq);
+    else if (_buffer.numel()>0) _buffer.zero();
+  }
+  /// Set first n elements to zero (asynchronously on device)
+  inline void zero(const int n, command_queue &cq) {
+    host.zero(n);
+    if (device.kind()!=UCL_VIEW) device.zero(n,cq);
+    else if (_buffer.numel()>0) _buffer.zero();
+  }
 
   /// Get the number of elements
   inline size_t numel() const { return host.numel(); }
@@ -123,28 +136,30 @@ class UCL_Matrix {
   /// Get the number of columns
   inline size_t cols() const { return host.cols(); }
   /// Get the memory usage (bytes) of the s-object (including any buffers)
-  inline size_t host_mem_usage() 
+  inline size_t host_mem_usage()
     { return host.row_bytes()*host.rows()+_buffer.row_bytes()*_buffer.rows(); }
   /// Get the memory usage (bytes) of the s-object (including any buffers)
-  inline size_t device_mem_usage() 
+  inline size_t device_mem_usage()
     { return device.row_bytes()*device.rows(); }
-    
+
   /// Get element at index i
   inline hosttype & operator[](const int i) { return host[i]; }
   /// Get element at index i
   inline const hosttype & operator[](const int i) const { return host[i]; }
-  /// 2D access (row should always be 0) 
-  inline hosttype & operator()(const int row, const int col) 
+  /// 2D access (row should always be 0)
+  inline hosttype & operator()(const int row, const int col)
     { return host(row,col); }
-  /// 2D access (row should always be 0) 
+  /// 2D access (row should always be 0)
   inline const hosttype & operator()(const int row, const int col) const
     { return host(row,col); }
-  
+
   /// Returns pointer to memory pointer for allocation on host
   inline hosttype ** host_ptr() { return host.host_ptr(); }
-  
+
   /// Return the default command queue/stream associated with this data
   inline command_queue & cq() { return host.cq(); }
+  /// Change the default command queue associated with this data
+  inline void cq(command_queue &cq_in) { host.cq(cq_in); device.cq(cq_in); }
   /// Block until command_queue associated with matrix is complete
   inline void sync() { host.sync(); }
 
@@ -157,7 +172,7 @@ class UCL_Matrix {
 
 
   /// Update the allocation on the host asynchronously
-  inline void update_host() 
+  inline void update_host()
     { _ucl_s_obj_help< ucl_same_type<hosttype,devtype>::ans >::
         copy(host,device,_buffer,true); }
   /// Update the allocation on the host (true for asynchronous copy)
@@ -187,7 +202,7 @@ class UCL_Matrix {
 
 
   /// Update the allocation on the device asynchronously
-  inline void update_device() 
+  inline void update_device()
     { _ucl_s_obj_help< ucl_same_type<hosttype,devtype>::ans >::
         copy(device,host,_buffer,true); }
   /// Update the allocation on the device (true for asynchronous copy)

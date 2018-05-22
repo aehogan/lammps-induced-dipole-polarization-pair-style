@@ -1,4 +1,4 @@
-/* ----------------------------------------------------------------------
+/* -*- c++ -*- ----------------------------------------------------------
    LAMMPS - Large-scale Atomic/Molecular Massively Parallel Simulator
    http://lammps.sandia.gov, Sandia National Laboratories
    Steve Plimpton, sjplimp@sandia.gov
@@ -27,17 +27,23 @@ namespace LAMMPS_NS {
 class DumpXYZ : public Dump {
  public:
   DumpXYZ(class LAMMPS *, int, char**);
-  ~DumpXYZ();
+  virtual ~DumpXYZ();
 
- private:
+ protected:
+  int ntypes;
+  char **typenames;
+
   void init_style();
   void write_header(bigint);
-  void pack(int *);
+  void pack(tagint *);
+  int convert_string(int, double *);
   void write_data(int, double *);
   int modify_param(int, char **);
 
-  int ntypes;
-  char **typenames;
+  typedef void (DumpXYZ::*FnPtrWrite)(int, double *);
+  FnPtrWrite write_choice;              // ptr to write data functions
+  void write_string(int, double *);
+  void write_lines(int, double *);
 };
 
 }

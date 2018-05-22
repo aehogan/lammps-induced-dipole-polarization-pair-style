@@ -23,7 +23,7 @@ mass 6 12.01100 #C3
 mass 7 12.01100 #C2
 mass 8 12.01000 #H2G
 mass 9 16.00000 #H2E
-mass 10 0.00001 #H2N
+mass 10 0.000001 #H2N
 
 # set static polarizabilities
 set type 1 static_polarizability 0.16000 #ZN
@@ -100,7 +100,7 @@ pair_coeff 10 10 0.092339 2.994290 7.485725
 
 # ensure self molecule interactions excluded
 special_bonds  lj/coul 0.0 0.0 0.0
-neigh_modify exclude molecule all
+#neigh_modify exclude molecule all
 
 group moving molecule > 1
 

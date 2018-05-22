@@ -1,4 +1,4 @@
-/* ----------------------------------------------------------------------
+/* -*- c++ -*- ----------------------------------------------------------
    LAMMPS - Large-scale Atomic/Molecular Massively Parallel Simulator
    http://lammps.sandia.gov, Sandia National Laboratories
    Steve Plimpton, sjplimp@sandia.gov
@@ -20,7 +20,7 @@ AngleStyle(cosine/squared,AngleCosineSquared)
 #ifndef LMP_ANGLE_COSINE_SQUARED_H
 #define LMP_ANGLE_COSINE_SQUARED_H
 
-#include "stdio.h"
+#include <stdio.h>
 #include "angle.h"
 
 namespace LAMMPS_NS {
@@ -34,6 +34,7 @@ class AngleCosineSquared : public Angle {
   double equilibrium_angle(int);
   void write_restart(FILE *);
   void read_restart(FILE *);
+  void write_data(FILE *);
   virtual double single(int, int, int, int);
 
  protected:

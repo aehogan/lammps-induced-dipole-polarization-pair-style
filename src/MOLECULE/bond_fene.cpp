@@ -11,8 +11,8 @@
    See the README file in the top-level LAMMPS directory.
 ------------------------------------------------------------------------- */
 
-#include "math.h"
-#include "stdlib.h"
+#include <math.h>
+#include <stdlib.h>
 #include "bond_fene.h"
 #include "atom.h"
 #include "neighbor.h"
@@ -36,7 +36,7 @@ BondFENE::BondFENE(LAMMPS *lmp) : Bond(lmp)
 
 BondFENE::~BondFENE()
 {
-  if (allocated) {
+  if (allocated && !copymode) {
     memory->destroy(setflag);
     memory->destroy(k);
     memory->destroy(r0);
@@ -53,7 +53,7 @@ void BondFENE::compute(int eflag, int vflag)
   double delx,dely,delz,ebond,fbond;
   double rsq,r0sq,rlogarg,sr2,sr6;
 
-  ebond = 0.0;
+  ebond = sr6 = 0.0;
   if (eflag || vflag) ev_setup(eflag,vflag);
   else evflag = 0;
 
@@ -85,7 +85,8 @@ void BondFENE::compute(int eflag, int vflag)
 
     if (rlogarg < 0.1) {
       char str[128];
-      sprintf(str,"FENE bond too long: " BIGINT_FORMAT " %d %d %g",
+      sprintf(str,"FENE bond too long: " BIGINT_FORMAT " "
+              TAGINT_FORMAT " " TAGINT_FORMAT " %g",
               update->ntimestep,atom->tag[i1],atom->tag[i2],sqrt(rsq));
       error->warning(FLERR,str,0);
       if (rlogarg <= -3.0) error->one(FLERR,"Bad FENE bond");
@@ -153,12 +154,12 @@ void BondFENE::coeff(int narg, char **arg)
   if (!allocated) allocate();
 
   int ilo,ihi;
-  force->bounds(arg[0],atom->nbondtypes,ilo,ihi);
+  force->bounds(FLERR,arg[0],atom->nbondtypes,ilo,ihi);
 
-  double k_one = force->numeric(arg[1]);
-  double r0_one = force->numeric(arg[2]);
-  double epsilon_one = force->numeric(arg[3]);
-  double sigma_one = force->numeric(arg[4]);
+  double k_one = force->numeric(FLERR,arg[1]);
+  double r0_one = force->numeric(FLERR,arg[2]);
+  double epsilon_one = force->numeric(FLERR,arg[3]);
+  double sigma_one = force->numeric(FLERR,arg[4]);
 
   int count = 0;
   for (int i = ilo; i <= ihi; i++) {
@@ -229,9 +230,20 @@ void BondFENE::read_restart(FILE *fp)
   for (int i = 1; i <= atom->nbondtypes; i++) setflag[i] = 1;
 }
 
+/* ----------------------------------------------------------------------
+   proc 0 writes to data file
+------------------------------------------------------------------------- */
+
+void BondFENE::write_data(FILE *fp)
+{
+  for (int i = 1; i <= atom->nbondtypes; i++)
+    fprintf(fp,"%d %g %g %g %g\n",i,k[i],r0[i],epsilon[i],sigma[i]);
+}
+
 /* ---------------------------------------------------------------------- */
 
-double BondFENE::single(int type, double rsq, int i, int j)
+double BondFENE::single(int type, double rsq, int i, int j,
+                        double &fforce)
 {
   double r0sq = r0[type] * r0[type];
   double rlogarg = 1.0 - rsq/r0sq;
@@ -250,11 +262,13 @@ double BondFENE::single(int type, double rsq, int i, int j)
   }
 
   double eng = -0.5 * k[type]*r0sq*log(rlogarg);
+  fforce = -k[type]/rlogarg;
   if (rsq < TWO_1_3*sigma[type]*sigma[type]) {
     double sr2,sr6;
     sr2 = sigma[type]*sigma[type]/rsq;
     sr6 = sr2*sr2*sr2;
     eng += 4.0*epsilon[type]*sr6*(sr6-1.0) + epsilon[type];
+    fforce += 48.0*epsilon[type]*sr6*(sr6-0.5)/rsq;
   }
 
   return eng;

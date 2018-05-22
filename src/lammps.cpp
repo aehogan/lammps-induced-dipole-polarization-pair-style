@@ -11,8 +11,9 @@
    See the README file in the top-level LAMMPS directory.
 ------------------------------------------------------------------------- */
 
-#include "mpi.h"
-#include "string.h"
+#include <mpi.h>
+#include <string.h>
+#include <ctype.h>
 #include "lammps.h"
 #include "style_angle.h"
 #include "style_atom.h"
@@ -34,17 +35,24 @@
 #include "update.h"
 #include "neighbor.h"
 #include "comm.h"
+#include "comm_brick.h"
 #include "domain.h"
 #include "force.h"
 #include "modify.h"
 #include "group.h"
 #include "output.h"
-#include "accelerator_cuda.h"
+#include "citeme.h"
+#include "accelerator_kokkos.h"
+#include "accelerator_omp.h"
 #include "timer.h"
+#include "python.h"
 #include "memory.h"
+#include "version.h"
 #include "error.h"
 
 using namespace LAMMPS_NS;
+
+static void print_style(FILE *fp, const char *str, int &pos);
 
 /* ----------------------------------------------------------------------
    start up LAMMPS
@@ -60,9 +68,13 @@ LAMMPS::LAMMPS(int narg, char **arg, MPI_Comm communicator)
   error = new Error(this);
   universe = new Universe(this,communicator);
   output = NULL;
+  python = NULL;
 
   screen = NULL;
   logfile = NULL;
+  infile = NULL;
+
+  initclock = MPI_Wtime();
 
   // parse input switches
 
@@ -71,10 +83,26 @@ LAMMPS::LAMMPS(int narg, char **arg, MPI_Comm communicator)
   int logflag = 0;
   int partscreenflag = 0;
   int partlogflag = 0;
-  int cudaflag = -1;
+  int kokkosflag = 0;
+  int restartflag = 0;
+  int restartremapflag = 0;
+  int citeflag = 1;
   int helpflag = 0;
-  suffix = NULL;
+
+  suffix = suffix2 = NULL;
   suffix_enable = 0;
+  if (arg) exename = arg[0];
+  else exename = NULL;
+  packargs = NULL;
+  num_package = 0;
+  char *rfile = NULL;
+  char *dfile = NULL;
+  int wdfirst,wdlast;
+  int kkfirst,kklast;
+
+  int npack = 0;
+  int *pfirst = NULL;
+  int *plast = NULL;
 
   int iarg = 1;
   while (iarg < narg) {
@@ -129,37 +157,97 @@ LAMMPS::LAMMPS(int narg, char **arg, MPI_Comm communicator)
        error->universe_all(FLERR,"Invalid command-line argument");
       partlogflag = iarg + 1;
       iarg += 2;
-    } else if (strcmp(arg[iarg],"-cuda") == 0 ||
-               strcmp(arg[iarg],"-c") == 0) {
+    } else if (strcmp(arg[iarg],"-kokkos") == 0 ||
+               strcmp(arg[iarg],"-k") == 0) {
       if (iarg+2 > narg)
         error->universe_all(FLERR,"Invalid command-line argument");
-      if (strcmp(arg[iarg+1],"on") == 0) cudaflag = 1;
-      else if (strcmp(arg[iarg+1],"off") == 0) cudaflag = 0;
+      if (strcmp(arg[iarg+1],"on") == 0) kokkosflag = 1;
+      else if (strcmp(arg[iarg+1],"off") == 0) kokkosflag = 0;
       else error->universe_all(FLERR,"Invalid command-line argument");
       iarg += 2;
+      // delimit any extra args for the Kokkos instantiation
+      kkfirst = iarg;
+      while (iarg < narg && arg[iarg][0] != '-') iarg++;
+      kklast = iarg;
+    } else if (strcmp(arg[iarg],"-package") == 0 ||
+               strcmp(arg[iarg],"-pk") == 0) {
+      if (iarg+2 > narg)
+        error->universe_all(FLERR,"Invalid command-line argument");
+      memory->grow(pfirst,npack+1,"lammps:pfirst");
+      memory->grow(plast,npack+1,"lammps:plast");
+      // delimit args for package command invocation
+      // any package arg with leading "-" will be followed by numeric digit
+      iarg++;
+      pfirst[npack] = iarg;
+      while (iarg < narg) {
+        if (arg[iarg][0] != '-') iarg++;
+        else if (isdigit(arg[iarg][1])) iarg++;
+        else break;
+      }
+      plast[npack++] = iarg;
     } else if (strcmp(arg[iarg],"-suffix") == 0 ||
                strcmp(arg[iarg],"-sf") == 0) {
       if (iarg+2 > narg)
         error->universe_all(FLERR,"Invalid command-line argument");
       delete [] suffix;
-      int n = strlen(arg[iarg+1]) + 1;
-      suffix = new char[n];
-      strcpy(suffix,arg[iarg+1]);
+      delete [] suffix2;
+      suffix2 = NULL;
       suffix_enable = 1;
-      iarg += 2;
+      // hybrid option to set fall-back for suffix2
+      if (strcmp(arg[iarg+1],"hybrid") == 0) {
+        if (iarg+4 > narg)
+          error->universe_all(FLERR,"Invalid command-line argument");
+        int n = strlen(arg[iarg+2]) + 1;
+        suffix = new char[n];
+        strcpy(suffix,arg[iarg+2]);
+        n = strlen(arg[iarg+3]) + 1;
+        suffix2 = new char[n];
+        strcpy(suffix2,arg[iarg+3]);
+        iarg += 4;
+      } else {
+        int n = strlen(arg[iarg+1]) + 1;
+        suffix = new char[n];
+        strcpy(suffix,arg[iarg+1]);
+        iarg += 2;
+      }
     } else if (strcmp(arg[iarg],"-reorder") == 0 ||
-               strcmp(arg[iarg],"-r") == 0) {
+               strcmp(arg[iarg],"-ro") == 0) {
       if (iarg+3 > narg)
         error->universe_all(FLERR,"Invalid command-line argument");
       if (universe->existflag)
         error->universe_all(FLERR,"Cannot use -reorder after -partition");
       universe->reorder(arg[iarg+1],arg[iarg+2]);
       iarg += 3;
+    } else if (strcmp(arg[iarg],"-restart") == 0 ||
+               strcmp(arg[iarg],"-r") == 0) {
+      if (iarg+3 > narg)
+        error->universe_all(FLERR,"Invalid command-line argument");
+      restartflag = 1;
+      rfile = arg[iarg+1];
+      dfile = arg[iarg+2];
+      // check for restart remap flag
+      if (strcmp(dfile,"remap") == 0) {
+        if (iarg+4 > narg)
+          error->universe_all(FLERR,"Invalid command-line argument");
+        restartremapflag = 1;
+        dfile = arg[iarg+3];
+        iarg++;
+      }
+      iarg += 3;
+      // delimit any extra args for the write_data command
+      wdfirst = iarg;
+      while (iarg < narg && arg[iarg][0] != '-') iarg++;
+      wdlast = iarg;
+    } else if (strcmp(arg[iarg],"-nocite") == 0 ||
+               strcmp(arg[iarg],"-nc") == 0) {
+      citeflag = 0;
+      iarg++;
     } else if (strcmp(arg[iarg],"-help") == 0 ||
                strcmp(arg[iarg],"-h") == 0) {
       if (iarg+1 > narg)
         error->universe_all(FLERR,"Invalid command-line argument");
       helpflag = 1;
+      citeflag = 0;
       iarg += 1;
     } else error->universe_all(FLERR,"Invalid command-line argument");
   }
@@ -171,7 +259,8 @@ LAMMPS::LAMMPS(int narg, char **arg, MPI_Comm communicator)
   // sum of procs in all worlds must equal total # of procs
 
   if (!universe->consistent())
-    error->universe_all(FLERR,"Processor partitions are inconsistent");
+    error->universe_all(FLERR,"Processor partitions do not match "
+                        "number of allocated processors");
 
   // universe cannot use stdin for input file
 
@@ -201,9 +290,11 @@ LAMMPS::LAMMPS(int narg, char **arg, MPI_Comm communicator)
         error->universe_one(FLERR,"Cannot open universe screen file");
     }
     if (logflag == 0) {
-      universe->ulogfile = fopen("log.lammps","w");
-      if (universe->ulogfile == NULL)
-        error->universe_one(FLERR,"Cannot open log.lammps");
+      if (helpflag == 0) {
+        universe->ulogfile = fopen("log.lammps","w");
+        if (universe->ulogfile == NULL)
+          error->universe_warn(FLERR,"Cannot open log.lammps for writing");
+      }
     } else if (strcmp(arg[logflag],"none") == 0)
       universe->ulogfile = NULL;
     else {
@@ -228,7 +319,6 @@ LAMMPS::LAMMPS(int narg, char **arg, MPI_Comm communicator)
     screen = universe->uscreen;
     logfile = universe->ulogfile;
     world = universe->uworld;
-    infile = NULL;
 
     if (universe->me == 0) {
       if (inflag == 0) infile = stdin;
@@ -339,73 +429,105 @@ LAMMPS::LAMMPS(int narg, char **arg, MPI_Comm communicator)
     }
   }
 
-  // check datatype settings in lmptype.h
+  // check consistency of datatype settings in lmptype.h
 
   if (sizeof(smallint) != sizeof(int))
     error->all(FLERR,"Smallint setting in lmptype.h is invalid");
+  if (sizeof(imageint) < sizeof(smallint))
+    error->all(FLERR,"Imageint setting in lmptype.h is invalid");
   if (sizeof(tagint) < sizeof(smallint))
     error->all(FLERR,"Tagint setting in lmptype.h is invalid");
-  if (sizeof(bigint) < sizeof(tagint))
+  if (sizeof(bigint) < sizeof(imageint) || sizeof(bigint) < sizeof(tagint))
     error->all(FLERR,"Bigint setting in lmptype.h is invalid");
 
   int mpisize;
   MPI_Type_size(MPI_LMP_TAGINT,&mpisize);
   if (mpisize != sizeof(tagint))
-      error->all(FLERR,
-                 "MPI_LMP_TAGINT and tagint in lmptype.h are not compatible");
+      error->all(FLERR,"MPI_LMP_TAGINT and tagint in "
+                 "lmptype.h are not compatible");
   MPI_Type_size(MPI_LMP_BIGINT,&mpisize);
   if (mpisize != sizeof(bigint))
-      error->all(FLERR,
-                 "MPI_LMP_BIGINT and bigint in lmptype.h are not compatible");
+      error->all(FLERR,"MPI_LMP_BIGINT and bigint in "
+                 "lmptype.h are not compatible");
 
 #ifdef LAMMPS_SMALLBIG
-  if (sizeof(smallint) != 4 || sizeof(tagint) != 4 || sizeof(bigint) != 8)
-    error->all(FLERR,"Small, tag, big integers are not sized correctly");
+  if (sizeof(smallint) != 4 || sizeof(imageint) != 4 ||
+      sizeof(tagint) != 4 || sizeof(bigint) != 8)
+    error->all(FLERR,"Small to big integers are not sized correctly");
 #endif
 #ifdef LAMMPS_BIGBIG
-  if (sizeof(smallint) != 4 || sizeof(tagint) != 8 || sizeof(bigint) != 8)
-    error->all(FLERR,"Small, tag, big integers are not sized correctly");
+  if (sizeof(smallint) != 4 || sizeof(imageint) != 8 ||
+      sizeof(tagint) != 8 || sizeof(bigint) != 8)
+    error->all(FLERR,"Small to big integers are not sized correctly");
 #endif
 #ifdef LAMMPS_SMALLSMALL
-  if (sizeof(smallint) != 4 || sizeof(tagint) != 4 || sizeof(bigint) != 4)
-    error->all(FLERR,"Small, tag, big integers are not sized correctly");
+  if (sizeof(smallint) != 4 || sizeof(imageint) != 4 ||
+      sizeof(tagint) != 4 || sizeof(bigint) != 4)
+    error->all(FLERR,"Small to big integers are not sized correctly");
 #endif
 
-  // create CUDA class if USER-CUDA installed, unless explicitly switched off
-  // instantiation creates dummy CUDA class if USER-CUDA is not installed
+  // create Kokkos class if KOKKOS installed, unless explicitly switched off
+  // instantiation creates dummy Kokkos class if KOKKOS is not installed
+  // add args between kkfirst and kklast to Kokkos instantiation
 
-  if (cudaflag == 0) {
-    cuda = NULL;
-  } else if (cudaflag == 1) {
-    cuda = new Cuda(this);
-    if (!cuda->cuda_exists)
-      error->all(FLERR,"Cannot use -cuda on without USER-CUDA installed");
-  } else {
-    cuda = new Cuda(this);
-    if (!cuda->cuda_exists) {
-      delete cuda;
-      cuda = NULL;
-    }
+  kokkos = NULL;
+  if (kokkosflag == 1) {
+    kokkos = new KokkosLMP(this,kklast-kkfirst,&arg[kkfirst]);
+    if (!kokkos->kokkos_exists)
+      error->all(FLERR,"Cannot use -kokkos on without KOKKOS installed");
   }
 
-  int me;
-  MPI_Comm_rank(world,&me);
-  if (cuda && me == 0) error->message(FLERR,"USER-CUDA mode is enabled");
+  // allocate CiteMe class if enabled
+
+  if (citeflag) citeme = new CiteMe(this);
+  else citeme = NULL;
 
   // allocate input class now that MPI is fully setup
 
   input = new Input(this,narg,arg);
+
+  // copy package cmdline arguments
+  if (npack > 0) {
+    num_package = npack;
+    packargs = new char**[npack];
+    for (int i=0; i < npack; ++i) {
+      int n = plast[i] - pfirst[i];
+      packargs[i] = new char*[n+1];
+      for (int j=0; j < n; ++j)
+        packargs[i][j] = strdup(arg[pfirst[i]+j]);
+      packargs[i][n] = NULL;
+    }
+    memory->destroy(pfirst);
+    memory->destroy(plast);
+  }
 
   // allocate top-level classes
 
   create();
   post_create();
 
-  // if helpflag set, print help and quit
+  // if helpflag set, print help and quit with "success" status
 
   if (helpflag) {
-    if (universe->me == 0) print_styles();
-    error->done();
+    if (universe->me == 0 && screen) help();
+    error->done(0);
+  }
+
+  // if restartflag set, invoke 2 commands and quit
+  // add args between wdfirst and wdlast to write_data command
+  // also add "noinit" to prevent write_data from doing system init
+
+  if (restartflag) {
+    char cmd[128];
+    sprintf(cmd,"read_restart %s\n",rfile);
+    if (restartremapflag) strcat(cmd," remap\n");
+    input->one(cmd);
+    sprintf(cmd,"write_data %s",dfile);
+    for (iarg = wdfirst; iarg < wdlast; iarg++)
+      sprintf(&cmd[strlen(cmd)]," %s",arg[iarg]);
+    strcat(cmd," noinit\n");
+    input->one(cmd);
+    error->done(0);
   }
 }
 
@@ -419,20 +541,56 @@ LAMMPS::LAMMPS(int narg, char **arg, MPI_Comm communicator)
 
 LAMMPS::~LAMMPS()
 {
+  const int me = comm->me;
+
   destroy();
+  delete citeme;
+
+  if (num_package) {
+    for (int i = 0; i < num_package; i++) {
+      for (char **ptr = packargs[i]; *ptr != NULL; ++ptr)
+        free(*ptr);
+      delete[] packargs[i];
+    }
+    delete[] packargs;
+  }
+  num_package = 0;
+  packargs = NULL;
+
+  double totalclock = MPI_Wtime() - initclock;
+  if ((me == 0) && (screen || logfile)) {
+    char outtime[128];
+    int seconds = fmod(totalclock,60.0);
+    totalclock  = (totalclock - seconds) / 60.0;
+    int minutes = fmod(totalclock,60.0);
+    int hours = (totalclock - minutes) / 60.0;
+    sprintf(outtime,"Total wall time: "
+            "%d:%02d:%02d\n", hours, minutes, seconds);
+    if (screen) fputs(outtime,screen);
+    if (logfile) fputs(outtime,logfile);
+  }
 
   if (universe->nworlds == 1) {
+    if (screen && screen != stdout) fclose(screen);
     if (logfile) fclose(logfile);
+    logfile = NULL;
+    if (screen != stdout) screen = NULL;
   } else {
     if (screen && screen != stdout) fclose(screen);
     if (logfile) fclose(logfile);
     if (universe->ulogfile) fclose(universe->ulogfile);
+    logfile = NULL;
+    if (screen != stdout) screen = NULL;
   }
+
+  if (infile && infile != stdin) fclose(infile);
 
   if (world != universe->uworld) MPI_Comm_free(&world);
 
-  delete cuda;
+  delete python;
+  delete kokkos;
   delete [] suffix;
+  delete [] suffix2;
 
   delete input;
   delete universe;
@@ -448,40 +606,101 @@ LAMMPS::~LAMMPS()
 
 void LAMMPS::create()
 {
-  atom = new Atom(this);
+  force = NULL;         // Domain->Lattice checks if Force exists
 
-  if (cuda) neighbor = new NeighborCuda(this);
+  // Comm class must be created before Atom class
+  // so that nthreads is defined when create_avec invokes grow()
+
+  if (kokkos) comm = new CommKokkos(this);
+  else comm = new CommBrick(this);
+
+  if (kokkos) neighbor = new NeighborKokkos(this);
   else neighbor = new Neighbor(this);
 
-  if (cuda) comm = new CommCuda(this);
-  else comm = new Comm(this);
-
-  if (cuda) domain = new DomainCuda(this);
+  if (kokkos) domain = new DomainKokkos(this);
+#ifdef LMP_USER_OMP
+  else domain = new DomainOMP(this);
+#else
   else domain = new Domain(this);
+#endif
+
+  if (kokkos) atom = new AtomKokkos(this);
+  else atom = new Atom(this);
+
+  if (kokkos)
+    atom->create_avec("atomic/kk",0,NULL,1);
+  else
+    atom->create_avec("atomic",0,NULL,1);
 
   group = new Group(this);
   force = new Force(this);    // must be after group, to create temperature
 
-  if (cuda) modify = new ModifyCuda(this);
+  if (kokkos) modify = new ModifyKokkos(this);
   else modify = new Modify(this);
 
   output = new Output(this);  // must be after group, so "all" exists
                               // must be after modify so can create Computes
   update = new Update(this);  // must be after output, force, neighbor
   timer = new Timer(this);
+
+  python = new Python(this);
 }
 
 /* ----------------------------------------------------------------------
-   invoke package-specific setup commands
+   check suffix consistency with installed packages
+   invoke package-specific deafult package commands
+     only invoke if suffix is set and enabled
+     also check if suffix2 is set
    called from LAMMPS constructor and after clear() command
-   only invoke if suffix is set and enabled
+     so that package-specific core classes have been instantiated
 ------------------------------------------------------------------------- */
 
 void LAMMPS::post_create()
 {
-  if (suffix && suffix_enable) {
-    if (strcmp(suffix,"gpu") == 0) input->one("package gpu force/neigh 0 0 1");
-    if (strcmp(suffix,"omp") == 0) input->one("package omp *");
+  // default package command triggered by "-k on"
+
+  if (kokkos && kokkos->kokkos_exists) input->one("package kokkos");
+
+  // suffix will always be set if suffix_enable = 1
+  // check that KOKKOS package classes were instantiated
+  // check that GPU, INTEL, USER-OMP fixes were compiled with LAMMPS
+
+  if (!suffix_enable) return;
+
+  if (strcmp(suffix,"gpu") == 0 && !modify->check_package("GPU"))
+    error->all(FLERR,"Using suffix gpu without GPU package installed");
+  if (strcmp(suffix,"intel") == 0 && !modify->check_package("INTEL"))
+    error->all(FLERR,"Using suffix intel without USER-INTEL package installed");
+  if (strcmp(suffix,"kk") == 0 &&
+      (kokkos == NULL || kokkos->kokkos_exists == 0))
+    error->all(FLERR,"Using suffix kk without KOKKOS package enabled");
+  if (strcmp(suffix,"omp") == 0 && !modify->check_package("OMP"))
+    error->all(FLERR,"Using suffix omp without USER-OMP package installed");
+
+  if (strcmp(suffix,"gpu") == 0) input->one("package gpu 1");
+  if (strcmp(suffix,"intel") == 0) input->one("package intel 1");
+  if (strcmp(suffix,"omp") == 0) input->one("package omp 0");
+
+  if (suffix2) {
+    if (strcmp(suffix2,"gpu") == 0) input->one("package gpu 1");
+    if (strcmp(suffix2,"intel") == 0) input->one("package intel 1");
+    if (strcmp(suffix2,"omp") == 0) input->one("package omp 0");
+  }
+
+  // invoke any command-line package commands
+
+  if (num_package) {
+    char str[256];
+    for (int i = 0; i < num_package; i++) {
+      strcpy(str,"package");
+      for (char **ptr = packargs[i]; *ptr != NULL; ++ptr) {
+        if (strlen(str) + strlen(*ptr) + 2 > 256)
+          error->all(FLERR,"Too many -pk arguments in command line");
+        strcat(str," ");
+        strcat(str,*ptr);
+      }
+      input->one(str);
+    }
   }
 }
 
@@ -492,15 +711,13 @@ void LAMMPS::post_create()
 
 void LAMMPS::init()
 {
-  if (cuda) cuda->accelerator(0,NULL);
-
   update->init();
   force->init();         // pair must come after update due to minimizer
   domain->init();
   atom->init();          // atom must come after force and domain
                          //   atom deletes extra array
                          //   used by fix shear_history::unpack_restart()
-                         //   when force->pair->gran_history creates fix ??
+                         //     when force->pair->gran_history creates fix
                          //   atom_vec init uses deform_vremap
   modify->init();        // modify must come after update, force, atom, domain
   neighbor->init();      // neighbor must come after force, modify
@@ -516,123 +733,244 @@ void LAMMPS::init()
 void LAMMPS::destroy()
 {
   delete update;
+  update = NULL;
+
   delete neighbor;
+  neighbor = NULL;
+
   delete comm;
+  comm = NULL;
+
   delete force;
+  force = NULL;
+
   delete group;
+  group = NULL;
+
   delete output;
+  output = NULL;
+
   delete modify;          // modify must come after output, force, update
                           //   since they delete fixes
+  modify = NULL;
+
   delete domain;          // domain must come after modify
                           //   since fix destructors access domain
+  domain = NULL;
+
   delete atom;            // atom must come after modify, neighbor
                           //   since fixes delete callbacks in atom
+  atom = NULL;
+
   delete timer;
+  timer = NULL;
+
+  delete python;
+  python = NULL;
 }
 
 /* ----------------------------------------------------------------------
-   for each style, print name of all child classes build into executable
+   help message for command line options and styles present in executable
 ------------------------------------------------------------------------- */
 
-void LAMMPS::print_styles()
+void LAMMPS::help()
 {
-  printf("\nList of style options included in this executable:\n\n");
+  FILE *fp = screen;
+  const char *pager = NULL;
 
-  printf("Atom styles:");
+  // if output is "stdout", use a pipe to a pager for paged output.
+  // this will avoid the most important help text to rush past the
+  // user. scrollback buffers are often not large enough. this is most
+  // beneficial to windows users, who are not used to command line.
+
+  if (fp == stdout) {
+    pager = getenv("PAGER");
+    if (pager == NULL) pager = "more";
+#if defined(_WIN32)
+    fp = _popen(pager,"w");
+#else
+    fp = popen(pager,"w");
+#endif
+
+    // reset to original state, if pipe command failed
+    if (fp == NULL) {
+      fp = stdout;
+      pager = NULL;
+    }
+  }
+
+  // general help message about command line and flags
+
+  fprintf(fp,
+          "\nLarge-scale Atomic/Molecular Massively Parallel Simulator - "
+          LAMMPS_VERSION "\n\n"
+          "Usage example: %s -var t 300 -echo screen -in in.alloy\n\n"
+          "List of command line options supported by this LAMMPS executable:\n\n"
+          "-echo none/screen/log/both  : echoing of input script (-e)\n"
+          "-help                       : print this help message (-h)\n"
+          "-in filename                : read input from file, not stdin (-i)\n"
+          "-kokkos on/off ...          : turn KOKKOS mode on or off (-k)\n"
+          "-log none/filename          : where to send log output (-l)\n"
+          "-nocite                     : disable writing log.cite file (-nc)\n"
+          "-package style ...          : invoke package command (-pk)\n"
+          "-partition size1 size2 ...  : assign partition sizes (-p)\n"
+          "-plog basename              : basename for partition logs (-pl)\n"
+          "-pscreen basename           : basename for partition screens (-ps)\n"
+          "-restart rfile dfile ...    : convert restart to data file (-r)\n"
+          "-reorder topology-specs     : processor reordering (-r)\n"
+          "-screen none/filename       : where to send screen output (-sc)\n"
+          "-suffix gpu/intel/opt/omp   : style suffix to apply (-sf)\n"
+          "-var varname value          : set index style variable (-v)\n\n",
+          exename);
+
+  fprintf(fp,"List of style options included in this LAMMPS executable\n\n");
+
+  int pos = 80;
+  fprintf(fp,"* Atom styles:\n");
 #define ATOM_CLASS
-#define AtomStyle(key,Class) printf(" %s",#key);
+#define AtomStyle(key,Class) print_style(fp,#key,pos);
 #include "style_atom.h"
 #undef ATOM_CLASS
-  printf("\n\n");
+  fprintf(fp,"\n\n");
 
-  printf("Integrate styles:");
+  pos = 80;
+  fprintf(fp,"* Integrate styles:\n");
 #define INTEGRATE_CLASS
-#define IntegrateStyle(key,Class) printf(" %s",#key);
+#define IntegrateStyle(key,Class) print_style(fp,#key,pos);
 #include "style_integrate.h"
 #undef INTEGRATE_CLASS
-  printf("\n\n");
+  fprintf(fp,"\n\n");
 
-  printf("Minimize styles:");
+  pos = 80;
+  fprintf(fp,"* Minimize styles:\n");
 #define MINIMIZE_CLASS
-#define MinimizeStyle(key,Class) printf(" %s",#key);
+#define MinimizeStyle(key,Class) print_style(fp,#key,pos);
 #include "style_minimize.h"
 #undef MINIMIZE_CLASS
-  printf("\n\n");
+  fprintf(fp,"\n\n");
 
-  printf("Pair styles:");
+  pos = 80;
+  fprintf(fp,"* Pair styles:\n");
 #define PAIR_CLASS
-#define PairStyle(key,Class) printf(" %s",#key);
+#define PairStyle(key,Class) print_style(fp,#key,pos);
 #include "style_pair.h"
 #undef PAIR_CLASS
-  printf("\n\n");
+  fprintf(fp,"\n\n");
 
-  printf("Bond styles:");
+  pos = 80;
+  fprintf(fp,"* Bond styles:\n");
 #define BOND_CLASS
-#define BondStyle(key,Class) printf(" %s",#key);
+#define BondStyle(key,Class) print_style(fp,#key,pos);
 #include "style_bond.h"
 #undef BOND_CLASS
-  printf("\n\n");
+  fprintf(fp,"\n\n");
 
-  printf("Angle styles:");
+  pos = 80;
+  fprintf(fp,"* Angle styles:\n");
 #define ANGLE_CLASS
-#define AngleStyle(key,Class) printf(" %s",#key);
+#define AngleStyle(key,Class) print_style(fp,#key,pos);
 #include "style_angle.h"
 #undef ANGLE_CLASS
-  printf("\n\n");
+  fprintf(fp,"\n\n");
 
-  printf("Dihedral styles:");
+  pos = 80;
+  fprintf(fp,"* Dihedral styles:\n");
 #define DIHEDRAL_CLASS
-#define DihedralStyle(key,Class) printf(" %s",#key);
+#define DihedralStyle(key,Class) print_style(fp,#key,pos);
 #include "style_dihedral.h"
 #undef DIHEDRAL_CLASS
-  printf("\n\n");
+  fprintf(fp,"\n\n");
 
-  printf("Improper styles:");
+  pos = 80;
+  fprintf(fp,"* Improper styles:\n");
 #define IMPROPER_CLASS
-#define ImproperStyle(key,Class) printf(" %s",#key);
+#define ImproperStyle(key,Class) print_style(fp,#key,pos);
 #include "style_improper.h"
 #undef IMPROPER_CLASS
-  printf("\n\n");
+  fprintf(fp,"\n\n");
 
-  printf("KSpace styles:");
+  pos = 80;
+  fprintf(fp,"* KSpace styles:\n");
 #define KSPACE_CLASS
-#define KSpaceStyle(key,Class) printf(" %s",#key);
+#define KSpaceStyle(key,Class) print_style(fp,#key,pos);
 #include "style_kspace.h"
 #undef KSPACE_CLASS
-  printf("\n\n");
+  fprintf(fp,"\n\n");
 
-  printf("Fix styles (upper case are only for internal use):");
+  pos = 80;
+  fprintf(fp,"* Fix styles\n");
 #define FIX_CLASS
-#define FixStyle(key,Class) printf(" %s",#key);
+#define FixStyle(key,Class) print_style(fp,#key,pos);
 #include "style_fix.h"
 #undef FIX_CLASS
-  printf("\n\n");
+  fprintf(fp,"\n\n");
 
-  printf("Compute styles:");
+  pos = 80;
+  fprintf(fp,"* Compute styles:\n");
 #define COMPUTE_CLASS
-#define ComputeStyle(key,Class) printf(" %s",#key);
+#define ComputeStyle(key,Class) print_style(fp,#key,pos);
 #include "style_compute.h"
 #undef COMPUTE_CLASS
-  printf("\n\n");
+  fprintf(fp,"\n\n");
 
-  printf("Region styles:");
+  pos = 80;
+  fprintf(fp,"* Region styles:\n");
 #define REGION_CLASS
-#define RegionStyle(key,Class) printf(" %s",#key);
+#define RegionStyle(key,Class) print_style(fp,#key,pos);
 #include "style_region.h"
 #undef REGION_CLASS
-  printf("\n\n");
+  fprintf(fp,"\n\n");
 
-  printf("Dump styles:");
+  pos = 80;
+  fprintf(fp,"* Dump styles:\n");
 #define DUMP_CLASS
-#define DumpStyle(key,Class) printf(" %s",#key);
+#define DumpStyle(key,Class) print_style(fp,#key,pos);
 #include "style_dump.h"
 #undef DUMP_CLASS
-  printf("\n\n");
+  fprintf(fp,"\n\n");
 
-  printf("Command styles (add-on input script commands):");
+  pos = 80;
+  fprintf(fp,"* Command styles\n");
 #define COMMAND_CLASS
-#define CommandStyle(key,Class) printf(" %s",#key);
+#define CommandStyle(key,Class) print_style(fp,#key,pos);
 #include "style_command.h"
 #undef COMMAND_CLASS
-  printf("\n");
+  fprintf(fp,"\n\n");
+
+  // close pipe to pager, if active
+
+  if (pager != NULL) pclose(fp);
+}
+
+/* ----------------------------------------------------------------------
+   print style names in columns
+   skip any style that starts with upper-case letter, since internal
+------------------------------------------------------------------------- */
+
+void print_style(FILE *fp, const char *str, int &pos)
+{
+  if (isupper(str[0])) return;
+
+  int len = strlen(str);
+  if (pos+len > 80) {
+    fprintf(fp,"\n");
+    pos = 0;
+  }
+
+  if (len < 16) {
+    fprintf(fp,"%-16s",str);
+    pos += 16;
+  } else if (len < 32) {
+    fprintf(fp,"%-32s",str);
+    pos += 32;
+  } else if (len < 48) {
+    fprintf(fp,"%-48s",str);
+    pos += 48;
+  } else if (len < 64) {
+    fprintf(fp,"%-64s",str);
+    pos += 64;
+  } else {
+    fprintf(fp,"%-80s",str);
+    pos += 80;
+  }
 }
