@@ -1,3 +1,5 @@
+**This is outdated, please use the polarization styles included in the newest version of LAMMPS**
+
 This is the home of a pair style for LAMMPS that includes induced dipole polarization. The attribute "static_polarizability" is added with units of distance^3. The single pair_style lj/cut/coul/long/polarization command described below is also added. For more information and implementation details about induced dipole interactions see section 8 of the included pdf file "Theory and simulation of metal-organic materials and biomolecules" in the polarization folder.
 
 **IMPORTANT: This pair style does not work with multiple processors.** Undefined behavior will happen if you attempt to use this pair style with more than one process.
